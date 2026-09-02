@@ -25,7 +25,12 @@ import type { NitroCa } from "./types.js";
 type CryptoKeyPair = webcrypto.CryptoKeyPair;
 
 // @peculiar needs a WebCrypto provider; set once at module load.
-x509.cryptoProvider.set(webcrypto as unknown as Parameters<typeof x509.cryptoProvider.set>[0]);
+//
+// Called through an explicit `unknown` signature rather than `Parameters<typeof set>[0]`:
+// `cryptoProvider.set` is OVERLOADED (`set(crypto)` and `set(key, crypto)`), so `Parameters<>`
+// picks whichever overload the consuming tsconfig resolves first — it landed on `string` under
+// agent2's config and failed to compile there while compiling fine here.
+(x509.cryptoProvider.set as (provider: unknown) => void)(webcrypto);
 
 const subtle = webcrypto.subtle;
 const cbor = new Encoder({ useRecords: false, mapsAsObjects: true, tagUint8Array: false });
