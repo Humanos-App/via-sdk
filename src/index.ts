@@ -22,7 +22,7 @@ export {
   fromMultibaseBase58,
 } from "./crypto/encoding.js";
 export { canonicalizeRFC8785 } from "./crypto/canonicalize.js";
-export { sha256, sha256Hex, computeSRI, verifySRI } from "./crypto/digest.js";
+export { sha256, sha256Hex, computeSRI, verifySRI, actionVersionPinSRI } from "./crypto/digest.js";
 export { viaUrn, type ViaUrnType } from "./urn.js";
 export {
   generateEd25519Key,
@@ -33,7 +33,9 @@ export {
   verifyMultibase,
   encodePublicKeyMultibase,
   decodePublicKeyMultibase,
+  generateDIDKey,
   type Ed25519KeyPair,
+  type DIDKeyPair,
 } from "./crypto/ed25519.js";
 export {
   generateP256Key,
@@ -116,6 +118,9 @@ export {
   verifyStamp,
   addProof,
   verifyMandateProofs,
+  validateMaxExecutions,
+  EXT_MAX_EXECUTIONS,
+  MAX_EXECUTIONS_REACHED,
   type BuildMandateInput,
   type BuildEvidenceInput,
   type StampSigner,
@@ -141,6 +146,7 @@ export {
   auditEventChain,
   buildChainedEvent,
   buildIssuanceEvents,
+  credentialDigestOf,
   type BuildEventInput,
   type BindableCredential,
   type EventAudit,

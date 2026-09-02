@@ -99,3 +99,31 @@ export function decodePublicKeyMultibase(multibase: string): Uint8Array {
   }
   return decoded.slice(2);
 }
+
+/** An Ed25519 keypair labelled with its `did:key` identifier. */
+export interface DIDKeyPair {
+  did: string;
+  publicKey: Uint8Array;
+  privateKey: Uint8Array;
+  keyType: "ed25519";
+}
+
+/**
+ * Generate an Ed25519 keypair and its `did:key` identifier.
+ *
+ * The platform mints every subject and org key through this, so the `did:key` form and
+ * the raw bytes must stay together. It previously lived in the `compat/legacy` shim; it was
+ * never legacy, only co-located with it (docs/VIA/legacy.md §1.3), and v0.2 rescued it here
+ * before retiring that shim. The v0.3 fork retired the shim WITHOUT the rescue, which is how
+ * this went missing — a deletion that took a non-legacy function with it.
+ */
+export function generateDIDKey(keyType: "ed25519" = "ed25519"): DIDKeyPair {
+  if (keyType !== "ed25519") throw new Error(`unsupported key type: ${keyType}`);
+  const { publicKey, privateKey } = generateEd25519Key();
+  return {
+    did: `did:key:${encodePublicKeyMultibase(publicKey)}`,
+    publicKey,
+    privateKey,
+    keyType: "ed25519",
+  };
+}

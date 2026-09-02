@@ -55,7 +55,7 @@ export type BindableCredential = Record<string, unknown> | object;
  * Compute the content-binding digest of a credential (spec §5.4):
  * `SRI(canonicalizeRFC8785(credential-without-proof))`.
  */
-function credentialDigestOf(credential: BindableCredential): string {
+export function credentialDigestOf(credential: BindableCredential): string {
   return computeSRI(canonicalizeRFC8785({ ...(credential as Record<string, unknown>), proof: undefined }));
 }
 

@@ -33,6 +33,12 @@ export interface BuildMandateInput {
   authorizedAgents?: BoundKey[];
   action?: ActionReference;
   userParams?: Record<string, WrappedUserParam>;
+  /**
+   * Bounded-Use extension (§19.5) — grant usable at most N times; omit for unbounded. When set,
+   * it is written to `mandate.maxExecutions` and `"maxExecutions"` is added to the `extensions`
+   * manifest. Validated (see {@link validateMaxExecutions}).
+   */
+  maxExecutions?: number;
   evidence?: EvidenceEntry[];
   credentialStatus?: BitstringStatusListEntry;
   validFrom: string;
@@ -40,6 +46,29 @@ export interface BuildMandateInput {
   validUntil?: string;
   /** v0.3 delegation — marks a CHILD mandate (attenuated from `parent`). */
   delegation?: { parent: string; depth: number; tools: string[] };
+}
+
+/** The registered name of the Bounded-Use extension (§19.5), as it appears in `mandate.extensions`. */
+export const EXT_MAX_EXECUTIONS = "maxExecutions";
+
+/**
+ * Machine-readable exhaustion reason string (mirrors the platform's InactiveReason). The terminal
+ * event *type* is `EXHAUST` (§19.5), which is self-describing; this may accompany it as optional
+ * detail and is the string the platform records for a spent Bounded-Use grant.
+ */
+export const MAX_EXECUTIONS_REACHED = "max_executions_reached";
+
+/**
+ * Validate a `maxExecutions` bound at issuance (§19.5). Absent is valid (⇒ unbounded); otherwise it
+ * MUST be a safe integer ≥ 1 — `0`/negative/fractional are rejected rather than reinterpreted, since
+ * a grant exhausted before the grantor consents is a configuration error, not a runtime state.
+ * Throws on an invalid value.
+ */
+export function validateMaxExecutions(value: number | undefined): void {
+  if (value === undefined) return;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
+    throw new Error(`maxExecutions must be a safe integer ≥ 1 (got ${value})`);
+  }
 }
 
 export interface BuildEvidenceInput {
@@ -72,6 +101,11 @@ export function buildEvidence(input: BuildEvidenceInput): EvidenceEntry {
  */
 export function buildMandate(input: BuildMandateInput): ViaMandateCredential {
   if (input.authorizedDIDs.length === 0) throw new Error("mandate requires at least one authorizedDID");
+  // Extensions (§19). Each extension in use contributes its term(s) and its name to the signed
+  // presence manifest. Only Bounded-Use exists today; the accumulator is the seam for the next one.
+  validateMaxExecutions(input.maxExecutions);
+  const extensions: string[] = [];
+  if (input.maxExecutions !== undefined) extensions.push(EXT_MAX_EXECUTIONS);
   const credential: ViaMandateCredential = {
     "@context": [...VIA_CONTEXTS],
     id: input.credentialId ?? `urn:via:credential:${randomUUID()}`,
@@ -93,6 +127,8 @@ export function buildMandate(input: BuildMandateInput): ViaMandateCredential {
         ...(input.action ? { action: input.action } : {}),
         ...(input.userParams ? { userParams: input.userParams } : {}),
         ...(input.delegation ? { delegation: input.delegation } : {}),
+        ...(input.maxExecutions !== undefined ? { maxExecutions: input.maxExecutions } : {}),
+        ...(extensions.length ? { extensions } : {}),
       },
     },
     ...(input.evidence ? { evidence: input.evidence } : {}),
