@@ -336,6 +336,7 @@ export {
   issueSnapshot,
   snapshotDigest,
   auditActorSnapshot,
+  projectAgentContext,
   ACTOR_EVENT_TYPES,
   // The authority for which subject class an event kind carries — a credential URN or an actor
   // DID. Consumers persisting events branch on this (the platform keys `credentialId` vs

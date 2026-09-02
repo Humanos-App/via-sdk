@@ -10,9 +10,11 @@
  * Signatures are deliberately out of scope here (that is `auditEventChain`); these tests exercise
  * linkage and transition semantics only, which is the split the module documents.
  */
+import { evaluateRules } from "../src/cel/evaluate.js";
 import { describe, it, expect } from "vitest";
 import {
   foldActorChain,
+  projectAgentContext,
   resolvePinnedKeys,
   snapshotDigest,
   issueSnapshot,
@@ -567,5 +569,80 @@ describe("ACTOR_EVENT_TYPES", () => {
       // It may reject for a semantic reason, but never as "unknown_event_type".
       if (!r.ok) expect(r.reason).not.toBe("unknown_event_type");
     }
+  });
+});
+
+describe("projectAgentContext (§9 / KYA A.3) — the agent.* CEL namespace", () => {
+  const subject = (over: Partial<ViaActorSubject> = {}): ViaActorSubject =>
+    ({
+      id: "did:web:humanos.tech:agent:abc",
+      actorType: "agent",
+      status: "active",
+      keys: [{ id: "did:web:humanos.tech:agent:abc#key-1", jwk: {} as never, status: "active" }],
+      assurance: "hardware",
+      binding: "attested",
+      bootstrapAnchor: "api_key",
+      verifiedAt: "2026-08-01T00:00:00.000Z",
+      ...over,
+    }) as ViaActorSubject;
+
+  it("projects the v0.3 fields flat, and never keys[]", () => {
+    const ctx = projectAgentContext(subject());
+    expect(ctx).toMatchObject({
+      assurance: "hardware",
+      binding: "attested",
+      bootstrapAnchor: "api_key",
+      status: "active",
+      verifiedAt: "2026-08-01T00:00:00.000Z",
+    });
+    // Pinned-key resolution is §7's job, not a rule's — a rule reaching into keys would be
+    // writing its own D7, badly.
+    expect(ctx).not.toHaveProperty("keys");
+  });
+
+  it("operator and lineage project PRESENCE + DID, never the event", () => {
+    const ctx = projectAgentContext(
+      subject({
+        operator: { org: "did:web:humanos.tech:org:acme", affiliationEvent: "sha256-xyz" },
+        lineage: { parent: "did:web:humanos.tech:agent:parent", event: "sha256-abc" },
+      }),
+    );
+    expect(ctx.operator).toEqual({ org: "did:web:humanos.tech:org:acme" });
+    expect(ctx.lineage).toEqual({ parent: "did:web:humanos.tech:agent:parent" });
+    // Reading the claim is the verifier's job, through the pointer — not a rule's.
+    expect(JSON.stringify(ctx)).not.toContain("affiliationEvent");
+    expect(JSON.stringify(ctx)).not.toContain("sha256-");
+  });
+
+  it("absent optionals are ABSENT, so `has(agent.operator)` is meaningful", () => {
+    const ctx = projectAgentContext(subject());
+    expect(ctx).not.toHaveProperty("operator");
+    expect(ctx).not.toHaveProperty("lineage");
+    expect(ctx).not.toHaveProperty("root");
+  });
+
+  it("makes a freshness rule EVALUABLE — the v0.3 attestation-age bound", () => {
+    // §16's `maxAttestationStaleness` bounds a raw-pinned BoundKey. On the actor path the rung is
+    // resolved THROUGH the actor, so the bound belongs to the mandate that cares. This is the
+    // projection that lets it be written at all.
+    const rule = [
+      { id: "fresh", expression: 'agent.verifiedAt >= "2026-07-15T00:00:00.000Z"', message: "attestation too old" },
+    ];
+    const fresh = evaluateRules(rule, { userParams: {}, executionParams: {}, agent: projectAgentContext(subject()) });
+    expect(fresh.decision).toBe("allow");
+
+    const stale = evaluateRules(rule, {
+      userParams: {},
+      executionParams: {},
+      agent: projectAgentContext(subject({ verifiedAt: "2026-01-01T00:00:00.000Z" })),
+    });
+    expect(stale.decision).toBe("deny");
+  });
+
+  it("a suspended actor is visible to a rule", () => {
+    const rule = [{ id: "active", expression: 'agent.status == "active"', message: "actor not active" }];
+    expect(
+      evaluateRules(rule, { userParams: {}, executionParams: {}, agent: projectAgentContext(subject({ status: "suspended" })) }).decision,
+    ).toBe("deny");
   });
 });

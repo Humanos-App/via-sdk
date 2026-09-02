@@ -413,6 +413,39 @@ export function issueSnapshot(
   };
 }
 
+/**
+ * Project a folded actor into the CEL `agent.*` namespace (v0.3 §9 / KYA A.3).
+ *
+ * There is no `actor.*` namespace: the artifact is actor-generic, projections are role-specific.
+ * §16 ships `agent.assurance` / `agent.binding`; this extends the same namespace with the fields
+ * v0.3 added, so a rule can say `agent.status == "active"` or `agent.bootstrapAnchor != "api_key"`.
+ *
+ * FLAT, and deliberately WITHOUT `keys[]`: pinned-key resolution is §7's job (`resolvePinnedKeys`),
+ * not a rule's. A rule that could reach into keys would be writing its own D7, badly.
+ *
+ * `operator` and `lineage` project PRESENCE plus the DID, never the event — a rule may ask "is this
+ * agent affiliated, and to whom", never "what did the affiliation say". Reading the claim is the
+ * verifier's job, through the pointer.
+ *
+ * FRESHNESS. This is what makes `agent.verifiedAt >= now - duration("720h")` evaluable, which is
+ * how v0.3 bounds attestation age. §16's `maxAttestationStaleness` bounds a raw-pinned BoundKey's
+ * re-attest window; on the actor path the rung is resolved THROUGH the actor, so the bound belongs
+ * to the mandate that cares — per-mandate rather than global, and curable by `ATTESTATION_RENEWED`
+ * or `ASSURANCE_UPDATED` moving `verifiedAt` forward.
+ */
+export function projectAgentContext(subject: ViaActorSubject): Record<string, unknown> {
+  return {
+    assurance: subject.assurance,
+    binding: subject.binding,
+    bootstrapAnchor: subject.bootstrapAnchor,
+    verifiedAt: subject.verifiedAt,
+    status: subject.status,
+    ...(subject.root ? { root: subject.root } : {}),
+    ...(subject.operator ? { operator: { org: subject.operator.org } } : {}),
+    ...(subject.lineage ? { lineage: { parent: subject.lineage.parent } } : {}),
+  };
+}
+
 export interface ActorAudit {
   ok: boolean;
   /** `fold_failed:<reason>` | `chain_binding_mismatch` | `subject_mismatch` */
