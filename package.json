@@ -18,6 +18,11 @@
       "types": "./dist/action/cel.d.ts",
       "import": "./dist/action/cel.js",
       "require": "./dist/action/cel.cjs"
+    },
+    "./agent/sim": {
+      "types": "./dist/agent/sim.d.ts",
+      "import": "./dist/agent/sim.js",
+      "require": "./dist/agent/sim.cjs"
     }
   },
   "files": [
