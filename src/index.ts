@@ -124,6 +124,13 @@ export {
   type ResolvePublicKey,
 } from "./mandate/build.js";
 
+// Credential-level signer (§5.4) — the SDK owns HOW the securing STAMP is made.
+export {
+  signCredentialProof,
+  type CredentialProof,
+  type CredentialProofSigner,
+} from "./credential/proof.js";
+
 // Events — the unified VIAEvent primitive (spec §5)
 export {
   buildEvent,
