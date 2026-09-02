@@ -241,6 +241,32 @@ describe("validateWebauthnAttestation (packed) — strict verification + honest 
 });
 
 describe("registerChallenge / registerAgentKey (§16.5)", () => {
+  // Evidence is UNTRUSTED client input. A validator documented as fail-closed has to fail closed
+  // on the malformed payload too, not only the invalid-but-well-formed one. Before this, an
+  // unrecognised discriminator matched no switch arm, left `result` unassigned and THREW on the
+  // `result.ok` read — an unhandled exception on the endpoint that mints identities, reachable by
+  // anyone who can send a request body.
+  //
+  // The `{kind:"none"}` case is not hypothetical: that is exactly what the agent SDK's
+  // `RegistrationEvidence` looks like, and it discriminates on `kind`, not `type`.
+  it.each([
+    ["unknown type", { type: "bogus" }],
+    ["no discriminator", {}],
+    ["the agent SDK's `kind` shape", { kind: "none" }],
+    ["null", null],
+    ["undefined", undefined],
+    ["a string", "none"],
+    ["a number", 42],
+  ])("malformed evidence (%s) is REFUSED, never thrown", async (_label, evidence) => {
+    const { publicJwk } = await generateP256Key();
+    const res = await registerAgentKey({
+      cnf: { jwk: publicJwk },
+      evidence: evidence as never,
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("custody_reference_invalid");
+  });
+
   it("evidence 'none' → pop/self", async () => {
     const { publicJwk } = await generateP256Key();
     const res = await registerAgentKey({ cnf: { jwk: publicJwk }, evidence: { type: "none" } });

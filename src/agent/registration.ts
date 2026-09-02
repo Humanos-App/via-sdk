@@ -134,6 +134,19 @@ export async function registerAgentKey(
   const ev = input.evidence;
   let result: ConfinementResult;
 
+  // Evidence arrives from an UNTRUSTED client, so the discriminator cannot be assumed to be
+  // one of ours. Without this, an unknown (or absent) `type` matched no case, left `result`
+  // unassigned, and threw on the `result.ok` read below — turning "reject this registration"
+  // into an unhandled exception on the endpoint that mints identities. A validator documented
+  // as fail-closed has to fail closed on the malformed input too, not just the invalid-but-
+  // well-formed input.
+  //
+  // It is also what a client sending the AGENT SDK's evidence hits: that shape discriminates on
+  // `kind`, not `type`, so every field below reads `undefined`.
+  if (!ev || typeof ev !== "object" || typeof (ev as { type?: unknown }).type !== "string") {
+    return { ok: false, reason: "custody_reference_invalid" };
+  }
+
   switch (ev.type) {
     case "none":
       // No confinement evidence — freshness only. -> pop / self.
@@ -173,6 +186,10 @@ export async function registerAgentKey(
       // Packed/android-key attestation chained to a pinned FIDO/vendor root.
       result = await validateWebauthnAttestation(ev.attestationObjectB64, ev.clientDataJSONB64, deps.fidoRoots ?? []);
       break;
+    default:
+      // A string `type` that is not one of ours. Also the arm a NEW ConfinementEvidence variant
+      // lands in if it is added to the union without a validator here — refused, not crashed.
+      return { ok: false, reason: "custody_reference_invalid" };
   }
 
   if (!result.ok) return result;
