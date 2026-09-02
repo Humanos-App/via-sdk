@@ -67,7 +67,7 @@ const genesis = (detail: Record<string, unknown> = {}) =>
       actorType: "agent",
       assurance: "hardware",
       binding: "attested",
-      bootstrapAnchor: "wit",
+      bootstrapAnchor: "api_key",
       verifiedAt: "2026-09-01T00:00:00.000Z",
       ...detail,
     },
@@ -116,7 +116,7 @@ describe("foldActorChain — genesis", () => {
       status: "active",
       assurance: "hardware",
       binding: "attested",
-      bootstrapAnchor: "wit",
+      bootstrapAnchor: "api_key",
     });
     expect(r.subject.keys).toHaveLength(1);
     expect(r.subject.keys[0]).toMatchObject({ id: "k1", status: "active" });

@@ -38,8 +38,24 @@ import type { Jwk } from "../crypto/p256.js";
 export type ActorType = "agent" | "organization" | "user";
 export type ActorStatus = "active" | "suspended" | "retired";
 export type ActorKeyStatus = "active" | "rotated" | "revoked";
-/** Registration witness class (v0.3 §9.1; token set pending kya verification). */
-export type BootstrapAnchor = "wit" | "api_key" | "manual";
+/**
+ * How this actor got in — recorded at genesis, permanent, and part of the KYA picture.
+ *
+ * It answers a question the assurance rung does not: the rung says how well the KEY is held, this
+ * says who let the actor through the door. A `hardware`-rung agent nobody vouched for is a different
+ * risk from a `hardware`-rung agent an organization registered under its own API key, and a verifier
+ * can tell them apart without asking us.
+ *
+ * - `api_key` — registered through an organization's API key. The org is accountable, and an
+ *   `AFFILIATION` event signed by that org accompanies genesis.
+ * - `manual`  — created by a Humanos operator (support, migration, admin). No org vouched for it,
+ *   so it carries the weakest provenance and is the fold's default when genesis omits the field.
+ *
+ * A self-service path for actors with no organization would add a third value here. It is
+ * deliberately absent: `"wit"` previously sat in this union with no definition and no writer, which
+ * is the same drift that produced `VP_DENIED`. Add the token when the path that emits it exists.
+ */
+export type BootstrapAnchor = "api_key" | "manual";
 
 /** By-reference pointer to a signed attestation event (v0.3 §9.4 — never inline). */
 export interface AttestationRef {
