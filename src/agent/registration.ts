@@ -159,8 +159,12 @@ export async function registerAgentKey(
       result = { ok: true, cnf: input.cnf, assurance: "pop", binding: "self", verifiedAt: now };
       break;
     case "device-self":
-      // Platform ASSERTS non-exportable; the RP cannot verify. -> device / self.
-      result = { ok: true, cnf: input.cnf, assurance: "device", binding: "self", verifiedAt: now };
+      // Platform ASSERTS non-exportable and the RP cannot verify it — so `pop`, per §16.5's table.
+      // A claim is not evidence: this differs from `none` only in what the CHAIN records about what
+      // was asserted, never in what the verifier may credit. `device` is not "asserted a device";
+      // it is "chained to a platform-authenticator root", which is why webauthn's row reads
+      // `device`/`hardware` PER ROOT. The rung is which anchor you reached, not which claim you made.
+      result = { ok: true, cnf: input.cnf, assurance: "pop", binding: "self", verifiedAt: now };
       break;
     case "custody":
       // RP-verified non-exportability via the injected DescribeKey oracle + GetPublicKey == cnf.

@@ -47,12 +47,12 @@ function describeKeyFor(cnf: Jwk, over: Partial<KeyDescription> = {}) {
 }
 
 describe("validateCustody (§16.5 · custodial)", () => {
-  it("non-exportable + advertised key == cnf → hardware/custodial", async () => {
+  it("non-exportable + advertised key == cnf → pop/CUSTODIAL (the oracle fact lives in `binding`)", async () => {
     const { publicJwk } = await generateP256Key();
     const res = await validateCustody(CUSTODY_REF, publicJwk, describeKeyFor(publicJwk));
     expect(res.ok).toBe(true);
     if (res.ok) {
-      expect(res.assurance).toBe("hardware");
+      expect(res.assurance).toBe("pop");
       expect(res.binding).toBe("custodial");
       expect(res.custodyRef).toEqual(CUSTODY_REF);
       expect(jwkThumbprint(res.cnf.jwk)).toBe(jwkThumbprint(publicJwk));
@@ -126,6 +126,70 @@ describe("validateCoseAttestation (§16.5 · attested / Nitro)", () => {
     const res = await validateCoseAttestation(doc, []);
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.reason).toBe("attestation_chain_invalid");
+  });
+});
+
+const SIM_REF = {
+  provider: "sim-kms",
+  region: "dev-1",
+  keySpec: "ECC_NIST_P256",
+  keyId: "ladder-test",
+  arnClass: "key",
+};
+
+describe("the assurance ladder (§16.5) — the rung is which ANCHOR you reached", () => {
+  /**
+   * `assurance` is "the strength of confinement the verifier could PROVE", and `hardware` is
+   * defined as "a hardware root chained to a pinned anchor". So the rung tracks what is
+   * TRANSFERABLE — what a verifier could hand an insurer — not where the key happens to live.
+   *
+   * `binding` carries the storage fact separately, and `custodial` is defined as "a custody oracle
+   * reports it". Crediting that oracle report as `assurance: hardware` too would double-count one
+   * fact across both axes, which is what the two-axis split exists to prevent.
+   */
+  it("nothing but a pinned chain earns above `pop`", async () => {
+    const { publicJwk } = await generateP256Key();
+
+    // no evidence at all
+    const none = await registerAgentKey({ cnf: { jwk: publicJwk }, evidence: { type: "none" } });
+    expect(none.ok && [none.assurance, none.binding]).toEqual(["pop", "self"]);
+
+    // an ASSERTION of non-exportability — strictly more words, no more proof
+    const asserted = await registerAgentKey({
+      cnf: { jwk: publicJwk },
+      evidence: { type: "device-self", nonExportable: true },
+    });
+    expect(asserted.ok && [asserted.assurance, asserted.binding]).toEqual(["pop", "self"]);
+
+    // an ORACLE-verified non-exportable KMS key: the verifier did real, unforgeable work, and the
+    // fact is recorded — in `binding`. The response is unsigned, so it is testimony, not a document.
+    const custody = await registerAgentKey(
+      { cnf: { jwk: publicJwk }, evidence: { type: "custody", ref: SIM_REF } },
+      { describeKey: () => ({ exportable: false, publicJwk, keySpec: "ECC_NIST_P256" }) },
+    );
+    expect(custody.ok && [custody.assurance, custody.binding]).toEqual(["pop", "custodial"]);
+
+    // a COSE_Sign1 chained to a PINNED root — transferable evidence, and the only thing here that
+    // is. (It also binds a live nonce, which is why this path alone needs a store.)
+    const ca = await mintNitroCa();
+    const store = createRegChallengeStore();
+    const { regNonce } = await registerChallenge({ store });
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: publicJwk, nonceB64: regNonce });
+    const attested = await registerAgentKey(
+      { cnf: { jwk: publicJwk }, evidence: { type: "attestation-eat", docB64: doc }, regNonce },
+      { store, nitroRoots: [ca.rootPem] },
+    );
+    expect(attested.ok && [attested.assurance, attested.binding]).toEqual(["hardware", "attested"]);
+
+    // …and the SAME document without the root pinned earns nothing at all.
+    const store2 = createRegChallengeStore();
+    const c2 = await registerChallenge({ store: store2 });
+    const doc2 = await buildCoseAttestation(ca, { publicKeyJwk: publicJwk, nonceB64: c2.regNonce });
+    const unpinned = await registerAgentKey(
+      { cnf: { jwk: publicJwk }, evidence: { type: "attestation-eat", docB64: doc2 }, regNonce: c2.regNonce },
+      { store: store2, nitroRoots: [] },
+    );
+    expect(unpinned.ok).toBe(false);
   });
 });
 
@@ -343,17 +407,17 @@ describe("registerChallenge / registerAgentKey (§16.5)", () => {
     }
   });
 
-  it("evidence 'device-self' → device/self (self-asserted, not RP-verifiable)", async () => {
+  it("evidence 'device-self' → pop/self — a claim is not evidence", async () => {
     const { publicJwk } = await generateP256Key();
     const res = await registerAgentKey({ cnf: { jwk: publicJwk }, evidence: { type: "device-self", nonExportable: true } });
     expect(res.ok).toBe(true);
     if (res.ok) {
-      expect(res.assurance).toBe("device");
+      expect(res.assurance).toBe("pop");
       expect(res.binding).toBe("self");
     }
   });
 
-  it("custody evidence via injected DescribeKey → hardware/custodial", async () => {
+  it("custody evidence via injected DescribeKey → pop/custodial", async () => {
     const { publicJwk } = await generateP256Key();
     const res = await registerAgentKey(
       { cnf: { jwk: publicJwk }, evidence: { type: "custody", ref: CUSTODY_REF } },
@@ -361,7 +425,7 @@ describe("registerChallenge / registerAgentKey (§16.5)", () => {
     );
     expect(res.ok).toBe(true);
     if (res.ok) {
-      expect(res.assurance).toBe("hardware");
+      expect(res.assurance).toBe("pop");
       expect(res.binding).toBe("custodial");
       expect(res.custodyRef).toEqual(CUSTODY_REF);
     }

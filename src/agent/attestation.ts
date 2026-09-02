@@ -76,10 +76,22 @@ export async function validateCustody(
       desc.publicJwk &&
       jwkThumbprint(desc.publicJwk) === jwkThumbprint(cnf)
     ) {
+      // `pop`, not `hardware` — §16.5's table and v0.3 §9.1, which calls the asymmetry deliberate.
+      //
+      // The oracle fact is NOT discarded: it IS `binding: custodial`, a value defined as "a custody
+      // oracle reports it (e.g. KMS `exportable:false`)". Recording it again as `assurance:
+      // hardware` double-counts one fact across both axes, which is what the two-axis split exists
+      // to prevent — `binding` says how the key is HELD, `assurance` says what could be PROVED.
+      //
+      // And an unsigned DescribeKey response cannot be PROVED to a third party. It is testimony,
+      // not a document: the verifier saw it and cannot hand it to an insurer. `hardware` is defined
+      // as "a hardware root chained to a pinned anchor" precisely because that IS transferable.
+      // This validator's sibling already agrees — `validateWebauthnAttestation` degrades a real
+      // attestation to `pop/self` when it cannot chain to a pinned root.
       return {
         ok: true,
         cnf: { jwk: cnf },
-        assurance: "hardware",
+        assurance: "pop",
         binding: "custodial",
         custodyRef: ref,
         verifiedAt: Date.now(),

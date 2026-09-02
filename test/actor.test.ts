@@ -15,6 +15,7 @@ import { describe, it, expect } from "vitest";
 import {
   foldActorChain,
   projectAgentContext,
+  type ViaActorSubject,
   resolvePinnedKeys,
   snapshotDigest,
   issueSnapshot,
@@ -626,7 +627,7 @@ describe("projectAgentContext (§9 / KYA A.3) — the agent.* CEL namespace", ()
     // resolved THROUGH the actor, so the bound belongs to the mandate that cares. This is the
     // projection that lets it be written at all.
     const rule = [
-      { id: "fresh", expression: 'agent.verifiedAt >= "2026-07-15T00:00:00.000Z"', message: "attestation too old" },
+      { name: "fresh", description: "attestation too old", expression: 'agent.verifiedAt >= "2026-07-15T00:00:00.000Z"' },
     ];
     const fresh = evaluateRules(rule, { userParams: {}, executionParams: {}, agent: projectAgentContext(subject()) });
     expect(fresh.decision).toBe("allow");
@@ -640,7 +641,7 @@ describe("projectAgentContext (§9 / KYA A.3) — the agent.* CEL namespace", ()
   });
 
   it("a suspended actor is visible to a rule", () => {
-    const rule = [{ id: "active", expression: 'agent.status == "active"', message: "actor not active" }];
+    const rule = [{ name: "active", description: "actor not active", expression: 'agent.status == "active"' }];
     expect(
       evaluateRules(rule, { userParams: {}, executionParams: {}, agent: projectAgentContext(subject({ status: "suspended" })) }).decision,
     ).toBe("deny");
