@@ -1,7 +1,10 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/index.ts", "src/compat/legacy.ts"],
+  // `action/cel` ships as its own entry so browsers can import the CEL generator without
+  // evaluating the barrel, which pulls `node:crypto` in via `crypto/ed25519.ts`. The module
+  // is pure (one type-only import), so this entry stays crypto-free.
+  entry: ["src/index.ts", "src/action/cel.ts"],
   format: ["esm", "cjs"],
   dts: true,
   clean: true,

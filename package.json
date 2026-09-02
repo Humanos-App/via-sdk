@@ -1,7 +1,7 @@
 {
   "name": "@humanos/via-sdk-v03",
-  "version": "0.2.0",
-  "description": "VIA Protocol SDK — create and verify VIA mandates, DIDs, actions, receipts, and presentations. Implements via-protocol-spec v0.2 (Ed25519 / eddsa-jcs-2022 / W3C VC 2.0).",
+  "version": "0.3.0",
+  "description": "VIA Protocol SDK \u2014 create and verify VIA mandates, DIDs, actions, events, and presentations. Implements via-protocol-spec v0.3 (Ed25519 / eddsa-jcs-2022 / W3C VC 2.0).",
   "type": "module",
   "license": "Apache-2.0",
   "author": "Humanos",
@@ -14,10 +14,10 @@
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
     },
-    "./compat": {
-      "types": "./dist/compat/legacy.d.ts",
-      "import": "./dist/compat/legacy.js",
-      "require": "./dist/compat/legacy.cjs"
+    "./action/cel": {
+      "types": "./dist/action/cel.d.ts",
+      "import": "./dist/action/cel.js",
+      "require": "./dist/action/cel.cjs"
     }
   },
   "files": [
