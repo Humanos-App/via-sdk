@@ -337,6 +337,12 @@ export {
   snapshotDigest,
   auditActorSnapshot,
   ACTOR_EVENT_TYPES,
+  // The authority for which subject class an event kind carries — a credential URN or an actor
+  // DID. Consumers persisting events branch on this (the platform keys `credentialId` vs
+  // `subjectDid` off it), so it has to be reachable as a VALUE, not just a type.
+  EVENT_SCOPE,
+  type EventScope,
+  type SnapshotResult,
   type ActorEventType,
   type ActorType,
   type ActorStatus,
