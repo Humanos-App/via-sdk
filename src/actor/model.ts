@@ -73,6 +73,25 @@ export interface ActorKeyState {
   status: ActorKeyStatus;
   attestation?: AttestationRef;
   /**
+   * THE RUNG THIS KEY EARNED, and the freshness of the evidence behind it.
+   *
+   * Authorization reads these, not the actor's. An actor holds ONE flat rung but MANY keys, and a
+   * mandate pins a key *id* — so reading the actor's rung for a key meant the weakest key inherited
+   * the strongest rung, and an attacker who took the software key was evaluated at `hardware`.
+   *
+   * `verifiedAt` is per-key for the same reason, and it fixes a sharper bug: renewing ONE key used
+   * to move the actor's `verifiedAt`, which refreshed the freshness claim for EVERY key. A mandate
+   * pinned to a key last attested a year ago passed a 30-day bound because a sibling was renewed
+   * yesterday.
+   *
+   * OPTIONAL for chains written before this existed. Absent means "fall back to the actor summary",
+   * which is what those chains meant when they were written.
+   */
+  assurance?: Assurance;
+  binding?: Binding;
+  verifiedAt?: string;
+  root?: string;
+  /**
    * Rotation SUCCESSION pointer (set on the predecessor by KEY_ROTATED). D7
    * resolution follows it: a mandate pinned to `#key-1` stays satisfiable by the
    * rotation successor(s) — rotation-tolerant; only `revoked` kills usability.
@@ -201,6 +220,28 @@ const detailOf = (e: ViaEvent): Record<string, unknown> =>
  * checks linkage + transition semantics, so a full audit = signatures + fold +
  * snapshot diff.
  */
+/**
+ * The rung to record ON A KEY, from the event that introduced it.
+ *
+ * Falls back to the actor summary when the event carries none — chains written before per-key rungs
+ * existed meant exactly that, and inventing a rung for them would be worse than inheriting one.
+ */
+function keyRung(
+  detail: Record<string, unknown>,
+  fallback: { assurance?: unknown; binding?: unknown; root?: unknown },
+  at: string,
+): Pick<ActorKeyState, "assurance" | "binding" | "verifiedAt" | "root"> {
+  const assurance = (detail.assurance ?? fallback.assurance) as Assurance | undefined;
+  const binding = (detail.binding ?? fallback.binding) as Binding | undefined;
+  const root = (detail.root ?? fallback.root) as string | undefined;
+  return {
+    ...(assurance ? { assurance } : {}),
+    ...(binding ? { binding } : {}),
+    ...(root ? { root } : {}),
+    verifiedAt: (detail.verifiedAt as string) ?? at,
+  };
+}
+
 export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldResult {
   if (events.length === 0 && !seed) return fail("empty_chain");
 
@@ -237,6 +278,9 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
             ...(detail.attestationKind
               ? { attestation: { event: prevLink, kind: String(detail.attestationKind) } }
               : {}),
+            // Genesis grades the actor and its first key in one act, so they start equal. They
+            // diverge the moment a second key is added on different evidence.
+            ...keyRung(detail, detail as Record<string, unknown>, e.validFrom),
           },
         ],
         assurance: detail.assurance as Assurance,
@@ -267,6 +311,7 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
           ...(detail.attestationKind
             ? { attestation: { event: prevLink, kind: String(detail.attestationKind) } }
             : {}),
+          ...keyRung(detail, subject, e.validFrom),
         });
         break;
       }
@@ -286,6 +331,7 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
           ...(detail.attestationKind
             ? { attestation: { event: prevLink, kind: String(detail.attestationKind) } }
             : {}),
+          ...keyRung(detail, subject, e.validFrom),
         });
         break;
       }
@@ -301,7 +347,16 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         if (!k) return fail("unknown_key", i);
         // pointer to THIS renewal event — computed by the fold (self-link pattern)
         k.attestation = { event: prevLink, kind: String(detail.attestationKind ?? "attestation-eat") };
-        subject.verifiedAt = (detail.verifiedAt as string) ?? e.validFrom;
+        const at = (detail.verifiedAt as string) ?? e.validFrom;
+        // PER-KEY, and that is the whole point. This used to move only `subject.verifiedAt`, so
+        // renewing one key refreshed the freshness claim for EVERY key — a mandate pinned to a key
+        // last attested a year ago passed a 30-day bound because a sibling was renewed yesterday.
+        k.verifiedAt = at;
+        if (detail.assurance) k.assurance = detail.assurance as Assurance;
+        if (detail.binding) k.binding = detail.binding as Binding;
+        // The actor summary still moves: it answers "when was this actor last verified at all",
+        // which a renewal genuinely advances. Authorization reads the KEY.
+        subject.verifiedAt = at;
         break;
       }
       case "ASSURANCE_UPDATED": {
@@ -428,19 +483,38 @@ export function issueSnapshot(
  * verifier's job, through the pointer.
  *
  * FRESHNESS. This is what makes `agent.verifiedAt >= now - duration("720h")` evaluable, which is
- * how v0.3 bounds attestation age. §16's `maxAttestationStaleness` bounds a raw-pinned BoundKey's
+ * how v0.3 bounds attestation age. With a `presentingKey` the bound applies to THAT key, so
+ * renewing one key does not refresh a sibling's claim. §16's `maxAttestationStaleness` bounds a raw-pinned BoundKey's
  * re-attest window; on the actor path the rung is resolved THROUGH the actor, so the bound belongs
  * to the mandate that cares — per-mandate rather than global, and curable by `ATTESTATION_RENEWED`
  * or `ASSURANCE_UPDATED` moving `verifiedAt` forward.
  */
-export function projectAgentContext(subject: ViaActorSubject): Record<string, unknown> {
+export function projectAgentContext(
+  subject: ViaActorSubject,
+  /**
+   * The key actually presenting — the one whose PoP the verifier just checked.
+   *
+   * SUPPLY IT WHENEVER AUTHORIZING. `agent.assurance` then means the rung of the key doing the
+   * signing, which is the only rung that answers "what did an attacker have to defeat to produce
+   * this request". Omit it only for reporting, where the actor summary is the honest answer to a
+   * different question ("what is this agent, overall").
+   *
+   * A key with no rung of its own falls back to the summary — chains written before per-key rungs
+   * existed meant exactly that.
+   */
+  presentingKey?: Pick<ActorKeyState, "assurance" | "binding" | "verifiedAt" | "root">,
+): Record<string, unknown> {
+  const assurance = presentingKey?.assurance ?? subject.assurance;
+  const binding = presentingKey?.binding ?? subject.binding;
+  const verifiedAt = presentingKey?.verifiedAt ?? subject.verifiedAt;
+  const root = presentingKey?.root ?? subject.root;
   return {
-    assurance: subject.assurance,
-    binding: subject.binding,
+    assurance,
+    binding,
     bootstrapAnchor: subject.bootstrapAnchor,
-    verifiedAt: subject.verifiedAt,
+    verifiedAt,
     status: subject.status,
-    ...(subject.root ? { root: subject.root } : {}),
+    ...(root ? { root } : {}),
     ...(subject.operator ? { operator: { org: subject.operator.org } } : {}),
     ...(subject.lineage ? { lineage: { parent: subject.lineage.parent } } : {}),
   };

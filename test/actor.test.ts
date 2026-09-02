@@ -646,4 +646,61 @@ describe("projectAgentContext (§9 / KYA A.3) — the agent.* CEL namespace", ()
       evaluateRules(rule, { userParams: {}, executionParams: {}, agent: projectAgentContext(subject({ status: "suspended" })) }).decision,
     ).toBe("deny");
   });
+
+  it("a key carries ITS OWN rung — the weakest key no longer inherits the strongest", () => {
+    // The hole per-key rungs exist to close: an actor holds one flat rung but many keys, and a
+    // mandate pins a key ID. Reading the actor's rung for a software key evaluated an attacker who
+    // stole it at `hardware`.
+    const c = chain((p) =>
+      ev("KEY_ADDED", { keyId: "k2", jwk: JWK, assurance: "pop", binding: "self" }, { prev: p }),
+    );
+    const folded = foldActorChain(c);
+    expect(folded.ok).toBe(true);
+    if (!folded.ok) return;
+
+    const [k1, k2] = folded.subject.keys;
+    expect([k1!.assurance, k1!.binding]).toEqual(["hardware", "attested"]);
+    expect([k2!.assurance, k2!.binding]).toEqual(["pop", "self"]);
+
+    // Authorization reads the PRESENTING key…
+    expect(projectAgentContext(folded.subject, k2).assurance).toBe("pop");
+    expect(projectAgentContext(folded.subject, k1).assurance).toBe("hardware");
+    // …and with no key supplied it falls back to the actor summary, for reporting.
+    expect(projectAgentContext(folded.subject).assurance).toBe("hardware");
+  });
+
+  it("renewing ONE key does not refresh a sibling's freshness claim", () => {
+    // The sharper bug. `ATTESTATION_RENEWED` moved only `subject.verifiedAt`, so a mandate pinned
+    // to a key last attested a year ago passed a 30-day bound because a sibling was renewed
+    // yesterday.
+    const OLD = "2026-09-01T00:00:00.000Z"; // genesis default
+    const NEW = "2026-12-01T00:00:00.000Z";
+    const c = chain(
+      (p) => ev("KEY_ADDED", { keyId: "k2", jwk: JWK, assurance: "hardware", binding: "attested", verifiedAt: OLD }, { prev: p }),
+      (p) => ev("ATTESTATION_RENEWED", { keyId: "k1", verifiedAt: NEW, attestationKind: "attestation-eat" }, { prev: p }),
+    );
+    const folded = foldActorChain(c);
+    expect(folded.ok).toBe(true);
+    if (!folded.ok) return;
+
+    const k1 = folded.subject.keys.find((k) => k.id === "k1")!;
+    const k2 = folded.subject.keys.find((k) => k.id === "k2")!;
+    expect(k1.verifiedAt).toBe(NEW);
+    expect(k2.verifiedAt).toBe(OLD); // untouched — it was not re-attested
+
+    const bound = [{ name: "fresh", description: "too old", expression: 'agent.verifiedAt >= "2026-10-01T00:00:00.000Z"' }];
+    const ctx = (k: typeof k1) => ({ userParams: {}, executionParams: {}, agent: projectAgentContext(folded.subject, k) });
+    expect(evaluateRules(bound, ctx(k1)).decision).toBe("allow");
+    expect(evaluateRules(bound, ctx(k2)).decision).toBe("deny");
+  });
+
+  it("a chain written before per-key rungs falls back to the actor summary", () => {
+    // Historical KEY_ADDED events carry no assurance. Inheriting the summary is what they meant;
+    // inventing a rung for them would be worse.
+    const c = chain((p) => ev("KEY_ADDED", { keyId: "k2", jwk: JWK }, { prev: p }));
+    const folded = foldActorChain(c);
+    expect(folded.ok).toBe(true);
+    if (!folded.ok) return;
+    expect(folded.subject.keys[1]!.assurance).toBe("hardware");
+  });
 });
