@@ -34,7 +34,7 @@ export interface BuildAffiliationInput {
 /** Build + sign an `AFFILIATION` event, signed by the org itself. */
 export function buildAffiliation(input: BuildAffiliationInput, signer: AffiliationSigner): ViaEvent {
   const ev = buildEvent({
-    credentialId: input.subject,
+    subject: input.subject,
     event: "AFFILIATION",
     actor: input.org,
     issuer: input.org,
@@ -71,7 +71,7 @@ export interface BuildRegulatoryInput {
  */
 export function buildRegulatory(input: BuildRegulatoryInput, signer: AffiliationSigner): ViaEvent {
   const ev = buildEvent({
-    credentialId: input.subject,
+    subject: input.subject,
     event: "REGULATORY",
     actor: input.attestedBy,
     issuer: input.attestedBy,

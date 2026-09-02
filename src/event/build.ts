@@ -16,8 +16,14 @@ import {
 
 export interface BuildEventInput {
   eventId?: string;
-  /** The credential this event is about — `credentialSubject.id`. */
-  credentialId: string;
+  /**
+   * What this event is ABOUT — becomes `credentialSubject.id`.
+   *
+   * A credential URN for a credential-scoped event, an actor DID for an actor-scoped one
+   * (v0.3 §3.4). Deliberately not called `credentialId`: the wire field has always been a plain
+   * subject identifier, and the old name implied a constraint the format never had.
+   */
+  subject: string;
   event: EventType;
   actor: string;
   /** The asserting actor's DID; defaults to the platform. */
@@ -69,7 +75,7 @@ export function buildEvent(input: BuildEventInput): ViaEvent {
     issuer: input.issuer ?? VIA_PLATFORM_DID,
     validFrom: input.validFrom ?? new Date().toISOString(),
     credentialSubject: {
-      id: input.credentialId,
+      id: input.subject,
       event: input.event,
       actor: input.actor,
       ...(credentialDigest ? { credentialDigest } : {}),
@@ -235,8 +241,8 @@ export async function auditEventChain(
 // ============================================================================
 
 export interface BuildChainedEventInput {
-  /** `credentialSubject.id` — the credential URN this event is about. */
-  credentialUrn: string;
+  /** What this event is about — a credential URN or an actor DID. See {@link BuildEventInput.subject}. */
+  subject: string;
   /** The event's own `id` (URN); defaults to a fresh `urn:via:event:<uuid>`. Set to reuse a
    *  pre-generated URN (e.g. the response's receipt URN) so the emitted event stays referable. */
   eventId?: string;
@@ -275,7 +281,7 @@ export function buildChainedEvent(input: BuildChainedEventInput): ViaEvent {
         ? null
         : eventChainLink(input.previous);
   const unsigned = buildEvent({
-    credentialId: input.credentialUrn,
+    subject: input.subject,
     ...(input.eventId ? { eventId: input.eventId } : {}),
     event: input.event,
     actor: input.actor,
@@ -333,7 +339,7 @@ export function buildIssuanceEvents(input: IssuanceInput): IssuanceResult {
 
   let prev: ViaEvent | null = null;
   const issue = buildChainedEvent({
-    credentialUrn: urn,
+    subject: urn,
     event: "ISSUE",
     actor: input.issuer.actor,
     credential: input.mandate as unknown as Record<string, unknown>,
@@ -351,7 +357,7 @@ export function buildIssuanceEvents(input: IssuanceInput): IssuanceResult {
   let anyReject = false;
   for (const g of input.grantors) {
     const ev = buildChainedEvent({
-      credentialUrn: urn,
+      subject: urn,
       event: g.accepted ? "ACCEPT" : "REJECT",
       actor: g.actor,
       credential: input.mandate as unknown as Record<string, unknown>,

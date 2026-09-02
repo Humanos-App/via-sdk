@@ -18,8 +18,10 @@ import {
   issueSnapshot,
   auditActorSnapshot,
   ACTOR_EVENT_TYPES,
+  EVENT_SCOPE,
   type ActorSnapshot,
 } from "../src/actor/model.js";
+import { EVENT_TYPES } from "../src/crypto/proof.js";
 import { eventChainLink } from "../src/event/build.js";
 import type { ViaEvent } from "../src/types.js";
 
@@ -440,6 +442,8 @@ describe("issueSnapshot / snapshotDigest", () => {
       sequence: 1,
     });
     expect(s.snapshot.supersedes).toBeNull();
+    // A snapshot is an artifact a verifier routes on, so it carries the marker (§13).
+    expect(s.snapshot.specVersion).toBe("0.3");
   });
 
   it("supersedes the previous snapshot by digest, and increments the sequence", () => {
@@ -529,6 +533,24 @@ describe("auditActorSnapshot", () => {
       chain: { ...snapshot.chain, genesisEvent: eventChainLink(g), headEvent: eventChainLink(broken[2]!) },
     };
     expect(auditActorSnapshot(bound, broken).reason).toMatch(/^fold_failed:/);
+  });
+});
+
+describe("EVENT_SCOPE / ACTOR_EVENT_TYPES", () => {
+  it("classifies every EventType exactly once, and derives the actor set from it", () => {
+    // The compiler already refuses an unclassified kind (`satisfies Record<EventType, …>`);
+    // this guards the derivation itself.
+    expect(Object.keys(EVENT_SCOPE).sort()).toEqual([...EVENT_TYPES].sort());
+    const actor = Object.entries(EVENT_SCOPE).filter(([, v]) => v === "actor").map(([k]) => k);
+    expect([...ACTOR_EVENT_TYPES].sort()).toEqual(actor.sort());
+  });
+
+  it("every credential-scoped kind is refused by the actor fold", () => {
+    for (const [kind, scope] of Object.entries(EVENT_SCOPE)) {
+      if (scope !== "credential") continue;
+      const c = chain((p) => ev(kind, {}, { prev: p }));
+      expect(foldActorChain(c)).toMatchObject({ ok: false, reason: "unknown_event_type" });
+    }
   });
 });
 

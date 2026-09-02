@@ -93,7 +93,7 @@ const REGEN = !!process.env.REGEN_FIXTURES;
     const issueEvent = signEvent(
       buildEvent({
         eventId: "urn:via:event:fixture-issue",
-        credentialId: mandate.id,
+        subject: mandate.id,
         event: "ISSUE",
         actor: orgDid,
         issuer: orgDid,
@@ -108,7 +108,7 @@ const REGEN = !!process.env.REGEN_FIXTURES;
     const acceptEvent = signEvent(
       buildEvent({
         eventId: "urn:via:event:fixture-accept",
-        credentialId: mandate.id,
+        subject: mandate.id,
         event: "ACCEPT",
         actor: userDid,
         issuer: userDid,
@@ -124,7 +124,7 @@ const REGEN = !!process.env.REGEN_FIXTURES;
     const verificationEvent = signEvent(
       buildEvent({
         eventId: "urn:via:event:fixture-verification",
-        credentialId: mandate.id,
+        subject: mandate.id,
         event: "VERIFICATION_APPROVED",
         actor: VERIFIER_DID,
         previousEvent: computeSRI(canonicalizeRFC8785(acceptEvent)),

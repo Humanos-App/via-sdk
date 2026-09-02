@@ -27,7 +27,9 @@
 import { canonicalizeRFC8785 } from "../crypto/canonicalize.js";
 import { computeSRI } from "../crypto/digest.js";
 import { eventChainLink } from "../event/build.js";
-import type { ViaEvent } from "../types.js";
+import { EVENT_TYPES, type EventType } from "../crypto/proof.js";
+import type { ViaEvent, SpecVersion } from "../types.js";
+import { VIA_SPEC_VERSION } from "../types.js";
 import type { Assurance, Binding } from "../agent/types.js";
 import type { Jwk } from "../crypto/p256.js";
 
@@ -83,6 +85,14 @@ export interface ViaActorSubject {
 
 /** The snapshot body: subject + chain binding + supersession (v0.3 §3.1/§5). */
 export interface ActorSnapshot {
+  /**
+   * The spec version this snapshot conforms to (§13).
+   *
+   * A snapshot is an artifact a verifier consumes and whose digest is chained into the next one
+   * via `supersedes`, so it needs the same routing marker every other VIA artifact carries —
+   * otherwise a consumer has to infer the shape, which is what the marker exists to prevent.
+   */
+  specVersion: SpecVersion;
   subject: ViaActorSubject;
   chain: { genesisEvent: string; headEvent: string; sequence: number };
   /** SRI of the prior snapshot, `null` at genesis. */
@@ -92,23 +102,61 @@ export interface ActorSnapshot {
   validUntil?: string;
 }
 
-/** The actor-scoped event kinds (v0.3 §3.4). */
-export const ACTOR_EVENT_TYPES = [
-  "ACTOR_REGISTERED",
-  "KEY_ADDED",
-  "KEY_ROTATED",
-  "KEY_REVOKED",
-  "ATTESTATION_RENEWED",
-  "ASSURANCE_UPDATED",
-  "FORK_EVIDENCE",
-  "AFFILIATION",
-  "DELEGATED",
-  "SUSPENDED",
-  "RESUMED",
-  "RETIRED",
-  "SNAPSHOT_ISSUED",
-] as const;
-export type ActorEventType = (typeof ACTOR_EVENT_TYPES)[number];
+/**
+ * Which subject an event kind is ABOUT — the one place scope is decided.
+ *
+ * `credential` events carry a credential URN in `credentialSubject.id`; `actor` events carry an
+ * actor DID (v0.3 §3.4). The platform reads this to know whether a row is keyed by credential or by
+ * actor, and the fold reads it to know what it may consume.
+ *
+ * `satisfies Record<EventType, …>` is the point of the shape: add a kind to EVENT_TYPES without
+ * classifying it here and the build fails. Previously the actor list was a second hand-written
+ * literal, so a missed entry surfaced as the fold rejecting a perfectly good chain with
+ * `unknown_event_type` — a bug that reads as bad data.
+ */
+export const EVENT_SCOPE = {
+  // credential-scoped — about a mandate
+  ISSUE: "credential",
+  ACCEPT: "credential",
+  REJECT: "credential",
+  STAMP: "credential",
+  REVOKE: "credential",
+  CANCEL: "credential",
+  EXPIRE: "credential",
+  EXHAUST: "credential",
+  VP_CREATED: "credential",
+  VERIFICATION_APPROVED: "credential",
+  VERIFICATION_DENIED: "credential",
+  ACTION_COMPLETED: "credential",
+  ACTION_FAILED: "credential",
+  AGENT_REGISTERED: "credential",
+  REGULATORY: "credential",
+  // actor-scoped — about the actor itself
+  ACTOR_REGISTERED: "actor",
+  KEY_ADDED: "actor",
+  KEY_ROTATED: "actor",
+  KEY_REVOKED: "actor",
+  ATTESTATION_RENEWED: "actor",
+  ASSURANCE_UPDATED: "actor",
+  FORK_EVIDENCE: "actor",
+  AFFILIATION: "actor",
+  DELEGATED: "actor",
+  SUSPENDED: "actor",
+  RESUMED: "actor",
+  RETIRED: "actor",
+  SNAPSHOT_ISSUED: "actor",
+} as const satisfies Record<EventType, "credential" | "actor">;
+
+export type EventScope = (typeof EVENT_SCOPE)[EventType];
+
+/** The actor-scoped event kinds (v0.3 §3.4) — DERIVED, never a second list. */
+export const ACTOR_EVENT_TYPES = EVENT_TYPES.filter(
+  (t): t is ActorEventType => EVENT_SCOPE[t] === "actor",
+);
+
+export type ActorEventType = {
+  [K in EventType]: (typeof EVENT_SCOPE)[K] extends "actor" ? K : never;
+}[EventType];
 
 export type ActorFoldResult =
   | { ok: true; subject: ViaActorSubject }
@@ -335,6 +383,7 @@ export function issueSnapshot(
   return {
     ok: true,
     snapshot: {
+      specVersion: VIA_SPEC_VERSION as SpecVersion,
       subject: folded.subject,
       chain: {
         genesisEvent: eventChainLink(events[0]!),

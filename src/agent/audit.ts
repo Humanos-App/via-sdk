@@ -22,7 +22,7 @@ export function buildAgentRegisteredEvent(
   signer: EventSigner,
 ): ViaEvent {
   const ev = buildEvent({
-    credentialId: input.agentDid,
+    subject: input.agentDid,
     event: "AGENT_REGISTERED",
     actor: input.agentDid,
     issuer: input.issuer,
@@ -58,7 +58,7 @@ export function buildVerificationEvent(
   signer: EventSigner,
 ): ViaEvent {
   const ev = buildEvent({
-    credentialId: input.mandateId,
+    subject: input.mandateId,
     event: input.decision === "allow" ? "VERIFICATION_APPROVED" : "VERIFICATION_DENIED",
     actor: input.actor,
     issuer: input.issuer,
