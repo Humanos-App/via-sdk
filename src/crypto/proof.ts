@@ -71,6 +71,10 @@ export const EventTypeEnum = Object.fromEntries(EVENT_TYPES.map((t) => [t, t])) 
   readonly [K in EventType]: K;
 };
 
+/** The same name at type position resolves to the event union — so `EventTypeEnum` works as both a
+ * value (`EventTypeEnum.STAMP`, `enum: EventTypeEnum`) and a type (`(e: EventTypeEnum) => …`). */
+export type EventTypeEnum = EventType;
+
 /**
  * @deprecated Use {@link EventType}. Legacy authorization-subset alias kept for one
  * migration window; the v0.1 `CANCELED_STAMP` is retired (see spec §5.4).

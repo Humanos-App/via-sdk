@@ -77,6 +77,14 @@ export interface Mandate {
    * be ACTIVE (revocation cascades).
    */
   delegation?: { parent: string; depth: number; tools: string[] };
+  /**
+   * Bounded-Use extension (§19.5) — the grant is usable at most N times; absent ⇒ unbounded.
+   * Positive safe integer ≥ 1. The count (`executionsUsed`) is issuer state, never in the
+   * credential. When present, `"maxExecutions"` is listed in `extensions`.
+   */
+  maxExecutions?: number;
+  /** §19.1 — presence manifest: the registered extensions this mandate uses, e.g. `["maxExecutions"]`. */
+  extensions?: string[];
 }
 
 export interface BitstringStatusListCredential {
