@@ -1,0 +1,40 @@
+{
+  "@context": {
+    "@version": 1.1,
+    "@protected": true,
+    "via": "https://via.humanos.tech/ns/v1#",
+
+    "VIAMandate": "via:VIAMandate",
+    "VIAEvent": "via:VIAEvent",
+    "VIAReceipt": "via:VIAReceipt",
+    "VIAEvidence": "via:VIAEvidence",
+
+    "specVersion": { "@id": "via:specVersion" },
+
+    "mandate": { "@id": "via:mandate", "@type": "@json" },
+    "grantor": { "@id": "via:grantor" },
+    "scope": { "@id": "via:scope" },
+    "context": { "@id": "via:context", "@type": "@json" },
+    "authorizedDIDs": { "@id": "via:authorizedDIDs" },
+    "action": { "@id": "via:action", "@type": "@json" },
+    "userParams": { "@id": "via:userParams", "@type": "@json" },
+
+    "digestSRI": { "@id": "via:digestSRI" },
+    "location": { "@id": "via:location", "@type": "@id" },
+    "mediaType": { "@id": "via:mediaType" },
+
+    "event": { "@id": "via:event" },
+    "credentialDigest": { "@id": "via:credentialDigest" },
+    "previousEvent": { "@id": "via:previousEvent" },
+    "role": { "@id": "via:role" },
+
+    "lifecycleAction": { "@id": "via:lifecycleAction" },
+
+    "receiptType": { "@id": "via:receiptType" },
+    "actor": { "@id": "via:actor", "@type": "@id" },
+    "reason": { "@id": "via:reason" },
+    "evaluations": { "@id": "via:evaluations", "@type": "@json" },
+    "executionParams": { "@id": "via:executionParams", "@type": "@json" },
+    "targetVerifier": { "@id": "via:targetVerifier" }
+  }
+}

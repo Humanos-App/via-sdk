@@ -1,0 +1,38 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/credentials/v2",
+    "https://via.humanos.tech/ns/v1"
+  ],
+  "id": "urn:via:event:fixture-verification",
+  "type": [
+    "VerifiableCredential",
+    "VIAEvent"
+  ],
+  "specVersion": "0.2",
+  "issuer": "did:web:humanos.tech",
+  "validFrom": "2026-01-05T00:00:00.000Z",
+  "credentialSubject": {
+    "id": "urn:via:credential:fixture-0001",
+    "event": "VERIFICATION_APPROVED",
+    "actor": "did:web:fidelidade.pt",
+    "previousEvent": "sha256-xf6OEAcZNI0gm1X/v4wQcQs4BFx8rcP85RKbUMSzj5Y=",
+    "evaluations": [
+      {
+        "rule": "amt",
+        "result": "pass"
+      }
+    ],
+    "executionParams": {
+      "amount": 100
+    },
+    "targetVerifier": "fidelidade.pt"
+  },
+  "proof": {
+    "type": "DataIntegrityProof",
+    "cryptosuite": "eddsa-jcs-2022",
+    "created": "2026-01-05T00:00:00.000Z",
+    "verificationMethod": "did:web:humanos.tech#key-1",
+    "proofPurpose": "assertionMethod",
+    "proofValue": "znKGMSuvHzx1JzdjEXkRkXEFFgLGSpGDhe67Pt1B8LhJ324nr2eXYDv7TRHzqAuhfSFaD52nsDxVySgn18zVHZJ9"
+  }
+}

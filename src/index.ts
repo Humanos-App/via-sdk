@@ -1,0 +1,339 @@
+/**
+ * VIA Protocol SDK (v0.2)
+ *
+ * Functions-only library implementing spec/via-protocol-spec-v0.2.md:
+ * Ed25519 / `eddsa-jcs-2022` / W3C VC 2.0. No HTTP, DB, or KMS — all I/O is injected.
+ */
+
+// Config & types
+export * from "./types.js";
+// Spec-version identity + detection (constants come via types.js; functions here)
+export { detectSpecVersion, isSupportedSpecVersion, type DetectedSpecVersion } from "./version.js";
+
+// Crypto
+export {
+  toBase64,
+  fromBase64,
+  toBase64Url,
+  fromBase64Url,
+  base58Encode,
+  base58Decode,
+  toMultibaseBase58,
+  fromMultibaseBase58,
+} from "./crypto/encoding.js";
+export { canonicalizeRFC8785 } from "./crypto/canonicalize.js";
+export { sha256, sha256Hex, computeSRI, verifySRI } from "./crypto/digest.js";
+export { viaUrn, type ViaUrnType } from "./urn.js";
+export {
+  generateEd25519Key,
+  publicKeyFromPrivate,
+  signRaw,
+  signMultibase,
+  verifyRaw,
+  verifyMultibase,
+  encodePublicKeyMultibase,
+  decodePublicKeyMultibase,
+  type Ed25519KeyPair,
+} from "./crypto/ed25519.js";
+export {
+  generateP256Key,
+  signES256,
+  verifyES256,
+  jwkThumbprint,
+  cleanPublicJwk,
+  type Jwk,
+  type P256KeyPair,
+} from "./crypto/p256.js";
+export {
+  createDataIntegrityProof,
+  verifyDataIntegrityProof,
+  type DataIntegrityProof,
+  type ProofPurpose,
+  EVENT_TYPES,
+  EventTypeEnum,
+  type EventType,
+  type LifecycleAction,
+  type CreateProofParams,
+} from "./crypto/proof.js";
+
+// DID
+export {
+  generateViaDID,
+  generateDomainDID,
+  normalizeDomain,
+  didFromUrl,
+  didWebToUrl,
+  parseDidWeb,
+  verificationMethodId,
+  getKeyId,
+  verifierDomainOf,
+  VIA_PLATFORM_DID,
+  VIA_PLATFORM_DOMAIN,
+  type ActorType as DidActorSegment,
+  type ParsedDidWeb,
+} from "./did/web.js";
+export {
+  buildDidDocument,
+  findVerificationMethod,
+  isAuthorizedFor,
+  resolveVerificationKey,
+  DID_CONTEXT,
+  type DidDocument,
+  type VerificationMethod,
+} from "./did/document.js";
+
+// Action & CEL
+export * from "./action/types.js";
+export {
+  validateParams,
+  validateExecutionParams,
+  validateUserParams,
+  wrapUserParamsWithAction,
+  unwrapUserParamValues,
+  type WrappedUserParam,
+} from "./action/execution-params.js";
+export { operatorsByType, buildTypeResolver, generateCelExpression } from "./action/cel.js";
+export {
+  buildActionVersion,
+  actionDigestSRI,
+  buildActionReference,
+  verifyActionReference,
+  type BuildActionVersionInput,
+} from "./action/build.js";
+export {
+  evaluateRule,
+  evaluateRules,
+  type CelContext,
+  type RuleEvaluation,
+  type EvaluationResult,
+} from "./cel/evaluate.js";
+
+// Mandate
+export {
+  buildMandate,
+  buildEvidence,
+  stampMandate,
+  verifyStamp,
+  addProof,
+  verifyMandateProofs,
+  type BuildMandateInput,
+  type BuildEvidenceInput,
+  type StampSigner,
+  type MandateSigner,
+  type MandateProofCheck,
+  type ResolvePublicKey,
+} from "./mandate/build.js";
+
+// Events — the unified VIAEvent primitive (spec §5)
+export {
+  buildEvent,
+  signEvent,
+  verifyEvent,
+  walkEventChain,
+  eventChainLink,
+  auditEventChain,
+  buildChainedEvent,
+  buildIssuanceEvents,
+  type BuildEventInput,
+  type BindableCredential,
+  type EventAudit,
+  type ChainAudit,
+  type EventSigner,
+  type BuildChainedEventInput,
+  type IssuanceParty,
+  type IssuanceInput,
+  type IssuanceResult,
+} from "./event/build.js";
+
+// Status
+export {
+  createBitstring,
+  setBit,
+  getBit,
+  encodeList,
+  decodeList,
+  MINIMUM_LIST_LENGTH,
+} from "./status/bitstring.js";
+export {
+  StatusList,
+  buildCredentialStatusEntry,
+  checkCredentialStatus,
+  type StatusPurpose,
+  type CredentialStatusCheck,
+} from "./status/status.js";
+
+// Presentation
+export {
+  buildPresentation,
+  verifyPresentation,
+  generateChallenge,
+  domainMatches,
+  type BuildPresentationInput,
+  type VerifiedPresentation,
+  type GenerateChallengeContext,
+} from "./presentation/vp.js";
+
+export {
+  buildSdJwtMandate,
+  presentSdJwt,
+  verifySdJwtPresentation,
+  VIA_VCT,
+  SD_JWT_TYP,
+  type BuildSdJwtMandateInput,
+  type PresentSdJwtInput,
+  type VerifiedSdJwt,
+} from "./presentation/sd-jwt.js";
+
+// Verify
+export {
+  verify,
+  type VerifyDeps,
+  type VerifyResult,
+  type VerifyInput,
+  type CredentialRecord,
+} from "./verify/verify.js";
+
+
+// Agent Binding (§16)
+export {
+  type Assurance,
+  type Binding,
+  type Root,
+  type AgentReasonCode,
+  type CustodyRef,
+  type BoundKey,
+  type ConfinementEvidence,
+  type ConfinementResult,
+  type NitroCa,
+  ASSURANCE_RANK,
+  assuranceRank,
+  meets,
+} from "./agent/types.js";
+export {
+  actionHash,
+  buildPoP,
+  decodePoP,
+  verifyPoPSignature,
+  type PopPayload,
+  type DecodedPoP,
+} from "./agent/pop.js";
+
+// Agent Binding (§16) — registration/attestation (§16.5)
+export {
+  validateCustody,
+  validateCoseAttestation,
+  validateWebauthnAttestation,
+  readAttestationNonce,
+  type DescribeKey,
+  type KeyDescription,
+} from "./agent/attestation.js";
+export {
+  registerChallenge,
+  registerAgentKey,
+  createRegChallengeStore,
+  type RegChallengeStore,
+  type RegisterChallengeDeps,
+  type RegisterChallenge,
+  type RegisterAgentKeyInput,
+  type RegisterAgentKeyDeps,
+} from "./agent/registration.js";
+
+// Agent Binding (§16) — constraints (structured → CEL) + the verify path (A1–A8)
+export {
+  constraintToRule,
+  constraintsToRules,
+  agentReasonForRule,
+  type Constraint,
+} from "./agent/constraints.js";
+export {
+  verifyAgentBinding,
+  verifyAgentDirect,
+  type AgentEnv,
+  type PopCheckInput,
+  type PopCheckDeps,
+  type PopCheckResult,
+  type AgentDirectDeps,
+  type AgentDirectResult,
+  type CredentialRecordLike,
+} from "./agent/verify.js";
+
+// Agent Binding (§16) — audit (§16.9, signed VIAEvents). `EventSigner` now lives in event/build.js.
+export {
+  buildAgentRegisteredEvent,
+  buildVerificationEvent,
+} from "./agent/audit.js";
+
+// Operator Verification (§18 proposal) — the identity axis
+export {
+  operatorRank,
+  meetsOperator,
+  OPERATOR_RANK,
+  OPERATOR_METHODS,
+  type OperatorLevel,
+  type OperatorMethod,
+  type SubjectType,
+  type AffiliationRelation,
+  type OperatorReasonCode,
+  type OperatorRevocationReason,
+  type OperatorClaims,
+  type ViaOperatorCredential,
+  type OperatorEnv,
+} from "./operator/types.js";
+export {
+  buildOperatorCredential,
+  signOperatorCredential,
+  verifyOperatorCredential,
+  TYPE_VIA_OPERATOR,
+  type OperatorSigner,
+  type BuildOperatorCredentialInput,
+} from "./operator/credential.js";
+export {
+  buildAffiliation,
+  buildRegulatory,
+  verifyAffiliation,
+  type AffiliationSigner,
+  type BuildAffiliationInput,
+  type BuildRegulatoryInput,
+} from "./operator/affiliation.js";
+export {
+  verifyOperator,
+  type OperatorVerifyInput,
+  type OperatorVerifyDeps,
+  type OperatorVerifyResult,
+} from "./operator/verify.js";
+
+// Grantor Binding (§17)
+export {
+  enrollGrantor,
+  grantorDidFromThumbprint,
+  grantorTermsDigest,
+  verifyGrantorAssertion,
+  buildGrantorBinding,
+  type GrantorBinding,
+  type GrantorReasonCode,
+  type GrantorTerms,
+  type WebauthnAssertion,
+} from "./grantor/binding.js";
+export { verifyWebauthnAssertion, type WebauthnAssertionInput } from "./crypto/webauthn.js";
+
+// VIAActor — the actor axis (v0.3 §3–§5)
+export {
+  foldActorChain,
+  resolvePinnedKeys,
+  issueSnapshot,
+  snapshotDigest,
+  auditActorSnapshot,
+  ACTOR_EVENT_TYPES,
+  type ActorEventType,
+  type ActorType,
+  type ActorStatus,
+  type ActorKeyStatus,
+  type ActorKeyState,
+  type AttestationRef,
+  type BootstrapAnchor,
+  type ViaActorSubject,
+  type ActorSnapshot,
+  type ActorFoldResult,
+  type ActorAudit,
+} from "./actor/model.js";
+
