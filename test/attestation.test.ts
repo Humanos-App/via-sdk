@@ -129,6 +129,71 @@ describe("validateCoseAttestation (§16.5 · attested / Nitro)", () => {
   });
 });
 
+describe("PCR pinning (§16.5) — WHICH workload, not merely which vendor", () => {
+  const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
+
+  it("matching PCRs still grant hardware/attested", async () => {
+    const ca = await mintNitroCa();
+    const { publicJwk } = await generateP256Key();
+    const pcrs = { 0: new Uint8Array(48).fill(0xab), 1: new Uint8Array(48).fill(0xcd) };
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: publicJwk, pcrs });
+    const res = await validateCoseAttestation(doc, [ca.rootPem], { "0": hex(pcrs[0]), "1": hex(pcrs[1]) });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.assurance).toBe("hardware");
+  });
+
+  it("a DIFFERENT workload on the SAME trusted hardware is refused", async () => {
+    // The attack roots alone cannot see: an attacker who can rent the same vendor's enclaves gets
+    // a document that passes chain validation. Only the measurements distinguish their image.
+    const ca = await mintNitroCa();
+    const { publicJwk } = await generateP256Key();
+    const doc = await buildCoseAttestation(ca, {
+      publicKeyJwk: publicJwk,
+      pcrs: { 0: new Uint8Array(48).fill(0x99) }, // some other image
+    });
+    const res = await validateCoseAttestation(doc, [ca.rootPem], { "0": hex(new Uint8Array(48).fill(0xab)) });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("attestation_pcr_mismatch");
+  });
+
+  it("a PCR the document does not carry is a mismatch, not a pass", async () => {
+    const ca = await mintNitroCa();
+    const { publicJwk } = await generateP256Key();
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: publicJwk, pcrs: { 0: new Uint8Array(48) } });
+    const res = await validateCoseAttestation(doc, [ca.rootPem], { "8": hex(new Uint8Array(48).fill(0x11)) });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("attestation_pcr_mismatch");
+  });
+
+  it("pinning NOTHING skips the check — the weaker claim, asked for explicitly", async () => {
+    const ca = await mintNitroCa();
+    const { publicJwk } = await generateP256Key();
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: publicJwk, pcrs: { 0: new Uint8Array(48).fill(0x99) } });
+    for (const pins of [undefined, {}]) {
+      const res = await validateCoseAttestation(doc, [ca.rootPem], pins);
+      expect(res.ok).toBe(true);
+    }
+  });
+
+  it("registerAgentKey passes the pins through", async () => {
+    const ca = await mintNitroCa();
+    const { publicJwk } = await generateP256Key();
+    const store = createRegChallengeStore();
+    const { regNonce } = await registerChallenge({ store });
+    const doc = await buildCoseAttestation(ca, {
+      publicKeyJwk: publicJwk,
+      pcrs: { 0: new Uint8Array(48).fill(0x99) },
+      nonceB64: regNonce,
+    });
+    const res = await registerAgentKey(
+      { cnf: { jwk: publicJwk }, evidence: { type: "attestation-eat", docB64: doc }, regNonce },
+      { store, nitroRoots: [ca.rootPem], expectedPcrs: { "0": hex(new Uint8Array(48).fill(0xab)) } },
+    );
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("attestation_pcr_mismatch");
+  });
+});
+
 describe("readAttestationNonce", () => {
   it("round-trips the embedded challenge nonce; null when absent", async () => {
     const ca = await mintNitroCa();

@@ -107,6 +107,12 @@ export interface RegisterAgentKeyDeps {
   now?: () => number;
   /** Pinned Nitro CA roots (PEM) for the `attestation-eat` path. */
   nitroRoots?: string[];
+  /**
+   * Pinned PCR values (index -> lowercase hex) for the `attestation-eat` path — WHICH WORKLOAD.
+   * Roots prove the key is in an enclave from a vendor you trust; PCRs prove it is running the
+   * image you built. Omitted means unchecked, and the granted rung then means the weaker thing.
+   */
+  expectedPcrs?: Record<string, string>;
   /** Pinned FIDO/vendor roots (PEM) for the `webauthn` path. */
   fidoRoots?: string[];
   /** Custody oracle (injected — replaces kya's HTTP DescribeKey) for the `custody` path. */
@@ -178,7 +184,7 @@ export async function registerAgentKey(
       ) {
         return { ok: false, reason: "attestation_nonce_invalid" };
       }
-      result = await validateCoseAttestation(ev.docB64, deps.nitroRoots ?? []);
+      result = await validateCoseAttestation(ev.docB64, deps.nitroRoots ?? [], deps.expectedPcrs);
       if (result.ok) await deps.store?.consume(input.regNonce);
       break;
     }

@@ -98,9 +98,19 @@ export async function validateCustody(
  * the LEAF cert key, chain leaf→cabundle→a PINNED root, and return the embedded attested
  * key as the `cnf`. Fail-closed: any malformed input yields `attestation_chain_invalid`.
  */
+/** Lowercase hex — how AWS surfaces PCRs (`nitro-cli describe-eif`), so a pinned value pastes in. */
+function toHex(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString("hex");
+}
+
 export async function validateCoseAttestation(
   docB64: string,
   pinnedRootsPem: string[],
+  /**
+   * PCR index -> expected value, lowercase hex. Omit (or pass `{}`) to skip the check and accept
+   * the weaker claim: "this key is in AN enclave under a pinned root", not "…running my workload".
+   */
+  expectedPcrs?: Record<string, string>,
 ): Promise<ConfinementResult> {
   try {
     const doc = cbor.decode(fromBase64Url(docB64)) as unknown[];
@@ -119,6 +129,7 @@ export async function validateCoseAttestation(
       certificate?: Uint8Array;
       cabundle?: Uint8Array[];
       public_key?: Uint8Array;
+      pcrs?: Record<string, Uint8Array>;
     };
     if (!payload.certificate || !payload.public_key) return fail("attestation_chain_invalid");
 
@@ -135,7 +146,29 @@ export async function validateCoseAttestation(
     const chain = [leaf, ...bundle];
     if (!validateCertChain(chain, pinnedRootsPem, Date.now())) return fail("attestation_chain_invalid");
 
-    // (3) attested cnf = the embedded public_key (raw uncompressed EC point).
+    // (3) PCR pinning — WHICH CODE is running in that enclave.
+    //
+    // Steps (1)-(2) prove the key lives in AN enclave whose chain reaches a root you pinned. They
+    // say nothing about what that enclave is RUNNING: anyone who can rent hardware from the same
+    // vendor gets a document that passes them. PCRs are the enclave's own measurements of its
+    // image, kernel and application, so pinning them is what turns "some enclave" into "the
+    // workload I built".
+    //
+    // Opt-in, and empty means UNCHECKED, not "matches" — a caller that pins nothing gets the
+    // weaker claim it asked for. That is stated here rather than defaulted, because a silent
+    // no-op on the check that carries the whole `hardware` rung is exactly the kind of thing that
+    // reads as verified for years.
+    if (expectedPcrs && Object.keys(expectedPcrs).length > 0) {
+      const got = payload.pcrs ?? {};
+      for (const [index, want] of Object.entries(expectedPcrs)) {
+        const actual = got[index];
+        if (!actual || toHex(actual) !== want.trim().toLowerCase()) {
+          return fail("attestation_pcr_mismatch");
+        }
+      }
+    }
+
+    // (4) attested cnf = the embedded public_key (raw uncompressed EC point).
     const jwk = rawPointToJwk(payload.public_key);
     return {
       ok: true,

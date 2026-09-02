@@ -32,6 +32,7 @@ export type AgentReasonCode =
   | "attestation_chain_invalid"
   | "attestation_key_mismatch"
   | "attestation_nonce_invalid"
+  | "attestation_pcr_mismatch"
   | "attestation_stale"
   | "root_not_accepted"
   | "agent_assurance_insufficient"
