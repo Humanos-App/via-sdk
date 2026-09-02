@@ -1,4 +1,15 @@
-import type { ParamDef } from "./types.js";
+import type { ArrayItemType, ParamDef } from "./types.js";
+
+/** Every type this SDK understands. A declaration outside this set is refused (see below). */
+const KNOWN_TYPES = new Set<string>([
+  "string",
+  "number",
+  "integer",
+  "boolean",
+  "datetime",
+  "array",
+  "map",
+]);
 
 /**
  * Validate supplied values against a `Record<string, ParamDef>` declaration.
@@ -6,6 +17,16 @@ import type { ParamDef } from "./types.js";
  * SPEC-DELTA N28: uses a strict `undefined`/`null` "missing" check (the platform's
  * `validateUserParams` used `!value`, mishandling `0`/`false`/`""`).
  * N29: validates `datetime` (the platform validators omit it).
+ *
+ * An unrecognised `type` refuses the whole verification rather than skipping that one
+ * parameter. This SDK is the spec implementation, so it is the thing an integrator runs to
+ * check our decisions independently. If a newer platform declares a type this build does not
+ * know, skipping it would let this verifier ALLOW an order the platform denies — wrong in the
+ * permissive direction, and silent. Refusing is the fail-closed answer: a verifier that does
+ * not understand a parameter is not checking what the customer signed.
+ *
+ * The check is on the DECLARATION, not on the supplied value, and so runs even when the
+ * parameter is absent. "I do not understand this action" is true either way.
  */
 export function validateParams(
   defs: Record<string, ParamDef>,
@@ -13,6 +34,11 @@ export function validateParams(
   kind: "User" | "Execution",
 ): void {
   for (const [name, def] of Object.entries(defs)) {
+    if (!KNOWN_TYPES.has(def.type as string)) {
+      throw new Error(
+        `${kind} param '${name}' declares unknown type '${String(def.type)}'; this SDK build cannot verify it`,
+      );
+    }
     const value = values[name];
     if (value === undefined || value === null) {
       if (def.required) throw new Error(`${kind} param '${name}' is required`);
@@ -20,23 +46,63 @@ export function validateParams(
     }
     switch (def.type) {
       case "number":
-        if (typeof value !== "number" || Number.isNaN(value)) throw err(kind, name, "number");
-        break;
       case "integer":
-        if (typeof value !== "number" || !Number.isInteger(value)) throw err(kind, name, "integer");
-        break;
       case "string":
-        if (typeof value !== "string") throw err(kind, name, "string");
-        break;
       case "boolean":
-        if (typeof value !== "boolean") throw err(kind, name, "boolean");
-        break;
       case "datetime":
-        if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) throw err(kind, name, "datetime");
+        if (!matchesScalar(def.type, value)) throw err(kind, name, def.type);
         break;
       case "array":
         if (!Array.isArray(value)) throw err(kind, name, "array");
         break;
+      case "map":
+        validateMap(def.values, value, kind, name);
+        break;
+    }
+  }
+}
+
+/**
+ * Keys permitted in a `map` param: 1-100 characters of `A-Z a-z 0-9 . _ : -`.
+ *
+ * The length bound is the obvious half. The charset is the deliberate one: map keys are
+ * rendered on the approval screen, so unrestricted Unicode would let a key be built from
+ * homoglyphs that read as a legitimate identifier (an ISIN, an account id) to the human
+ * signing the mandate. Colon is in because URNs and DIDs use it.
+ */
+export const MAP_KEY_PATTERN = /^[A-Za-z0-9._:-]{1,100}$/;
+
+/** Shared by the top-level switch and by `map` values, so a value validates identically either way. */
+function matchesScalar(type: ArrayItemType, value: unknown): boolean {
+  switch (type) {
+    case "number":
+      return typeof value === "number" && !Number.isNaN(value);
+    case "integer":
+      return typeof value === "number" && Number.isInteger(value);
+    case "string":
+      return typeof value === "string";
+    case "boolean":
+      return typeof value === "boolean";
+    case "datetime":
+      return typeof value === "string" && Number.isFinite(Date.parse(value));
+  }
+}
+
+function validateMap(
+  valueType: ArrayItemType | undefined,
+  value: unknown,
+  kind: "User" | "Execution",
+  name: string,
+): void {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw err(kind, name, "map");
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (!MAP_KEY_PATTERN.test(key)) {
+      throw new Error(
+        `${kind} param '${name}' has an invalid key '${key}': map keys must be 1-100 characters of A-Z a-z 0-9 . _ : -`,
+      );
+    }
+    if (valueType && !matchesScalar(valueType, entry)) {
+      throw new Error(`${kind} param '${name}' value for key '${key}' must be a ${valueType}`);
     }
   }
 }
