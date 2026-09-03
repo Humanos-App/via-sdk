@@ -234,6 +234,8 @@ export {
 // Agent Binding (§16) — registration/attestation (§16.5)
 export {
   validateCustody,
+  NO_ROOTS,
+  type PinnedRoots,
   validateCoseAttestation,
   validateWebauthnAttestation,
   readAttestationNonce,

@@ -14,7 +14,7 @@
 // on ES256/P-256 for interop with KMS/WebAuthn/DBSC. The VALIDATION LOGIC (Sig_structure
 // verify + X.509 chain to a pinned root) is byte-for-byte identical — only the
 // curve/hash constant differs.
-import { X509Certificate as NodeX509Certificate, verify as nodeVerify } from "node:crypto";
+import { X509Certificate as NodeX509Certificate, verify as nodeVerify, createHash } from "node:crypto";
 import { Encoder } from "cbor-x";
 import { sha256 } from "../crypto/digest.js";
 import { toBase64Url, fromBase64Url } from "../crypto/encoding.js";
@@ -117,7 +117,7 @@ function toHex(bytes: Uint8Array): string {
 
 export async function validateCoseAttestation(
   docB64: string,
-  pinnedRootsPem: string[],
+  pinnedRoots: PinnedRoots,
   /**
    * PCR index -> expected value, lowercase hex. Omit (or pass `{}`) to skip the check and accept
    * the weaker claim: "this key is in AN enclave under a pinned root", not "…running my workload".
@@ -156,7 +156,11 @@ export async function validateCoseAttestation(
     // name-chaining, CA basic-constraints, and validity windows.
     const bundle = (payload.cabundle ?? []).map((der) => new NodeX509Certificate(Buffer.from(der)));
     const chain = [leaf, ...bundle];
-    if (!validateCertChain(chain, pinnedRootsPem, Date.now())) return fail("attestation_chain_invalid");
+    // The rung is WHICH list the reached root is in, not merely that one was reached. A TPM vendor
+    // EK root and a Nitro root are both "a vendor I trust"; only one of them is a dedicated
+    // environment, and one flat list made those the same statement (F10).
+    const graded = gradeChain(chain, pinnedRoots, Date.now());
+    if (!graded) return fail("attestation_chain_invalid");
 
     // (3) PCR pinning — WHICH CODE is running in that enclave.
     //
@@ -185,11 +189,12 @@ export async function validateCoseAttestation(
     return {
       ok: true,
       cnf: { jwk },
-      assurance: "hardware",
+      assurance: graded.rung,
       binding: "attested",
       root: "aws-nitro",
       verifiedAt: Date.now(),
       maxAttestationStaleness: 86400,
+      evidence: { rootFingerprint: graded.rootFingerprint },
     };
   } catch {
     return fail("attestation_chain_invalid");
@@ -211,7 +216,7 @@ export async function validateCoseAttestation(
 export async function validateWebauthnAttestation(
   attestationObjectB64: string,
   clientDataJSONB64: string,
-  pinnedRootsPem: string[],
+  pinnedRoots: PinnedRoots,
 ): Promise<ConfinementResult> {
   try {
     const ao = cbor.decode(fromBase64Url(attestationObjectB64)) as {
@@ -223,6 +228,20 @@ export async function validateWebauthnAttestation(
     const jwk = credentialKeyFromAuthData(ao.authData);
     if (!jwk) return fail("pop_invalid");
 
+    // Captured for retro-audit and a future MDS layer; NEITHER grades anything today.
+    const evidence = {
+      aaguid: aaguidFromAuthData(ao.authData),
+      authDataFlags: ao.authData[32]!,
+      fmt: ao.fmt ?? "none",
+    };
+
+    // BACKUP ELIGIBLE (BE, bit 0x08) clear is required above `pop`. BE=1 means the credential may
+    // be synced across a vendor's cloud to devices this attestation never described — Apple and
+    // Google passkeys by default. The quote then proves where the key was BORN, not where it lives
+    // now, and a rung is a statement about where it lives. Checked before the chain, so a synced
+    // credential cannot buy a rung with an otherwise-perfect chain.
+    const backupEligible = (evidence.authDataFlags & 0x08) !== 0;
+
     // The honest fallback: a real credential key we could not anchor to a trusted
     // authenticator → the lowest rung it has earned.
     const selfRung = (): ConfinementResult => ({
@@ -231,6 +250,7 @@ export async function validateWebauthnAttestation(
       assurance: "pop",
       binding: "self",
       verifiedAt: Date.now(),
+      evidence: { ...evidence, rootFingerprint: null },
     });
 
     // Only 'packed'/'android-key' use the sig(authData ‖ clientDataHash) form we verify
@@ -254,9 +274,19 @@ export async function validateWebauthnAttestation(
     // (2) The batch cert must chain to a PINNED FIDO/vendor root. Without a pinned anchor
     // the authenticator's provenance is unverifiable → self/pop.
     const chain = x5c.map((der) => new NodeX509Certificate(Buffer.from(der)));
-    if (!validateCertChain(chain, pinnedRootsPem, Date.now())) return selfRung();
+    const graded = gradeChain(chain, pinnedRoots, Date.now());
+    if (!graded) return selfRung();
+    if (backupEligible) return selfRung(); // syncable credential — see the BE note above
 
-    return { ok: true, cnf: { jwk }, assurance: "hardware", binding: "attested", root: "fido", verifiedAt: Date.now() };
+    return {
+      ok: true,
+      cnf: { jwk },
+      assurance: graded.rung,
+      binding: "attested",
+      root: "fido",
+      verifiedAt: Date.now(),
+      evidence: { ...evidence, rootFingerprint: graded.rootFingerprint },
+    };
   } catch {
     return fail("pop_invalid");
   }
@@ -319,6 +349,22 @@ function coseHashName(alg: number | undefined): "sha256" | "sha384" | "sha512" |
   }
 }
 
+/**
+ * The AAGUID — 16 bytes naming the authenticator MODEL, at authData[37..53].
+ *
+ * Inside authData, so it is covered by the attestation signature and therefore trustworthy — unlike
+ * `authenticatorAttachment` and `transports`, which the CLIENT reports outside the signed bytes and
+ * which must never contribute to a rung. The parser previously stepped over these bytes to reach
+ * the COSE key; it records them now. Nothing grades on it yet: it is evidence for retro-audit and
+ * the seam where a FIDO MDS lookup lands.
+ */
+function aaguidFromAuthData(authData: Uint8Array): string | null {
+  if (authData.length < 53) return null;
+  const hex = Buffer.from(authData.slice(37, 53)).toString("hex");
+  if (/^0+$/.test(hex)) return null; // all-zero = the authenticator declined to identify itself
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 // Parse WebAuthn authenticatorData → attested credential COSE key → JWK.
 function credentialKeyFromAuthData(authData: Uint8Array): Jwk | null {
   if (authData.length < 37) return null;
@@ -355,6 +401,76 @@ function coseGet(cose: unknown, label: number): Uint8Array | undefined {
 //                          without this, a stolen leaf key could mint subs).
 // The terminal cert must equal, or be validly issued by, one of the pinned roots.
 // Returns false (never throws) on any malformed input — fail closed.
+/**
+ * Roots pinned PER RUNG. One flat list was the F10 trap: it made "I trust this vendor" and "this
+ * vendor's hardware earns `hardware`" the same statement, so pinning a TPM vendor root to let
+ * Windows Hello register silently granted it the rung a Nitro enclave earns.
+ *
+ * An operator must now say which rung each root buys. There is no default: a root in neither list
+ * chains to nothing and the evidence degrades, which is the safe direction.
+ */
+export interface PinnedRoots {
+  /** Secure element of a GENERAL-PURPOSE host — TPM vendor EK roots, platform authenticators. */
+  device: string[];
+  /** DEDICATED environment — Nitro, SEV-SNP, TDX, HSM vendor roots, hardware security keys. */
+  hardware: string[];
+}
+
+/** No roots pinned — every chain reaches nothing and degrades. The safe default, and the one a
+ * platform that has not decided which vendors it trusts should be running. */
+export const NO_ROOTS: PinnedRoots = { device: [], hardware: [] };
+
+/** SHA-256 of the matched root's DER, hex — recorded as evidence of WHICH anchor was reached. */
+function rootFingerprint(root: NodeX509Certificate): string {
+  return createHash("sha256").update(root.raw).digest("hex");
+}
+
+/**
+ * Validate the chain and return the rung the matched root earns, or `null` if it reaches none.
+ *
+ * A root listed under BOTH rungs grades as the LOWER one. Duplication is a config mistake, and the
+ * generous reading of a mistake is the one that over-claims.
+ */
+function gradeChain(
+  chain: NodeX509Certificate[],
+  roots: PinnedRoots,
+  nowMs: number,
+): { rung: "device" | "hardware"; rootFingerprint: string } | null {
+  const device = matchRoot(chain, roots.device, nowMs);
+  if (device) return { rung: "device", rootFingerprint: rootFingerprint(device) };
+  const hardware = matchRoot(chain, roots.hardware, nowMs);
+  if (hardware) return { rung: "hardware", rootFingerprint: rootFingerprint(hardware) };
+  return null;
+}
+
+/** The pinned root this chain reaches, or null. Extracted so {@link gradeChain} can say WHICH. */
+function matchRoot(
+  chain: NodeX509Certificate[],
+  pinnedRootsPem: string[],
+  nowMs: number,
+): NodeX509Certificate | null {
+  try {
+    if (chain.length === 0 || pinnedRootsPem.length === 0) return null;
+    for (const c of chain) if (!certValidAt(c, nowMs)) return null;
+    for (let i = 0; i < chain.length - 1; i++) {
+      const child = chain[i]!;
+      const parent = chain[i + 1]!;
+      if (!parent.ca) return null;
+      if (!(child.checkIssued(parent) && child.verify(parent.publicKey))) return null;
+    }
+    const top = chain[chain.length - 1]!;
+    for (const pem of pinnedRootsPem) {
+      const root = new NodeX509Certificate(pem);
+      if (!root.ca || !certValidAt(root, nowMs)) continue;
+      if (Buffer.compare(top.raw, root.raw) === 0) return root;
+      if (top.checkIssued(root) && top.verify(root.publicKey)) return root;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function validateCertChain(chain: NodeX509Certificate[], pinnedRootsPem: string[], nowMs: number): boolean {
   try {
     if (chain.length === 0 || pinnedRootsPem.length === 0) return false;

@@ -87,7 +87,7 @@ describe("validateCoseAttestation (§16.5 · attested / Nitro)", () => {
     const ca = await mintNitroCa();
     const key = await generateP256Key();
     const doc = await buildCoseAttestation(ca, { publicKeyJwk: key.publicJwk, nonceB64: toBase64Url(te.encode("nonce-1")) });
-    const res = await validateCoseAttestation(doc, [ca.rootPem]);
+    const res = await validateCoseAttestation(doc, { device: [], hardware: [ca.rootPem] });
     expect(res.ok).toBe(true);
     if (res.ok) {
       expect(res.assurance).toBe("hardware");
@@ -103,7 +103,7 @@ describe("validateCoseAttestation (§16.5 · attested / Nitro)", () => {
     const other = await mintNitroCa();
     const key = await generateP256Key();
     const doc = await buildCoseAttestation(ca, { publicKeyJwk: key.publicJwk });
-    const res = await validateCoseAttestation(doc, [other.rootPem]);
+    const res = await validateCoseAttestation(doc, { device: [], hardware: [other.rootPem] });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.reason).toBe("attestation_chain_invalid");
   });
@@ -114,7 +114,7 @@ describe("validateCoseAttestation (§16.5 · attested / Nitro)", () => {
     const doc = await buildCoseAttestation(ca, { publicKeyJwk: key.publicJwk });
     const raw = fromBase64Url(doc);
     raw[raw.length - 10] ^= 0xff;
-    const res = await validateCoseAttestation(toBase64Url(raw), [ca.rootPem]);
+    const res = await validateCoseAttestation(toBase64Url(raw), { device: [], hardware: [ca.rootPem] });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.reason).toBe("attestation_chain_invalid");
   });
@@ -123,7 +123,7 @@ describe("validateCoseAttestation (§16.5 · attested / Nitro)", () => {
     const ca = await mintNitroCa();
     const key = await generateP256Key();
     const doc = await buildCoseAttestation(ca, { publicKeyJwk: key.publicJwk });
-    const res = await validateCoseAttestation(doc, []);
+    const res = await validateCoseAttestation(doc, { device: [], hardware: [] });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.reason).toBe("attestation_chain_invalid");
   });
@@ -159,7 +159,7 @@ describe("restoreNitroCa — a dev CA that outlives its process", () => {
 
     // Validated against the ORIGINAL root — the point being that the restored signer is the same
     // authority, not merely a working one.
-    const res = await validateCoseAttestation(doc, [original.rootPem]);
+    const res = await validateCoseAttestation(doc, { device: [], hardware: [original.rootPem] });
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.assurance).toBe("hardware");
   });
@@ -173,7 +173,7 @@ describe("restoreNitroCa — a dev CA that outlives its process", () => {
     const { publicJwk } = await generateP256Key();
     const doc = await buildCoseAttestation(restored, { publicKeyJwk: publicJwk });
     const other = await mintNitroCa();
-    expect((await validateCoseAttestation(doc, [other.rootPem])).ok).toBe(false);
+    expect((await validateCoseAttestation(doc, { device: [], hardware: [other.rootPem] })).ok).toBe(false);
   });
 });
 
@@ -217,7 +217,7 @@ describe("the assurance ladder (§16.5) — the rung is which ANCHOR you reached
     const doc = await buildCoseAttestation(ca, { publicKeyJwk: publicJwk, nonceB64: regNonce });
     const attested = await registerAgentKey(
       { cnf: { jwk: publicJwk }, evidence: { type: "attestation-eat", docB64: doc }, regNonce },
-      { store, nitroRoots: [ca.rootPem] },
+      { store, nitroRoots: { device: [], hardware: [ca.rootPem] } },
     );
     expect(attested.ok && [attested.assurance, attested.binding]).toEqual(["hardware", "attested"]);
 
@@ -227,7 +227,7 @@ describe("the assurance ladder (§16.5) — the rung is which ANCHOR you reached
     const doc2 = await buildCoseAttestation(ca, { publicKeyJwk: publicJwk, nonceB64: c2.regNonce });
     const unpinned = await registerAgentKey(
       { cnf: { jwk: publicJwk }, evidence: { type: "attestation-eat", docB64: doc2 }, regNonce: c2.regNonce },
-      { store: store2, nitroRoots: [] },
+      { store: store2, nitroRoots: { device: [], hardware: [] } },
     );
     expect(unpinned.ok).toBe(false);
   });
@@ -241,7 +241,7 @@ describe("PCR pinning (§16.5) — WHICH workload, not merely which vendor", () 
     const { publicJwk } = await generateP256Key();
     const pcrs = { 0: new Uint8Array(48).fill(0xab), 1: new Uint8Array(48).fill(0xcd) };
     const doc = await buildCoseAttestation(ca, { publicKeyJwk: publicJwk, pcrs });
-    const res = await validateCoseAttestation(doc, [ca.rootPem], { "0": hex(pcrs[0]), "1": hex(pcrs[1]) });
+    const res = await validateCoseAttestation(doc, { device: [], hardware: [ca.rootPem] }, { "0": hex(pcrs[0]), "1": hex(pcrs[1]) });
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.assurance).toBe("hardware");
   });
@@ -255,7 +255,7 @@ describe("PCR pinning (§16.5) — WHICH workload, not merely which vendor", () 
       publicKeyJwk: publicJwk,
       pcrs: { 0: new Uint8Array(48).fill(0x99) }, // some other image
     });
-    const res = await validateCoseAttestation(doc, [ca.rootPem], { "0": hex(new Uint8Array(48).fill(0xab)) });
+    const res = await validateCoseAttestation(doc, { device: [], hardware: [ca.rootPem] }, { "0": hex(new Uint8Array(48).fill(0xab)) });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.reason).toBe("attestation_pcr_mismatch");
   });
@@ -264,7 +264,7 @@ describe("PCR pinning (§16.5) — WHICH workload, not merely which vendor", () 
     const ca = await mintNitroCa();
     const { publicJwk } = await generateP256Key();
     const doc = await buildCoseAttestation(ca, { publicKeyJwk: publicJwk, pcrs: { 0: new Uint8Array(48) } });
-    const res = await validateCoseAttestation(doc, [ca.rootPem], { "8": hex(new Uint8Array(48).fill(0x11)) });
+    const res = await validateCoseAttestation(doc, { device: [], hardware: [ca.rootPem] }, { "8": hex(new Uint8Array(48).fill(0x11)) });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.reason).toBe("attestation_pcr_mismatch");
   });
@@ -274,7 +274,7 @@ describe("PCR pinning (§16.5) — WHICH workload, not merely which vendor", () 
     const { publicJwk } = await generateP256Key();
     const doc = await buildCoseAttestation(ca, { publicKeyJwk: publicJwk, pcrs: { 0: new Uint8Array(48).fill(0x99) } });
     for (const pins of [undefined, {}]) {
-      const res = await validateCoseAttestation(doc, [ca.rootPem], pins);
+      const res = await validateCoseAttestation(doc, { device: [], hardware: [ca.rootPem] }, pins);
       expect(res.ok).toBe(true);
     }
   });
@@ -291,7 +291,7 @@ describe("PCR pinning (§16.5) — WHICH workload, not merely which vendor", () 
     });
     const res = await registerAgentKey(
       { cnf: { jwk: publicJwk }, evidence: { type: "attestation-eat", docB64: doc }, regNonce },
-      { store, nitroRoots: [ca.rootPem], expectedPcrs: { "0": hex(new Uint8Array(48).fill(0xab)) } },
+      { store, nitroRoots: { device: [], hardware: [ca.rootPem] }, expectedPcrs: { "0": hex(new Uint8Array(48).fill(0xab)) } },
     );
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.reason).toBe("attestation_pcr_mismatch");
@@ -327,11 +327,12 @@ describe("validateWebauthnAttestation (packed) — strict verification + honest 
     for (const p of parts) { out.set(p, o); o += p.length; }
     return out;
   }
-  function buildAuthData(credJwk: Jwk): Uint8Array {
+  function buildAuthData(credJwk: Jwk, opts?: { be?: boolean; aaguid?: Uint8Array }): Uint8Array {
     const rpIdHash = sha256(te.encode(RP_ID));
-    const flags = new Uint8Array([0x41]); // UP | AT
+    // UP | AT, plus BE (0x08) when the credential is backup-eligible (a synced passkey).
+    const flags = new Uint8Array([0x41 | (opts?.be ? 0x08 : 0)]);
     const signCount = new Uint8Array([0, 0, 0, 1]);
-    const aaguid = new Uint8Array(16);
+    const aaguid = opts?.aaguid ?? new Uint8Array(16);
     const credId = new Uint8Array([9, 9, 9, 9]);
     const credIdLen = new Uint8Array([0, credId.length]);
     const x = fromBase64Url(String(credJwk.x));
@@ -346,10 +347,10 @@ describe("validateWebauthnAttestation (packed) — strict verification + honest 
   async function buildPacked(
     ca: Awaited<ReturnType<typeof mintNitroCa>>,
     credJwk: Jwk,
-    opts?: { forgeSig?: boolean },
+    opts?: { forgeSig?: boolean; be?: boolean; aaguid?: Uint8Array },
   ): Promise<{ aoB64: string; clientDataJSONB64: string }> {
     const clientDataJSON = te.encode(JSON.stringify({ type: "webauthn.create", challenge: toBase64Url(te.encode("reg-challenge")), origin: ORIGIN }));
-    const authData = buildAuthData(credJwk);
+    const authData = buildAuthData(credJwk, opts);
     const verificationData = concatAll([authData, sha256(clientDataJSON)]);
     const sig = new Uint8Array(await ca.leafSign(verificationData));
     if (opts?.forgeSig) sig[0] ^= 0xff;
@@ -361,11 +362,63 @@ describe("validateWebauthnAttestation (packed) — strict verification + honest 
     return { aoB64: toBase64Url(new Uint8Array(ao)), clientDataJSONB64: toBase64Url(clientDataJSON) };
   }
 
+  it("grades by WHICH list the root is in — device list → device, not hardware", async () => {
+    // The F10 rule. One flat list made "a vendor I trust" and "this earns hardware" the same
+    // statement; a TPM vendor root belongs in `device` and must grade there.
+    const ca = await mintNitroCa();
+    const jwk = await credKey();
+    const { aoB64, clientDataJSONB64 } = await buildPacked(ca, jwk);
+    const res = await validateWebauthnAttestation(aoB64, clientDataJSONB64, { device: [ca.rootPem], hardware: [] });
+    expect(res.ok && res.assurance).toBe("device");
+  });
+
+  it("a root in BOTH lists grades as the LOWER rung", async () => {
+    // Duplication is a config mistake, and the generous reading of a mistake over-claims.
+    const ca = await mintNitroCa();
+    const jwk = await credKey();
+    const { aoB64, clientDataJSONB64 } = await buildPacked(ca, jwk);
+    const res = await validateWebauthnAttestation(aoB64, clientDataJSONB64, { device: [ca.rootPem], hardware: [ca.rootPem] });
+    expect(res.ok && res.assurance).toBe("device");
+  });
+
+  it("BACKUP ELIGIBLE (BE=1) degrades to pop even with a perfect chain", async () => {
+    // A syncable credential can reach devices this attestation never described, so the quote
+    // proves where the key was BORN, not where it lives — and a rung is about where it lives.
+    const ca = await mintNitroCa();
+    const jwk = await credKey();
+    const { aoB64, clientDataJSONB64 } = await buildPacked(ca, jwk, { be: true });
+    const res = await validateWebauthnAttestation(aoB64, clientDataJSONB64, { device: [], hardware: [ca.rootPem] });
+    expect(res.ok && [res.assurance, res.binding]).toEqual(["pop", "self"]);
+  });
+
+  it("captures the AAGUID, flags and matched root fingerprint as evidence", async () => {
+    const ca = await mintNitroCa();
+    const jwk = await credKey();
+    const aaguid = new Uint8Array(16).fill(0xab);
+    const { aoB64, clientDataJSONB64 } = await buildPacked(ca, jwk, { aaguid });
+    const res = await validateWebauthnAttestation(aoB64, clientDataJSONB64, { device: [], hardware: [ca.rootPem] });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.evidence?.aaguid).toBe("abababab-abab-abab-abab-ababababab" + "ab");
+      expect(res.evidence?.authDataFlags).toBe(0x41);
+      expect(res.evidence?.rootFingerprint).toMatch(/^[0-9a-f]{64}$/);
+    }
+  });
+
+  it("records evidence on a DEGRADE too — the case most worth auditing", async () => {
+    const ca = await mintNitroCa();
+    const jwk = await credKey();
+    const { aoB64, clientDataJSONB64 } = await buildPacked(ca, jwk);
+    const res = await validateWebauthnAttestation(aoB64, clientDataJSONB64, { device: [], hardware: [] });
+    expect(res.ok && res.assurance).toBe("pop");
+    if (res.ok) expect(res.evidence?.rootFingerprint).toBeNull();
+  });
+
   it("packed statement + PINNED root → hardware/attested/fido, cnf == credential key", async () => {
     const ca = await mintNitroCa();
     const jwk = await credKey();
     const { aoB64, clientDataJSONB64 } = await buildPacked(ca, jwk);
-    const res = await validateWebauthnAttestation(aoB64, clientDataJSONB64, [ca.rootPem]);
+    const res = await validateWebauthnAttestation(aoB64, clientDataJSONB64, { device: [], hardware: [ca.rootPem] });
     expect(res.ok).toBe(true);
     if (res.ok) {
       expect(res.assurance).toBe("hardware");
@@ -379,7 +432,7 @@ describe("validateWebauthnAttestation (packed) — strict verification + honest 
     const ca = await mintNitroCa();
     const jwk = await credKey();
     const { aoB64, clientDataJSONB64 } = await buildPacked(ca, jwk);
-    const res = await validateWebauthnAttestation(aoB64, clientDataJSONB64, []);
+    const res = await validateWebauthnAttestation(aoB64, clientDataJSONB64, { device: [], hardware: [] });
     expect(res.ok).toBe(true);
     if (res.ok) {
       expect(res.assurance).toBe("pop");
@@ -392,7 +445,7 @@ describe("validateWebauthnAttestation (packed) — strict verification + honest 
     const ca = await mintNitroCa();
     const jwk = await credKey();
     const { aoB64, clientDataJSONB64 } = await buildPacked(ca, jwk, { forgeSig: true });
-    const res = await validateWebauthnAttestation(aoB64, clientDataJSONB64, [ca.rootPem]);
+    const res = await validateWebauthnAttestation(aoB64, clientDataJSONB64, { device: [], hardware: [ca.rootPem] });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.reason).toBe("attestation_chain_invalid");
   });
@@ -400,7 +453,7 @@ describe("validateWebauthnAttestation (packed) — strict verification + honest 
   it("fmt 'none' (synced passkey) → DEGRADE to pop/self", async () => {
     const jwk = await credKey();
     const ao = cbor.encode({ fmt: "none", attStmt: {}, authData: Buffer.from(buildAuthData(jwk)) });
-    const res = await validateWebauthnAttestation(toBase64Url(new Uint8Array(ao)), toBase64Url(te.encode("{}")), []);
+    const res = await validateWebauthnAttestation(toBase64Url(new Uint8Array(ao)), toBase64Url(te.encode("{}")), { device: [], hardware: [] });
     expect(res.ok).toBe(true);
     if (res.ok) {
       expect(res.assurance).toBe("pop");
@@ -480,7 +533,7 @@ describe("registerChallenge / registerAgentKey (§16.5)", () => {
 
     const res = await registerAgentKey(
       { cnf: { jwk: key.publicJwk }, evidence: { type: "attestation-eat", docB64: doc }, regNonce },
-      { store, nitroRoots: [ca.rootPem] },
+      { store, nitroRoots: { device: [], hardware: [ca.rootPem] } },
     );
     expect(res.ok).toBe(true);
     if (res.ok) {
@@ -493,7 +546,7 @@ describe("registerChallenge / registerAgentKey (§16.5)", () => {
     // Single-use: the very same nonce cannot be replayed for a second binding.
     const replay = await registerAgentKey(
       { cnf: { jwk: key.publicJwk }, evidence: { type: "attestation-eat", docB64: doc }, regNonce },
-      { store, nitroRoots: [ca.rootPem] },
+      { store, nitroRoots: { device: [], hardware: [ca.rootPem] } },
     );
     expect(replay.ok).toBe(false);
     if (!replay.ok) expect(replay.reason).toBe("attestation_nonce_invalid");
@@ -510,7 +563,7 @@ describe("registerChallenge / registerAgentKey (§16.5)", () => {
 
     const res = await registerAgentKey(
       { cnf: { jwk: key.publicJwk }, evidence: { type: "attestation-eat", docB64: doc }, regNonce },
-      { store, nitroRoots: [ca.rootPem] },
+      { store, nitroRoots: { device: [], hardware: [ca.rootPem] } },
     );
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.reason).toBe("attestation_nonce_invalid");
@@ -527,7 +580,7 @@ describe("registerChallenge / registerAgentKey (§16.5)", () => {
 
     const res = await registerAgentKey(
       { cnf: { jwk: key.publicJwk }, evidence: { type: "attestation-eat", docB64: doc }, regNonce },
-      { store, nitroRoots: [ca.rootPem], now: () => clock },
+      { store, nitroRoots: { device: [], hardware: [ca.rootPem] }, now: () => clock },
     );
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.reason).toBe("attestation_nonce_invalid");
@@ -543,7 +596,7 @@ describe("registerChallenge / registerAgentKey (§16.5)", () => {
 
     const res = await registerAgentKey(
       { cnf: { jwk: other.publicJwk }, evidence: { type: "attestation-eat", docB64: doc }, regNonce },
-      { store, nitroRoots: [ca.rootPem] },
+      { store, nitroRoots: { device: [], hardware: [ca.rootPem] } },
     );
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.reason).toBe("attestation_key_mismatch");
@@ -559,7 +612,7 @@ describe("registerChallenge / registerAgentKey (§16.5)", () => {
 
     const res = await registerAgentKey(
       { cnf: { jwk: key.publicJwk }, evidence: { type: "attestation-eat", docB64: doc }, regNonce },
-      { store, nitroRoots: [other.rootPem] }, // wrong pinned root
+      { store, nitroRoots: { device: [], hardware: [other.rootPem] } }, // wrong pinned root
     );
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.reason).toBe("attestation_chain_invalid");
@@ -582,7 +635,7 @@ describe("registerChallenge / registerAgentKey (§16.5)", () => {
 
     const res = await registerAgentKey(
       { cnf: { jwk: key.publicJwk }, evidence: { type: "webauthn", attestationObjectB64: toBase64Url(new Uint8Array(ao)), clientDataJSONB64: toBase64Url(clientDataJSON) } },
-      { fidoRoots: [] }, // registrar pins NO fido root → provenance unverifiable → degrade
+      { fidoRoots: { device: [], hardware: [] } }, // registrar pins NO fido root → provenance unverifiable → degrade
     );
     expect(res.ok).toBe(true);
     if (res.ok) {

@@ -86,6 +86,24 @@ export interface BoundKey {
    * trusting the registrar's signed rung. Set for attested keys only. `b64u(sha256(docB64 bytes))`.
    */
   attestationDigestSRI?: string;
+  /**
+   * What was SEEN while grading, recorded whether or not a rung was granted (a degrade is the case
+   * you most want to audit later). Never an input to grading — it exists so a rung can be
+   * re-examined after the fact, and so a FIDO MDS layer has somewhere to attach.
+   */
+  evidence?: RegistrationEvidenceRecord;
+}
+
+/** Observed facts from a registration quote. Descriptive; grading never reads it back. */
+export interface RegistrationEvidenceRecord {
+  /** SHA-256 of the matched pinned root's DER, hex — or `null` when the chain reached none. */
+  rootFingerprint: string | null;
+  /** WebAuthn only: the authenticator model, signed inside authData. Null if not declared. */
+  aaguid?: string | null;
+  /** WebAuthn only: the raw authData flags byte (UP/UV/BE/BS/AT/ED). */
+  authDataFlags?: number;
+  /** The attestation statement format as presented (`packed`, `tpm`, `none`, …). */
+  fmt?: string;
 }
 
 /** Confinement evidence submitted at REGISTRATION; establishes the rung (§16.5). */

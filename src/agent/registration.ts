@@ -12,6 +12,8 @@ import { sha256 } from "../crypto/digest.js";
 import { toBase64Url, fromBase64Url } from "../crypto/encoding.js";
 import { jwkThumbprint, type Jwk } from "../crypto/p256.js";
 import {
+  NO_ROOTS,
+  type PinnedRoots,
   validateCoseAttestation,
   validateCustody,
   validateWebauthnAttestation,
@@ -113,7 +115,7 @@ export interface RegisterAgentKeyDeps {
   /** Epoch-ms clock. Default `Date.now`. */
   now?: () => number;
   /** Pinned Nitro CA roots (PEM) for the `attestation-eat` path. */
-  nitroRoots?: string[];
+  nitroRoots?: PinnedRoots;
   /**
    * Pinned PCR values (index -> lowercase hex) for the `attestation-eat` path — WHICH WORKLOAD.
    * Roots prove the key is in an enclave from a vendor you trust; PCRs prove it is running the
@@ -121,7 +123,7 @@ export interface RegisterAgentKeyDeps {
    */
   expectedPcrs?: Record<string, string>;
   /** Pinned FIDO/vendor roots (PEM) for the `webauthn` path. */
-  fidoRoots?: string[];
+  fidoRoots?: PinnedRoots;
   /** Custody oracle (injected — replaces kya's HTTP DescribeKey) for the `custody` path. */
   describeKey?: DescribeKey;
   /** Single-use registration-nonce store — required to bind the `attestation-eat` nonce. */
@@ -195,13 +197,13 @@ export async function registerAgentKey(
       ) {
         return { ok: false, reason: "attestation_nonce_invalid" };
       }
-      result = await validateCoseAttestation(ev.docB64, deps.nitroRoots ?? [], deps.expectedPcrs);
+      result = await validateCoseAttestation(ev.docB64, deps.nitroRoots ?? NO_ROOTS, deps.expectedPcrs);
       if (result.ok) await deps.store?.consume(input.regNonce);
       break;
     }
     case "webauthn":
       // Packed/android-key attestation chained to a pinned FIDO/vendor root.
-      result = await validateWebauthnAttestation(ev.attestationObjectB64, ev.clientDataJSONB64, deps.fidoRoots ?? []);
+      result = await validateWebauthnAttestation(ev.attestationObjectB64, ev.clientDataJSONB64, deps.fidoRoots ?? NO_ROOTS);
       break;
     default:
       // A string `type` that is not one of ours. Also the arm a NEW ConfinementEvidence variant
