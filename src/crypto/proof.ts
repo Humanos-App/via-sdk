@@ -40,8 +40,9 @@ export const EVENT_TYPES = [
   // (`relation: operates|vouches`) and a regulator's licence attestation.
   "AFFILIATION",
   "REGULATORY",
-  // v0.3 §5.4 two-phase outcomes — the execution result after a
+  // v0.3 §2.1 two-phase outcomes — the execution result after a
   // VERIFICATION_APPROVED decision (agent-attested, gateway-signed).
+  // CREDENTIAL-scoped: they name a credential URN, never an actor DID.
   "ACTION_COMPLETED",
   "ACTION_FAILED",
   // v0.3 §3.4 — the ACTOR-SCOPED lifecycle taxonomy (subject = the actor DID,
