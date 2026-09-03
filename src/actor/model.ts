@@ -509,6 +509,16 @@ export function projectAgentContext(
   const verifiedAt = presentingKey?.verifiedAt ?? subject.verifiedAt;
   const root = presentingKey?.root ?? subject.root;
   return {
+    // The actor's own DID. §16.1 splits IDENTIFIER from AUTHENTICATOR: the DID is who the agent
+    // IS, the key is what proves it — an actor holds several keys over its life and stays the same
+    // actor, which is the whole point of the actor axis. Rules could already reach the OPERATOR's
+    // DID and the PARENT's DID below while the subject's own was missing, so a policy could speak
+    // about an agent's relations and not the agent.
+    //
+    // It does not weaken pinning and is not an alternative to it: which key signed is settled by
+    // A2/A3 against `cnf` before any rule runs, and v0.3 §7 resolves an id-pinned mandate THROUGH
+    // this actor. This is policy about identity, layered on a binding already proven.
+    did: subject.id,
     assurance,
     binding,
     bootstrapAnchor: subject.bootstrapAnchor,
