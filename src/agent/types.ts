@@ -90,11 +90,11 @@ export interface BoundKey {
 
 /** Confinement evidence submitted at REGISTRATION; establishes the rung (§16.5). */
 export type ConfinementEvidence =
-  | { type: "none" } // -> pop
-  | { type: "device-self"; nonExportable: true; note?: string } // -> device (self-asserted)
-  | { type: "custody"; ref: CustodyRef } // -> hardware/custodial (verifier calls DescribeKey)
-  | { type: "attestation-eat"; docB64: string } // COSE_Sign1 -> hardware/attested (nitro)
-  | { type: "webauthn"; attestationObjectB64: string; clientDataJSONB64: string }; // -> pop | hardware/attested(fido)
+  | { type: "none" } // -> pop/self
+  | { type: "device-self"; nonExportable: true; note?: string } // -> pop/self (a CLAIM is not evidence)
+  | { type: "custody"; ref: CustodyRef } // -> pop/custodial (oracle upgrades the BINDING, not the rung)
+  | { type: "attestation-eat"; docB64: string } // COSE_Sign1 -> hardware/attested (nitro), pop/self unpinned
+  | { type: "webauthn"; attestationObjectB64: string; clientDataJSONB64: string }; // -> hardware/attested (fido), pop/self unpinned
 
 /** The output of validating evidence — a `BoundKey` on success, or a deny reason (§16.5). */
 export type ConfinementResult = ({ ok: true } & BoundKey) | { ok: false; reason: AgentReasonCode };
