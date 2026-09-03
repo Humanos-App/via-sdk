@@ -67,7 +67,7 @@ export interface OperatorClaims {
   verifiedAt: string;
   /** Identity DECAYS by nature — domain rungs re-challenge (~90d), `verified` refreshes annually. */
   expiresAt?: string;
-  /** Published, offline-checkable revocation (§10.1) — no live registrar call at verify. */
+  /** Published, offline-checkable revocation (v0.2-new §10.1) — no live registrar call at verify. */
   status?: BitstringStatusListEntry;
 }
 

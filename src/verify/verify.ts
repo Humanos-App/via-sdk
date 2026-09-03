@@ -69,7 +69,7 @@ async function verifyVpSignature(vp: VerifiablePresentation, deps: VerifyDeps): 
   }
 }
 
-/** Steps 2–9 of §8. */
+/** Steps 2–9 of v0.2-new §8. */
 async function runChecks(
   vp: VerifiablePresentation,
   executionParams: Record<string, unknown>,
@@ -154,7 +154,7 @@ export interface VerifyInput {
 /**
  * After a signature matches: read the credential's spec version and fail closed if
  * it is one this SDK does not understand — an absent marker included, since pre-0.2
- * artifacts no longer exist — otherwise run the §8 checks and tag the result.
+ * artifacts no longer exist — otherwise run the v0.2-new §8 checks and tag the result.
  */
 async function finish(
   vp: VerifiablePresentation,
@@ -168,7 +168,7 @@ async function finish(
   return { ...(await runChecks(vp, input.executionParams ?? {}, deps)), specVersion };
 }
 
-/** Verify a presentation (spec §8). No top-level action — read from `mandate.action`. */
+/** Verify a presentation (spec v0.2-new §8). No top-level action — read from `mandate.action`. */
 export async function verify(input: VerifyInput, deps: VerifyDeps): Promise<VerifyResult> {
   const vp = input.presentation;
   const sig = await verifyVpSignature(vp, deps);

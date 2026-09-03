@@ -2,14 +2,14 @@
 //
 // The actor is the second SUBJECT CLASS of the unified `VIAEvent` (v0.3 §2):
 // `credentialSubject.id` is an actor DID instead of a credential URN, the event
-// kind is one of the ACTOR TAXONOMY (§3.4), and detail rides the §16.9 `agent`
+// kind is one of the ACTOR TAXONOMY (v0.3 §3.4), and detail rides the §16.9 `agent`
 // field. The chain is LIFECYCLE-ONLY — per-action and per-boot facts stay off it.
 //
 // Model: the snapshot is a SIGNED CACHE of the chain fold ("what is true now");
 // the chain is AUTHORITATIVE ("how it got here"). If they disagree, the chain
-// wins; the audit primitive is exactly re-fold-and-diff (§5).
+// wins; the audit primitive is exactly re-fold-and-diff (v0.3 §5).
 //
-// The fold IS the state machine (§4): the transition table below and the fold
+// The fold IS the state machine (v0.3 §4): the transition table below and the fold
 // rules are two views of the same transitions — a fold that accepts an illegal
 // transition is a bug. Fail-closed: unknown event kinds and illegal orderings
 // REJECT the chain, never repair it.
@@ -121,7 +121,7 @@ export interface ViaActorSubject {
 /** The snapshot body: subject + chain binding + supersession (v0.3 §3.1/§5). */
 export interface ActorSnapshot {
   /**
-   * The spec version this snapshot conforms to (§13).
+   * The spec version this snapshot conforms to (v0.2-new §13).
    *
    * A snapshot is an artifact a verifier consumes and whose digest is chained into the next one
    * via `supersedes`, so it needs the same routing marker every other VIA artifact carries —
@@ -200,7 +200,7 @@ export type ActorFoldResult =
 // ── The fold (v0.3 §5) — deterministic, fail-closed ──────────────────────────
 
 interface FoldSeed {
-  /** Fold from a verified checkpoint instead of genesis (§5 checkpointing). */
+  /** Fold from a verified checkpoint instead of genesis (v0.3 §5 checkpointing). */
   subject: ViaActorSubject;
   /** The checkpoint's `chain.headEvent` — the first tail event must link to it. */
   headEvent: string;
@@ -215,7 +215,7 @@ const detailOf = (e: ViaEvent): Record<string, unknown> =>
 /**
  * Fold an actor chain into its current subject (v0.3 §5). Chain order is
  * `previousEvent` linkage — timestamps are metadata, never the sort key. The
- * §4 transition table is enforced: illegal transitions REJECT the fold.
+ * v0.3 §4 transition table is enforced: illegal transitions REJECT the fold.
  * Signatures are NOT verified here (that is `auditEventChain`'s job); the fold
  * checks linkage + transition semantics, so a full audit = signatures + fold +
  * snapshot diff.
@@ -295,13 +295,13 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
 
     if (cs.id !== subject.id) return fail("subject_mismatch", i);
     if (kind === "ACTOR_REGISTERED") return fail("duplicate_genesis", i);
-    if (subject.status === "retired") return fail("event_after_retired", i); // absorbing (§4)
+    if (subject.status === "retired") return fail("event_after_retired", i); // absorbing (v0.3 §4)
 
     const key = (id: unknown): ActorKeyState | undefined => subject!.keys.find((k) => k.id === id);
 
     switch (kind) {
       // content self-loops — legal in `active` AND `suspended` (recording
-      // continues while gated; the audit trail never pauses — §4)
+      // continues while gated; the audit trail never pauses — v0.3 §4)
       case "KEY_ADDED": {
         if (key(detail.keyId)) return fail("duplicate_key", i);
         subject.keys.push({
@@ -360,7 +360,7 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         break;
       }
       case "ASSURANCE_UPDATED": {
-        // replaces the assurance FIELDS wholesale — exactly these five (§5)
+        // replaces the assurance FIELDS wholesale — exactly these five (v0.3 §5)
         subject.assurance = detail.assurance as Assurance;
         subject.binding = detail.binding as Binding;
         subject.bootstrapAnchor = detail.bootstrapAnchor as BootstrapAnchor;
@@ -380,7 +380,7 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         subject.operator = { org: String(detail.org ?? e.issuer), affiliationEvent: eventChainLink(e) };
         break;
       }
-      // ── status transitions (§4 table; illegal → reject) ──
+      // ── status transitions (v0.3 §4 table; illegal → reject) ──
       case "SUSPENDED": {
         if (subject.status !== "active") return fail("illegal_transition", i);
         subject.status = "suspended"; // preserves everything else
@@ -408,7 +408,7 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
  * follows `rotatedTo` succession from the pinned id and returns every key in
  * the succession that is NOT revoked — the set a PoP may verify against.
  * A revoked link does not break the walk (only drops out of the usable set):
- * the §3.4 scheduled predecessor-revocation at window end must NOT kill a
+ * the v0.3 §3.4 scheduled predecessor-revocation at window end must NOT kill a
  * rotated-forward mandate, or rotation tolerance would be defeated.
  * Empty result ⇒ nothing usable ⇒ the verifier fails closed.
  */
@@ -475,7 +475,7 @@ export function issueSnapshot(
  * §16 ships `agent.assurance` / `agent.binding`; this extends the same namespace with the fields
  * v0.3 added, so a rule can say `agent.status == "active"` or `agent.bootstrapAnchor != "api_key"`.
  *
- * FLAT, and deliberately WITHOUT `keys[]`: pinned-key resolution is §7's job (`resolvePinnedKeys`),
+ * FLAT, and deliberately WITHOUT `keys[]`: pinned-key resolution is v0.3 §7's job (`resolvePinnedKeys`),
  * not a rule's. A rule that could reach into keys would be writing its own D7, badly.
  *
  * `operator` and `lineage` project PRESENCE plus the DID, never the event — a rule may ask "is this

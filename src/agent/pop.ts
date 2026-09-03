@@ -20,7 +20,7 @@ export interface PopPayload {
 }
 
 /**
- * `action_hash` — the §5.3 `digestSRI` (`sha256-` + base64) of
+ * `action_hash` — the v0.2-new §5.3 `digestSRI` (`sha256-` + base64) of
  * `JCS({ mandateId, action, params })`. Binds a PoP to *this* transaction, closing
  * the base-spec gap that `executionParams` reach verify unsigned (§16.6).
  */

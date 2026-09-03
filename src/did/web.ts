@@ -5,7 +5,7 @@ export const VIA_PLATFORM_DID = `did:web:${VIA_PLATFORM_DOMAIN}`;
 
 export type ActorType = "org" | "user";
 
-/** `did:web:humanos.tech:{org|user}:{uuid}` (spec §3.1). */
+/** `did:web:humanos.tech:{org|user}:{uuid}` (spec v0.2-new §3.1). */
 export function generateViaDID(actorType: ActorType, opts: { uuid?: string; domain?: string } = {}): string {
   if (actorType !== "org" && actorType !== "user") throw new Error(`invalid actor type: ${actorType}`);
   return `did:web:${opts.domain ?? VIA_PLATFORM_DOMAIN}:${actorType}:${opts.uuid ?? randomUUID()}`;
@@ -38,7 +38,7 @@ export function verificationMethodId(did: string, fragment: string): string {
   return `${did}#${fragment}`;
 }
 
-/** `<did>#key-<index>` — the verification-method id for a DID's Nth key (spec §3.1). */
+/** `<did>#key-<index>` — the verification-method id for a DID's Nth key (spec v0.2-new §3.1). */
 export function getKeyId(did: string, index: number): string {
   return verificationMethodId(did, `key-${index}`);
 }
@@ -73,7 +73,7 @@ export function parseDidWeb(did: string): ParsedDidWeb {
   return { domain };
 }
 
-/** The domain segment of a verifier DID (for audience/domain binding, §7.3). */
+/** The domain segment of a verifier DID (for audience/domain binding, v0.2-new §7.3). */
 export function verifierDomainOf(did: string): string | undefined {
   return did.includes("did:web:") ? did.split("did:web:")[1]!.split(":")[0] : undefined;
 }

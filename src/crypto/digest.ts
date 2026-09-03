@@ -15,7 +15,7 @@ export function sha256Hex(data: string | Uint8Array): string {
   return createHash('sha256').update(bytes(data)).digest('hex');
 }
 
-/** Subresource-Integrity string `sha256-<standard base64>` (spec §5.3 / D-e/N5). */
+/** Subresource-Integrity string `sha256-<standard base64>` (spec v0.2-new §5.3 / D-e/N5). */
 export function computeSRI(content: string | Uint8Array): string {
   return `sha256-${toBase64(sha256(content))}`;
 }

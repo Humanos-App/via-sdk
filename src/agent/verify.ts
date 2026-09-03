@@ -165,7 +165,7 @@ export async function verifyAgentDirect(
 
   // 9. CEL — with the rung env as `agent.*` (this is where A7 is enforced).
   // v0.3: the env EXTENDS with actor-projection fields (bootstrapAnchor, status)
-  // supplied by the deployment — same namespace, no `actor.*` (§9.3).
+  // supplied by the deployment — same namespace, no `actor.*` (v0.3 §9.3).
   const { decision, evaluations } = evaluateRules(action.rules, {
     userParams: unwrapUserParamValues(m.userParams),
     executionParams: req.params,

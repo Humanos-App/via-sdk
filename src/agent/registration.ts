@@ -58,7 +58,14 @@ export function createRegChallengeStore(): RegChallengeStore {
 export interface RegisterChallengeDeps {
   /** Epoch-ms clock — injected so callers/tests can advance it. Default `Date.now`. */
   now?: () => number;
-  /** Nonce freshness window (spec §10: 30–60). Default 60. */
+  /**
+   * Nonce freshness window in seconds. Default 60.
+   *
+   * UNSOURCED: this carried a `spec §10` citation that resolves to nothing — v0.2-new §10 is
+   * Status & events, v0.3 §10 is Migration, and no document here states a 30–60s window. The
+   * value matches what the platform's challenge store uses; treat it as an implementation default
+   * until §16.5 is given an explicit TTL bound.
+   */
   ttlSeconds?: number;
   /** Nonce source — default 18 cryptographically-random bytes, base64url. */
   randomNonce?: () => string;
