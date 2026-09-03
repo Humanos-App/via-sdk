@@ -22,7 +22,7 @@ import {
   type CustodyRef,
   type KeyDescription,
 } from "../src/index.js";
-import { mintNitroCa, buildCoseAttestation } from "./helpers/sim-attest.js";
+import { mintNitroCa, restoreNitroCa, buildCoseAttestation } from "./helpers/sim-attest.js";
 
 const te = new TextEncoder();
 
@@ -136,6 +136,46 @@ const SIM_REF = {
   keyId: "ladder-test",
   arnClass: "key",
 };
+
+describe("restoreNitroCa — a dev CA that outlives its process", () => {
+  it("a restored CA signs quotes the ORIGINAL root still validates", async () => {
+    // Root pinning is out-of-band by design: the verifier has the root before any attestation
+    // arrives. So testing the attested path end to end means mint -> restart the verifier with the
+    // root -> sign, and the CA has to survive that restart. `leafSign` is a closure, so this is
+    // what makes the sequence possible at all.
+    const original = await mintNitroCa();
+    const saved = JSON.parse(
+      JSON.stringify({
+        rootPem: original.rootPem,
+        chainPems: original.chainPems,
+        leafPublicJwk: original.leafPublicJwk,
+        leafPrivateJwk: original.leafPrivateJwk,
+      }),
+    );
+
+    const restored = await restoreNitroCa(saved);
+    const { publicJwk } = await generateP256Key();
+    const doc = await buildCoseAttestation(restored, { publicKeyJwk: publicJwk });
+
+    // Validated against the ORIGINAL root — the point being that the restored signer is the same
+    // authority, not merely a working one.
+    const res = await validateCoseAttestation(doc, [original.rootPem]);
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.assurance).toBe("hardware");
+  });
+
+  it("a restored CA is still refused by an unrelated root", async () => {
+    const a = await mintNitroCa();
+    const restored = await restoreNitroCa({
+      rootPem: a.rootPem, chainPems: a.chainPems,
+      leafPublicJwk: a.leafPublicJwk, leafPrivateJwk: a.leafPrivateJwk!,
+    });
+    const { publicJwk } = await generateP256Key();
+    const doc = await buildCoseAttestation(restored, { publicKeyJwk: publicJwk });
+    const other = await mintNitroCa();
+    expect((await validateCoseAttestation(doc, [other.rootPem])).ok).toBe(false);
+  });
+});
 
 describe("the assurance ladder (§16.5) — the rung is which ANCHOR you reached", () => {
   /**

@@ -109,4 +109,17 @@ export interface NitroCa {
   leafPublicJwk: Jwk;
   /** COSE_Sign1 signature by the leaf key (raw r‖s). */
   leafSign(message: Uint8Array): Promise<Uint8Array>;
+  /**
+   * The leaf's PRIVATE key, so a dev CA can be persisted and rebuilt.
+   *
+   * Needed because pinning a root is out-of-band by design: a verifier must have the root in its
+   * configuration BEFORE an attestation arrives, which means minting the CA, restarting the
+   * verifier with its root, and only then producing a quote. `leafSign` is a closure, so without
+   * this the CA cannot survive the restart and the attested path is untestable outside a single
+   * process.
+   *
+   * Optional so a caller that never persists is unaffected. Dev material by definition — this
+   * whole module is the attestation PRODUCER, which nothing in a production path should be.
+   */
+  leafPrivateJwk?: Jwk;
 }

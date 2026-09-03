@@ -115,6 +115,32 @@ export async function mintNitroCa(): Promise<NitroCa> {
     chainPems: [leaf.toString("pem"), intermediate.toString("pem")],
     leafPublicJwk: cleanEcJwk(leafPublicJwk),
     leafSign,
+    leafPrivateJwk: (await subtle.exportKey("jwk", leafKeys.privateKey)) as Jwk,
+  };
+}
+
+/**
+ * Rebuild a {@link NitroCa} from material {@link mintNitroCa} produced, so a dev CA can outlive the
+ * process that minted it.
+ *
+ * Root pinning is out-of-band BY DESIGN — a verifier configures the root before any attestation
+ * arrives — so exercising the attested path end to end means: mint, restart the verifier with the
+ * root, then sign. That sequence needs the CA to persist, which a closure cannot.
+ */
+export async function restoreNitroCa(saved: {
+  rootPem: string;
+  chainPems: string[];
+  leafPublicJwk: Jwk;
+  leafPrivateJwk: Jwk;
+}): Promise<NitroCa> {
+  const key = await subtle.importKey("jwk", saved.leafPrivateJwk as never, EC_ALG, true, ["sign"]);
+  return {
+    rootPem: saved.rootPem,
+    chainPems: saved.chainPems,
+    leafPublicJwk: saved.leafPublicJwk,
+    leafPrivateJwk: saved.leafPrivateJwk,
+    leafSign: async (message: Uint8Array): Promise<Uint8Array> =>
+      new Uint8Array(await subtle.sign(ES256, key, message)),
   };
 }
 
