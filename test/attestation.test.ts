@@ -650,3 +650,61 @@ function pemToDerLocal(pem: string): Uint8Array {
   const b = pem.replace(/-----BEGIN CERTIFICATE-----/g, "").replace(/-----END CERTIFICATE-----/g, "").replace(/\s+/g, "");
   return new Uint8Array(Buffer.from(b, "base64"));
 }
+
+// ── the TEE collector (v0.3 §9.4ter) ─────────────────────────────────────────
+
+describe("runtime: tee — measurement pinning on its own axis", () => {
+  const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
+  it("a matching image grants runtime:tee and records WHICH image", async () => {
+    const ca = await mintNitroCa();
+    const { publicJwk } = await generateP256Key();
+    const pcrs = { 0: new Uint8Array(48).fill(0x11), 1: new Uint8Array(48).fill(0x22) };
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: publicJwk, pcrs });
+    const res = await validateCoseAttestation(doc, { device: [], hardware: [ca.rootPem] }, undefined, {
+      "release-2026-09": { "0": hex(pcrs[0]), "1": hex(pcrs[1]) },
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.assurance).toBe("hardware");
+      expect(res.runtime?.class).toBe("tee");
+      expect(res.runtime?.measurementId).toBe("release-2026-09");
+    }
+  });
+
+  it("a NON-matching image keeps the rung and withholds tee — the axes are separate", async () => {
+    const ca = await mintNitroCa();
+    const { publicJwk } = await generateP256Key();
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: publicJwk, pcrs: { 0: new Uint8Array(48).fill(0x11) } });
+    const res = await validateCoseAttestation(doc, { device: [], hardware: [ca.rootPem] }, undefined, {
+      "some-other-release": { "0": hex(new Uint8Array(48).fill(0x99)) },
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.assurance).toBe("hardware"); // the key IS in a trusted enclave
+      expect(res.runtime).toBeUndefined();    // we just don't know it runs our image
+    }
+  });
+
+  it("matches ANY pinned image, so a fleet can run several releases", async () => {
+    const ca = await mintNitroCa();
+    const { publicJwk } = await generateP256Key();
+    const pcrs = { 0: new Uint8Array(48).fill(0x33) };
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: publicJwk, pcrs });
+    const res = await validateCoseAttestation(doc, { device: [], hardware: [ca.rootPem] }, undefined, {
+      old: { "0": hex(new Uint8Array(48).fill(0x11)) },
+      current: { "0": hex(pcrs[0]) },
+    });
+    expect(res.ok && res.runtime?.measurementId).toBe("current");
+  });
+
+  it("a PARTIAL match is not a match — absence is never agreement", async () => {
+    const ca = await mintNitroCa();
+    const { publicJwk } = await generateP256Key();
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: publicJwk, pcrs: { 0: new Uint8Array(48).fill(0x44) } });
+    const res = await validateCoseAttestation(doc, { device: [], hardware: [ca.rootPem] }, undefined, {
+      // index 1 is pinned and the document does not carry it
+      rel: { "0": hex(new Uint8Array(48).fill(0x44)), "1": hex(new Uint8Array(48).fill(0x55)) },
+    });
+    expect(res.ok && res.runtime).toBeUndefined();
+  });
+});

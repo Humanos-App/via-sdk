@@ -123,6 +123,16 @@ export async function validateCoseAttestation(
    * the weaker claim: "this key is in AN enclave under a pinned root", not "…running my workload".
    */
   expectedPcrs?: Record<string, string>,
+  /**
+   * Image identifier -> expected measurements, for the RUNTIME axis (v0.3 §9.4ter). A MAP, not a
+   * single set, because a fleet runs several accepted releases at once and pinning one image would
+   * mean every deploy is a flag day. A quote matching any entry grants `runtime: tee` and records
+   * WHICH entry matched.
+   *
+   * Separate from `expectedPcrs` on purpose: that gates the assurance rung and refuses on
+   * mismatch; this grants a runtime class and a mismatch merely withholds it.
+   */
+  expectedMeasurements?: Record<string, Record<string, string>>,
 ): Promise<ConfinementResult> {
   try {
     const doc = cbor.decode(fromBase64Url(docB64)) as unknown[];
@@ -184,6 +194,19 @@ export async function validateCoseAttestation(
       }
     }
 
+    // (3b) RUNTIME — WHICH IMAGE, on its own axis (v0.3 §9.4ter).
+    //
+    // The rung above answers "how confined is the key"; this answers "what is running". They were
+    // the same check, which is why §9.4bis had to say `hardware/attested` means two different
+    // things depending on whether measurements were pinned. Separating them makes the rung mean one
+    // thing and moves the workload claim to `runtime: tee`.
+    //
+    // Failing to match is NOT an error here: the key really is in an enclave under a pinned root,
+    // so the rung stands. What the actor does not get is `tee` — and a mandate that cares says
+    // `agent.runtime in ["tee"]`. `expectedPcrs` above stays a hard gate for deployments that
+    // already rely on it.
+    const runtime = matchMeasurement(payload.pcrs ?? {}, expectedMeasurements);
+
     // (4) attested cnf = the embedded public_key (raw uncompressed EC point).
     const jwk = rawPointToJwk(payload.public_key);
     return {
@@ -195,6 +218,17 @@ export async function validateCoseAttestation(
       verifiedAt: Date.now(),
       maxAttestationStaleness: 86400,
       evidence: { rootFingerprint: graded.rootFingerprint },
+      ...(runtime
+        ? {
+            runtime: {
+              class: "tee" as const,
+              at: new Date().toISOString(),
+              mechanism: "nitro",
+              rootFingerprint: graded.rootFingerprint,
+              measurementId: runtime,
+            },
+          }
+        : {}),
     };
   } catch {
     return fail("attestation_chain_invalid");
@@ -414,6 +448,31 @@ export interface PinnedRoots {
   device: string[];
   /** DEDICATED environment — Nitro, SEV-SNP, TDX, HSM vendor roots, hardware security keys. */
   hardware: string[];
+}
+
+/**
+ * Which pinned image this quote's measurements match, or `null`.
+ *
+ * ALL of an entry's indices must match; a partial match is not a match. Absence of a pinned index
+ * in the document is a mismatch, never agreement — the same rule §9.4bis states for `expectedPcrs`,
+ * for the same reason: a check that treats missing data as passing reads as verified while doing
+ * nothing.
+ */
+function matchMeasurement(
+  got: Record<string, Uint8Array>,
+  expected?: Record<string, Record<string, string>>,
+): string | null {
+  if (!expected) return null;
+  for (const [imageId, want] of Object.entries(expected)) {
+    const indices = Object.entries(want);
+    if (indices.length === 0) continue; // an empty entry would match everything
+    const all = indices.every(([index, value]) => {
+      const actual = got[index];
+      return !!actual && toHex(actual) === value.trim().toLowerCase();
+    });
+    if (all) return imageId;
+  }
+  return null;
 }
 
 /** No roots pinned — every chain reaches nothing and degrades. The safe default, and the one a

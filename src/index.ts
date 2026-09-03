@@ -209,6 +209,8 @@ export {
 
 // Agent Binding (§16)
 export {
+  type Runtime,
+  type RuntimeAttestation,
   type Assurance,
   type Binding,
   type Root,
@@ -255,6 +257,9 @@ export {
 
 // Agent Binding (§16) — constraints (structured → CEL) + the verify path (A1–A8)
 export {
+  assertNoUnverifiedClientRefs,
+  unverifiedClientRefs,
+  UNVERIFIED_CLIENT_FIELDS,
   constraintToRule,
   constraintsToRules,
   agentReasonForRule,

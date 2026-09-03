@@ -122,6 +122,11 @@ export interface RegisterAgentKeyDeps {
    * image you built. Omitted means unchecked, and the granted rung then means the weaker thing.
    */
   expectedPcrs?: Record<string, string>;
+  /**
+   * Image id -> expected measurements, granting `runtime: tee` (v0.3 §9.4ter). Distinct from
+   * `expectedPcrs`, which gates the assurance rung and refuses on mismatch.
+   */
+  expectedMeasurements?: Record<string, Record<string, string>>;
   /** Pinned FIDO/vendor roots (PEM) for the `webauthn` path. */
   fidoRoots?: PinnedRoots;
   /** Custody oracle (injected — replaces kya's HTTP DescribeKey) for the `custody` path. */
@@ -197,7 +202,7 @@ export async function registerAgentKey(
       ) {
         return { ok: false, reason: "attestation_nonce_invalid" };
       }
-      result = await validateCoseAttestation(ev.docB64, deps.nitroRoots ?? NO_ROOTS, deps.expectedPcrs);
+      result = await validateCoseAttestation(ev.docB64, deps.nitroRoots ?? NO_ROOTS, deps.expectedPcrs, deps.expectedMeasurements);
       if (result.ok) await deps.store?.consume(input.regNonce);
       break;
     }

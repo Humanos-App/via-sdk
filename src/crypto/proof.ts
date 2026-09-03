@@ -58,6 +58,10 @@ export const EVENT_TYPES = [
   "SUSPENDED",
   "RESUMED",
   "RETIRED",
+  // v0.3 §9.4ter — the RUNTIME axis. Written when the key-holding process's environment CLASS
+  // changes, not per session: per-boot volume stays off the actor chain (§9.5), and freshness is
+  // proven at presentation like the PoP, not by writing an event per boot.
+  "RUNTIME_ATTESTED",
   "SNAPSHOT_ISSUED",
   "DELEGATED",
 ] as const;

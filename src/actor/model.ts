@@ -30,7 +30,7 @@ import { eventChainLink } from "../event/build.js";
 import { EVENT_TYPES, type EventType } from "../crypto/proof.js";
 import type { ViaEvent, SpecVersion } from "../types.js";
 import { VIA_SPEC_VERSION } from "../types.js";
-import type { Assurance, Binding } from "../agent/types.js";
+import type { Assurance, Binding, RuntimeAttestation } from "../agent/types.js";
 import type { Jwk } from "../crypto/p256.js";
 
 // ── Types (v0.3 §3.1 — assurance fields FLAT, §16 tokens verbatim) ───────────
@@ -116,6 +116,15 @@ export interface ViaActorSubject {
   operator?: { org: string; affiliationEvent: string };
   /** Pointer to the parent-signed DELEGATED event — set at genesis (delegated actors). */
   lineage?: { parent: string; event: string };
+  /**
+   * The RUNTIME axis (v0.3 §9.4ter) — the latest attestation, NOT a folded value.
+   *
+   * `assurance` is locked at registration and only moves by an explicit event; runtime is a fact
+   * about a process that restarts and redeploys. So the fold keeps the most recent
+   * `RUNTIME_ATTESTED` verbatim and lets the verifier decide whether it is fresh enough. Absent
+   * evaluates as `none` — no evidence is not a weak claim, it is no claim.
+   */
+  runtime?: RuntimeAttestation;
 }
 
 /** The snapshot body: subject + chain binding + supersession (v0.3 §3.1/§5). */
@@ -179,12 +188,17 @@ export const EVENT_SCOPE = {
   SUSPENDED: "actor",
   RESUMED: "actor",
   RETIRED: "actor",
+  RUNTIME_ATTESTED: "actor",
   SNAPSHOT_ISSUED: "actor",
 } as const satisfies Record<EventType, "credential" | "actor">;
 
 export type EventScope = (typeof EVENT_SCOPE)[EventType];
 
 /** The actor-scoped event kinds (v0.3 §3.4) — DERIVED, never a second list. */
+/** The four runtime classes (v0.3 §9.4ter). Categorical — deliberately a Set, not an array with
+ * an index, so nothing can accidentally derive an order from it. */
+export const RUNTIME_CLASSES: ReadonlySet<string> = new Set(["none", "app", "host", "tee"]);
+
 export const ACTOR_EVENT_TYPES = EVENT_TYPES.filter(
   (t): t is ActorEventType => EVENT_SCOPE[t] === "actor",
 );
@@ -369,6 +383,16 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         else delete subject.root;
         break;
       }
+      case "RUNTIME_ATTESTED": {
+        // LATEST WINS, and nothing else moves. The runtime axis says where the process runs now;
+        // it never touches `assurance` (the key), `status` (the actor) or any key's state. Writing
+        // it is a claim about the environment and only that.
+        const r = detail.runtime as RuntimeAttestation | undefined;
+        if (!r || typeof r.class !== "string") return fail("runtime_attestation_invalid", i);
+        if (!RUNTIME_CLASSES.has(r.class)) return fail("runtime_attestation_invalid", i);
+        subject.runtime = { ...r, at: r.at ?? e.validFrom };
+        break;
+      }
       case "FORK_EVIDENCE":
       case "DELEGATED":
       case "SNAPSHOT_ISSUED":
@@ -527,6 +551,15 @@ export function projectAgentContext(
     ...(root ? { root } : {}),
     ...(subject.operator ? { operator: { org: subject.operator.org } } : {}),
     ...(subject.lineage ? { lineage: { parent: subject.lineage.parent } } : {}),
+    // The RUNTIME axis (v0.3 §9.4ter). CATEGORICAL — a mandate writes `agent.runtime in ["tee"]`,
+    // never a rank comparison, and there is no helper that would let it. Absent evidence projects
+    // as the literal string "none": a rule must be able to say "I require an attested environment"
+    // and have that FAIL for an actor that has never presented one, which an undefined field
+    // would not do reliably in CEL.
+    runtime: subject.runtime?.class ?? "none",
+    // When the class was established, so a mandate can bound freshness itself. Not compared here:
+    // a projection that silently expired a claim would hide which rule rejected the request.
+    ...(subject.runtime?.at ? { runtimeAt: subject.runtime.at } : {}),
   };
 }
 

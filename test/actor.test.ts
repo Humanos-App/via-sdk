@@ -704,3 +704,44 @@ describe("projectAgentContext (§9 / KYA A.3) — the agent.* CEL namespace", ()
     expect(folded.subject.keys[1]!.assurance).toBe("hardware");
   });
 });
+
+// ── the runtime axis (v0.3 §9.4ter) ──────────────────────────────────────────
+
+describe("RUNTIME_ATTESTED — the runtime axis", () => {
+  it("latest wins, and it moves nothing else", () => {
+    const before = foldActorChain([genesis()]);
+    const c = chain(
+      (p) => ev("RUNTIME_ATTESTED", { runtime: { class: "tee", at: "2026-09-03T10:00:00.000Z", measurementId: "rel-1" } }, { prev: p }),
+      (p) => ev("RUNTIME_ATTESTED", { runtime: { class: "host", at: "2026-09-03T11:00:00.000Z" } }, { prev: p }),
+    );
+    const after = foldActorChain(c);
+    if (!before.ok || !after.ok) throw new Error("fold failed");
+    expect(after.subject.runtime?.class).toBe("host");
+    expect(after.subject.runtime?.at).toBe("2026-09-03T11:00:00.000Z");
+    // the key axes are untouched — runtime describes the environment, not the key
+    expect([after.subject.assurance, after.subject.binding]).toEqual([before.subject.assurance, before.subject.binding]);
+    expect(after.subject.status).toBe(before.subject.status);
+  });
+
+  it("rejects a class outside the four", () => {
+    const c = chain((p) => ev("RUNTIME_ATTESTED", { runtime: { class: "enclave-ish" } }, { prev: p }));
+    const r = foldActorChain(c);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("runtime_attestation_invalid");
+  });
+
+  it("projects as the literal \"none\" when never attested, so a rule can require one", () => {
+    const r = foldActorChain([genesis()]);
+    if (!r.ok) throw new Error("fold failed");
+    expect(projectAgentContext(r.subject).runtime).toBe("none");
+  });
+
+  it("projects the class, and carries when it was established", () => {
+    const c = chain((p) => ev("RUNTIME_ATTESTED", { runtime: { class: "tee", at: "2026-09-03T10:00:00.000Z" } }, { prev: p }));
+    const r = foldActorChain(c);
+    if (!r.ok) throw new Error("fold failed");
+    const ctx = projectAgentContext(r.subject);
+    expect(ctx.runtime).toBe("tee");
+    expect(ctx.runtimeAt).toBe("2026-09-03T10:00:00.000Z");
+  });
+});

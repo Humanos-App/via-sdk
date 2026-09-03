@@ -5,6 +5,44 @@ import type { Jwk } from "../crypto/p256.js";
 
 /** Confinement strength the verifier could prove (ordinal — CEL floors compare the rank). */
 export type Assurance = "pop" | "device" | "hardware";
+
+/**
+ * The RUNTIME axis — what environment the key-holding process runs in (v0.3 §9.4ter).
+ *
+ * CATEGORICAL, never ordinal. There is no `runtimeRank` and mandates match with `in`, never `>=`.
+ * The four values are not four strengths of one thing: `app` attests an application bundle, `host`
+ * attests a boot chain, `tee` attests a launch measurement. Asking whether `app` is "more" than
+ * `host` has no answer, and inventing one would let a mandate accept a class it never considered.
+ *
+ * It attests the VIA KEY-HOLDING PROCESS or its host — never the calling application. An MCP client
+ * telling us what it is is not evidence about where our key lives (§9.4ter, B6).
+ *
+ * Orthogonal to `assurance`, which is about the KEY. An HSM-held key used by a plain container is
+ * `assurance: hardware, runtime: none`; a key inside an enclave running a pinned image is
+ * `assurance: hardware, runtime: tee`. One statement about the key, one about the environment.
+ */
+export type Runtime = "none" | "app" | "host" | "tee";
+
+/**
+ * A runtime attestation, as recorded on the actor chain and re-checked at presentation.
+ *
+ * TIME-VARYING, which is why it is not folded into a stamped value the way `assurance` is: a
+ * process restarts, is redeployed, migrates. `at` is when this class was established; a verifier
+ * that needs freshness bounds it explicitly (§9.4ter).
+ */
+export interface RuntimeAttestation {
+  class: Runtime;
+  /** ISO-8601 — when this class was established. Absent/expired evaluates as `none`. */
+  at: string;
+  /** The mechanism that produced it (`nitro`, `sev-snp`, `tdx`, `app-attest`, `play-integrity`, `tpm`). */
+  mechanism?: string;
+  /** SHA-256 of the matched pinned root's DER, hex — the anchor the environment chained to. */
+  rootFingerprint?: string | null;
+  /** The image identifier whose expected measurement matched (`tee` only). */
+  measurementId?: string;
+  /** SRI chain-link of the event carrying the raw attestation. Evidence by reference (§9.4). */
+  event?: string;
+}
 /** How the key is held. */
 export type Binding = "self" | "custodial" | "attested";
 /** The pinned trust anchor confinement chained to. */
@@ -92,6 +130,11 @@ export interface BoundKey {
    * re-examined after the fact, and so a FIDO MDS layer has somewhere to attach.
    */
   evidence?: RegistrationEvidenceRecord;
+  /**
+   * The RUNTIME claim this evidence additionally established (v0.3 §9.4ter), if any. Separate from
+   * the rung above: registration grades the KEY, this describes the ENVIRONMENT it was graded in.
+   */
+  runtime?: RuntimeAttestation;
 }
 
 /** Observed facts from a registration quote. Descriptive; grading never reads it back. */

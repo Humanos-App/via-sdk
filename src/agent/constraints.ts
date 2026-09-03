@@ -85,3 +85,70 @@ export function agentReasonForRule(name: string): AgentReasonCode | OperatorReas
   if (name.startsWith("operator_required") || name.startsWith("operator_method_in")) return "operator_insufficient";
   return undefined;
 }
+
+// ── Client metadata is not an axis (v0.3 §9.4ter / B6) ───────────────────────
+
+/**
+ * Identifiers a rule MUST NOT reference, because nothing verifies them.
+ *
+ * MCP and SDK client metadata — the OAuth `client_id`, `clientInfo.name`/`version`, the user-agent
+ * — is SELF-DECLARED by the caller. It is recorded on events as context, which is useful for
+ * debugging and for telling two integrations apart in a log. It is not evidence about anything.
+ *
+ * The failure it prevents is specific: a mandate reading
+ * `executionParams.client_id == "trusted-app"` LOOKS like an authorization check and is one only
+ * against an attacker who declines to change a string. It would sit in the same rule list as
+ * `assuranceRank(agent.assurance) >= assuranceRank("hardware")`, which is backed by a signature
+ * chain, and nothing in the syntax tells the two apart. Rejecting at authoring time is the only
+ * point where the difference is still visible.
+ *
+ * The runtime axis exists precisely so the legitimate version of this question — "what is the
+ * key-holding process running in?" — has an answer that is attested rather than claimed.
+ */
+export const UNVERIFIED_CLIENT_FIELDS = [
+  "client_id",
+  "clientId",
+  "clientInfo",
+  "client_info",
+  "user_agent",
+  "userAgent",
+  "client_name",
+  "clientName",
+  "client_version",
+  "clientVersion",
+] as const;
+
+/**
+ * Reject a rule expression that references self-declared client metadata.
+ *
+ * Returns the offending identifiers, empty when the expression is clean. Word-boundary matched, so
+ * a legitimate `userParams.clientReference` is not caught by `clientRef`-style prefixes while
+ * `clientInfo.name` is.
+ */
+export function unverifiedClientRefs(expression: string): string[] {
+  const hits = new Set<string>();
+  for (const field of UNVERIFIED_CLIENT_FIELDS) {
+    if (new RegExp(`\\b${field}\\b`).test(expression)) hits.add(field);
+  }
+  return [...hits];
+}
+
+/**
+ * Validate a mandate's rules before it is signed. Throws on the first offending rule.
+ *
+ * AUTHORING-TIME, deliberately. Denying at verify would be too late in the way that matters: the
+ * mandate would already be signed, already handed out, and the operator would discover at the first
+ * real request that a grant they believed was constrained is not.
+ */
+export function assertNoUnverifiedClientRefs(rules: { name?: string; expression: string }[]): void {
+  for (const rule of rules) {
+    const refs = unverifiedClientRefs(rule.expression);
+    if (refs.length > 0) {
+      throw new Error(
+        `rule ${rule.name ?? "(unnamed)"} references self-declared client metadata (${refs.join(", ")}); ` +
+          "it is unverified and MUST NOT gate authorization (v0.3 §9.4ter). " +
+          "For an attested environment claim use `agent.runtime`.",
+      );
+    }
+  }
+}
