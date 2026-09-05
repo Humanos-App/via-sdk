@@ -239,6 +239,7 @@ export {
   NO_ROOTS,
   type PinnedRoots,
   validateCoseAttestation,
+  coseKeyToJwk,
   validateWebauthnAttestation,
   readAttestationNonce,
   type DescribeKey,

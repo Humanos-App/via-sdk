@@ -408,7 +408,18 @@ function credentialKeyFromAuthData(authData: Uint8Array): Jwk | null {
   let offset = 37 + 16;
   const credIdLen = (authData[offset]! << 8) | authData[offset + 1]!;
   offset += 2 + credIdLen;
-  const coseKeyBytes = authData.slice(offset);
+  return coseKeyToJwk(authData.slice(offset));
+}
+
+/**
+ * A COSE_Key (EC2 / P-256) → JWK. Exported because it is needed wherever a WebAuthn credential is
+ * recorded, not only where an attestation is validated: a passkey enrolment carries the same COSE
+ * bytes and has to name the key it is adding.
+ *
+ * Returns null rather than throwing on anything it does not recognise — a caller recording a key
+ * must be able to decline, and an unparseable key is a refusal, not an exception.
+ */
+export function coseKeyToJwk(coseKeyBytes: Uint8Array): Jwk | null {
   const cose = cbor.decode(Buffer.from(coseKeyBytes)) as unknown;
   // COSE_Key (EC2): 1=kty, -1=crv, -2=x, -3=y. cbor-x decodes a map with negative integer
   // keys (which real authenticators use) to a Map, not a plain object — so read via
