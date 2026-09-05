@@ -68,8 +68,18 @@ export interface AttestationRef {
 export interface ActorKeyState {
   /** Key id (`<did>#key-N`) — what a v0.3 mandate pins (D7). */
   id: string;
-  /** Public JWK (P-256) — resolved through the actor at verify time. */
-  jwk: Jwk;
+  /**
+   * The key's published form, and there are TWO because v0.2-new §16.2 says so deliberately:
+   * Humanos-issued keys (organizations, people) are Ed25519 published as `Multikey` +
+   * `publicKeyMultibase`; agent keys are P-256 published as `JsonWebKey` + `publicKeyJwk`. Ed25519
+   * has no hardware-attestation ecosystem, which is the whole reason agent keys are P-256.
+   *
+   * EXACTLY ONE is present, matching how that key is published. Carrying only `jwk` excluded every
+   * organization and person from the actor model — found while writing the §3.5 genesis backfill,
+   * which had no way to name the key it was binding.
+   */
+  jwk?: Jwk;
+  publicKeyMultibase?: string;
   status: ActorKeyStatus;
   attestation?: AttestationRef;
   /**
@@ -137,6 +147,15 @@ export interface ViaActorSubject {
    * meeting it MUST follow the pointer rather than treat the party as gone.
    */
   succeededBy?: string;
+  /**
+   * Where each of this actor's key ids went on the survivor (§3.6c), set by the same `RETIRED` that
+   * sets `succeededBy`. Key ids are DID-scoped, so following the actor pointer alone lands a pinned
+   * mandate on an actor that has no key of that id — correct and useless.
+   *
+   * A key with NO entry did not survive the merge. It is deliberately not matched by comparing
+   * public key material: absence is a decision, not a gap to fill by inference.
+   */
+  keySuccession?: Record<string, string>;
   /**
    * When this actor came into existence — the `validFrom` of its `ACTOR_REGISTERED` (§3.5).
    *
@@ -216,6 +235,15 @@ export const EVENT_SCOPE = {
 export type EventScope = (typeof EVENT_SCOPE)[EventType];
 
 /** The actor-scoped event kinds (v0.3 §3.4) — DERIVED, never a second list. */
+/**
+ * Read whichever published form the event carries (§3.1, v0.2-new §16.2). Neither is invented: an
+ * event that names no key material yields none, and the fold's own validation is what rejects it.
+ */
+function keyMaterial(detail: Record<string, unknown>): { jwk?: Jwk; publicKeyMultibase?: string } {
+  if (typeof detail.publicKeyMultibase === "string") return { publicKeyMultibase: detail.publicKeyMultibase };
+  return detail.jwk ? { jwk: detail.jwk as Jwk } : {};
+}
+
 /** The four runtime classes (v0.3 §9.4ter). Categorical — deliberately a Set, not an array with
  * an index, so nothing can accidentally derive an order from it. */
 export const RUNTIME_CLASSES: ReadonlySet<string> = new Set(["none", "app", "host", "tee"]);
@@ -306,7 +334,7 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         keys: [
           {
             id: String(detail.keyId),
-            jwk: detail.jwk as Jwk,
+            ...keyMaterial(detail),
             status: "active",
             // by-reference pointer to the FOUNDING event itself — computed by the
             // fold (an event cannot carry its own SRI), same pattern as AFFILIATION
@@ -342,7 +370,7 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         if (key(detail.keyId)) return fail("duplicate_key", i);
         subject.keys.push({
           id: String(detail.keyId),
-          jwk: detail.jwk as Jwk,
+          ...keyMaterial(detail),
           status: "active",
           ...(detail.attestationKind
             ? { attestation: { event: prevLink, kind: String(detail.attestationKind) } }
@@ -362,7 +390,7 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         pred.rotatedTo = String(detail.keyId); // succession pointer — D7 follows it
         subject.keys.push({
           id: String(detail.keyId),
-          jwk: detail.jwk as Jwk,
+          ...keyMaterial(detail),
           status: "active",
           ...(detail.attestationKind
             ? { attestation: { event: prevLink, kind: String(detail.attestationKind) } }
@@ -444,6 +472,14 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         // continued somewhere when it simply stopped.
         if (typeof detail.succeededBy === "string" && detail.succeededBy.length > 0) {
           subject.succeededBy = detail.succeededBy;
+          const ks = detail.keySuccession;
+          if (ks && typeof ks === "object" && !Array.isArray(ks)) {
+            const map: Record<string, string> = {};
+            for (const [from, to] of Object.entries(ks as Record<string, unknown>)) {
+              if (typeof to === "string" && to.length > 0) map[from] = to;
+            }
+            if (Object.keys(map).length > 0) subject.keySuccession = map;
+          }
         }
         break;
       }
@@ -495,6 +531,43 @@ export function partyStatus(survivor: ViaActorSubject, absorbed: ViaActorSubject
     if (STATUS_SEVERITY[a.status] > STATUS_SEVERITY[worst]) worst = a.status;
   }
   return worst;
+}
+
+/**
+ * Resolve a pinned key id across a merge (§3.6c), then through the survivor's own succession (§7).
+ *
+ * §7 alone is not enough once actors merge. Key ids are DID-scoped, so a mandate pinned to
+ * `did:B#key-2` follows `succeededBy` to the surviving actor and finds no key of that id there —
+ * the usable set is empty and the verifier fails closed. The mandate dies at the merge, which is
+ * §7's own failure mode one level up: succession that lands somewhere correct and useless.
+ *
+ * So each hop translates the id through the absorbed actor's `keySuccession` before matching. A key
+ * with NO entry did not survive, and is deliberately NOT matched by comparing public key material:
+ * absence is a decision the merge made, not a gap to fill by inference.
+ *
+ * Returns the usable keys on the surviving actor, empty when nothing resolves — the caller fails
+ * closed on empty, exactly as with {@link resolvePinnedKeys}.
+ */
+export function resolvePinnedKeysAcrossMerge(
+  subject: ViaActorSubject,
+  pinnedKeyId: string,
+  load: (did: string) => ViaActorSubject | undefined,
+): ActorKeyState[] {
+  let current = subject;
+  let id = pinnedKeyId;
+  const seen = new Set<string>([current.id]);
+
+  while (current.succeededBy) {
+    const next = current.keySuccession?.[id];
+    if (!next) return []; // this key did not survive the merge — do not guess
+    const survivor = load(current.succeededBy);
+    if (!survivor) return []; // unresolvable successor: fail closed, never treat absorbed as current
+    if (seen.has(survivor.id)) return []; // malformed succession must terminate
+    seen.add(survivor.id);
+    current = survivor;
+    id = next;
+  }
+  return resolvePinnedKeys(current, id);
 }
 
 /**

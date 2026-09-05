@@ -14,6 +14,7 @@ import { evaluateRules } from "../src/cel/evaluate.js";
 import { describe, it, expect } from "vitest";
 import {
   chooseSurvivor,
+  resolvePinnedKeysAcrossMerge,
   partyStatus,
   resolveSuccession,
   foldActorChain,
@@ -896,7 +897,7 @@ describe("§3.6c chooseSurvivor — the older actor survives", () => {
     // The younger party is the verified, busy one. It still loses: standing travels by its own
     // signature and restrictions by partyStatus, so neither needs to win the identifier.
     const old = at("did:old", "2026-01-01T00:00:00.000Z");
-    const strong = { ...at("did:new", "2026-06-01T00:00:00.000Z"), assurance: "hardware", keys: [{}, {}] } as never;
+    const strong = { ...(at("did:new", "2026-06-01T00:00:00.000Z") as object), assurance: "hardware", keys: [{}, {}] } as never;
     expect(chooseSurvivor(old, strong).survivor.id).toBe("did:old");
   });
 
@@ -921,5 +922,59 @@ describe("§3.6c chooseSurvivor — the older actor survives", () => {
       expect(r.subject.genesisAt).not.toBe("2027-01-01T00:00:00.000Z"); // does not
       expect(r.subject.genesisAt).toBeTruthy();
     }
+  });
+});
+
+describe("§3.6c keySuccession — a mandate survives the merge, or fails closed", () => {
+  const actor = (id: string, keys: string[], succ?: { to: string; map: Record<string, string> }) =>
+    ({ id, actorType: "user", status: succ ? "retired" : "active",
+       keys: keys.map((k) => ({ id: k, status: "active" })),
+       assurance: "pop", binding: "self", bootstrapAnchor: "manual",
+       verifiedAt: "2026-01-01T00:00:00.000Z", genesisAt: "2026-01-01T00:00:00.000Z",
+       ...(succ ? { succeededBy: succ.to, keySuccession: succ.map } : {}) }) as never;
+
+  it("THE GAP — following the actor pointer alone finds nothing", () => {
+    // Without translation this is what happens: correct actor, wrong key id, empty set, mandate
+    // dead. The plain §7 resolver cannot see across a merge at all.
+    const survivor = actor("did:A", ["did:A#key-3"]);
+    expect(resolvePinnedKeys(survivor, "did:B#key-2")).toEqual([]);
+  });
+
+  it("translates the pinned id through the merge and resolves", () => {
+    const survivor = actor("did:A", ["did:A#key-3"]);
+    const absorbed = actor("did:B", ["did:B#key-2"], { to: "did:A", map: { "did:B#key-2": "did:A#key-3" } });
+    const keys = resolvePinnedKeysAcrossMerge(absorbed, "did:B#key-2", (d) => (d === "did:A" ? survivor : undefined));
+    expect(keys.map((k) => k.id)).toEqual(["did:A#key-3"]);
+  });
+
+  it("a key with NO entry did not survive — and is not matched by material", () => {
+    const survivor = actor("did:A", ["did:A#key-3"]);
+    const absorbed = actor("did:B", ["did:B#key-9"], { to: "did:A", map: { "did:B#key-2": "did:A#key-3" } });
+    expect(resolvePinnedKeysAcrossMerge(absorbed, "did:B#key-9", () => survivor)).toEqual([]);
+  });
+
+  it("walks two merges", () => {
+    const c = actor("did:C", ["did:C#key-1"]);
+    const b = actor("did:B", ["did:B#key-1"], { to: "did:C", map: { "did:B#key-1": "did:C#key-1" } });
+    const a = actor("did:A", ["did:A#key-1"], { to: "did:B", map: { "did:A#key-1": "did:B#key-1" } });
+    const world: Record<string, never> = { "did:B": b, "did:C": c };
+    expect(resolvePinnedKeysAcrossMerge(a, "did:A#key-1", (d) => world[d]).map((k) => k.id)).toEqual(["did:C#key-1"]);
+  });
+
+  it("fails closed when the survivor cannot be loaded", () => {
+    const absorbed = actor("did:B", ["did:B#key-2"], { to: "did:A", map: { "did:B#key-2": "did:A#key-3" } });
+    expect(resolvePinnedKeysAcrossMerge(absorbed, "did:B#key-2", () => undefined)).toEqual([]);
+  });
+
+  it("terminates on a succession cycle", () => {
+    const a = actor("did:A", ["did:A#key-1"], { to: "did:B", map: { "did:A#key-1": "did:B#key-1" } });
+    const b = actor("did:B", ["did:B#key-1"], { to: "did:A", map: { "did:B#key-1": "did:A#key-1" } });
+    const world: Record<string, never> = { "did:A": a, "did:B": b };
+    expect(resolvePinnedKeysAcrossMerge(a, "did:A#key-1", (d) => world[d])).toEqual([]);
+  });
+
+  it("an un-merged actor behaves exactly as §7 alone", () => {
+    const plain = actor("did:A", ["did:A#key-1"]);
+    expect(resolvePinnedKeysAcrossMerge(plain, "did:A#key-1", () => undefined).map((k) => k.id)).toEqual(["did:A#key-1"]);
   });
 });

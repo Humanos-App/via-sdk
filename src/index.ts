@@ -342,6 +342,7 @@ export {
   chooseSurvivor,
   partyStatus,
   resolveSuccession,
+  resolvePinnedKeysAcrossMerge,
   resolvePinnedKeys,
   issueSnapshot,
   snapshotDigest,
