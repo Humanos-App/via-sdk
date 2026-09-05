@@ -339,6 +339,7 @@ export { verifyWebauthnAssertion, type WebauthnAssertionInput } from "./crypto/w
 // VIAActor — the actor axis (v0.3 §3–§5)
 export {
   foldActorChain,
+  chooseSurvivor,
   partyStatus,
   resolveSuccession,
   resolvePinnedKeys,

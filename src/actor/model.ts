@@ -137,6 +137,14 @@ export interface ViaActorSubject {
    * meeting it MUST follow the pointer rather than treat the party as gone.
    */
   succeededBy?: string;
+  /**
+   * When this actor came into existence — the `validFrom` of its `ACTOR_REGISTERED` (§3.5).
+   *
+   * Distinct from `verifiedAt`, which moves whenever evidence is re-checked. This never moves, and
+   * that is why the merge survivor rule (§3.6c) is built on it: a property that cannot change is
+   * the only kind that makes the outcome independent of when you look.
+   */
+  genesisAt?: string;
 }
 
 /** The snapshot body: subject + chain binding + supersession (v0.3 §3.1/§5). */
@@ -310,6 +318,7 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
             ...keyRung(detail, detail as Record<string, unknown>, e.validFrom),
           },
         ],
+        genesisAt: e.validFrom,
         assurance: detail.assurance as Assurance,
         binding: detail.binding as Binding,
         bootstrapAnchor: (detail.bootstrapAnchor as BootstrapAnchor) ?? "manual",
@@ -486,6 +495,34 @@ export function partyStatus(survivor: ViaActorSubject, absorbed: ViaActorSubject
     if (STATUS_SEVERITY[a.status] > STATUS_SEVERITY[worst]) worst = a.status;
   }
   return worst;
+}
+
+/**
+ * Which of two actors for the same party SURVIVES a merge (§3.6c) — the older one.
+ *
+ * DECIDED 2026-09-05, and the reason is narrower than tidiness: **only age cannot change.** Picking
+ * by standing or by activity means the same two identities merge differently depending on when you
+ * look, or on which trigger noticed the duplicate — which is the defect the rule exists to remove.
+ * The platform's two merge paths currently disagree (the KYC path keeps the party verified first,
+ * the contact path keeps the current session's), so the outcome depends on how the duplicate was
+ * discovered rather than on anything about the parties.
+ *
+ * Age also CONVERGES. Merge a third identity later and the oldest still wins, so successions all
+ * point at one terminal DID instead of accumulating hops.
+ *
+ * Ties break on the DID string — arbitrary, but total and auditable, which "earliest wins" alone is
+ * not. An actor with no `genesisAt` (a chain folded from a checkpoint that predates the field)
+ * sorts as younger: never silently win on missing data.
+ */
+export function chooseSurvivor(
+  a: ViaActorSubject,
+  b: ViaActorSubject,
+): { survivor: ViaActorSubject; absorbed: ViaActorSubject } {
+  const age = (s: ViaActorSubject) => s.genesisAt ?? "\uffff"; // missing sorts last
+  const aAge = age(a);
+  const bAge = age(b);
+  if (aAge !== bAge) return aAge < bAge ? { survivor: a, absorbed: b } : { survivor: b, absorbed: a };
+  return a.id <= b.id ? { survivor: a, absorbed: b } : { survivor: b, absorbed: a };
 }
 
 /**

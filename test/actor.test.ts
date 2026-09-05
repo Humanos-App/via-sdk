@@ -13,6 +13,7 @@
 import { evaluateRules } from "../src/cel/evaluate.js";
 import { describe, it, expect } from "vitest";
 import {
+  chooseSurvivor,
   partyStatus,
   resolveSuccession,
   foldActorChain,
@@ -872,5 +873,53 @@ describe("§3.6 resolveSuccession — follow the pointer, or fail closed", () =>
   it("an actor that succeeds nobody resolves to itself", () => {
     const r = resolveSuccession(node("a"), () => undefined);
     expect(r.ok && r.survivor.id).toBe("a");
+  });
+});
+
+describe("§3.6c chooseSurvivor — the older actor survives", () => {
+  const at = (id: string, genesisAt?: string) =>
+    ({ id, actorType: "user", status: "active", keys: [], assurance: "pop", binding: "self",
+       bootstrapAnchor: "manual", verifiedAt: "2026-01-01T00:00:00.000Z",
+       ...(genesisAt ? { genesisAt } : {}) }) as never;
+
+  it("CASE 9 — the older actor survives, whichever order it is offered in", () => {
+    const old = at("did:old", "2026-01-01T00:00:00.000Z");
+    const recent = at("did:new", "2026-06-01T00:00:00.000Z");
+    // Order-independence is the whole point: the KYC path and the contact path pass their
+    // arguments in opposite orders, and both must reach the same answer.
+    expect(chooseSurvivor(old, recent).survivor.id).toBe("did:old");
+    expect(chooseSurvivor(recent, old).survivor.id).toBe("did:old");
+    expect(chooseSurvivor(recent, old).absorbed.id).toBe("did:new");
+  });
+
+  it("is INDEPENDENT of standing and of activity — the properties that move", () => {
+    // The younger party is the verified, busy one. It still loses: standing travels by its own
+    // signature and restrictions by partyStatus, so neither needs to win the identifier.
+    const old = at("did:old", "2026-01-01T00:00:00.000Z");
+    const strong = { ...at("did:new", "2026-06-01T00:00:00.000Z"), assurance: "hardware", keys: [{}, {}] } as never;
+    expect(chooseSurvivor(old, strong).survivor.id).toBe("did:old");
+  });
+
+  it("ties break deterministically on the DID, so the rule is TOTAL", () => {
+    const a = at("did:aaa", "2026-01-01T00:00:00.000Z");
+    const b = at("did:bbb", "2026-01-01T00:00:00.000Z");
+    expect(chooseSurvivor(a, b).survivor.id).toBe("did:aaa");
+    expect(chooseSurvivor(b, a).survivor.id).toBe("did:aaa");
+  });
+
+  it("a missing genesisAt sorts YOUNGER — never win on absent data", () => {
+    const known = at("did:known", "2026-06-01T00:00:00.000Z");
+    const unknown = at("did:unknown");
+    expect(chooseSurvivor(unknown, known).survivor.id).toBe("did:known");
+  });
+
+  it("genesisAt comes from the chain and does not move as evidence is re-checked", () => {
+    const r = foldActorChain(chain((p) => ev("ATTESTATION_RENEWED", { keyId: "k1", verifiedAt: "2027-01-01T00:00:00.000Z" }, { prev: p })));
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.subject.verifiedAt).toBe("2027-01-01T00:00:00.000Z"); // moves
+      expect(r.subject.genesisAt).not.toBe("2027-01-01T00:00:00.000Z"); // does not
+      expect(r.subject.genesisAt).toBeTruthy();
+    }
   });
 });
