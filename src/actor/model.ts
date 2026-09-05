@@ -125,6 +125,18 @@ export interface ViaActorSubject {
    * evaluates as `none` — no evidence is not a weak claim, it is no claim.
    */
   runtime?: RuntimeAttestation;
+  /**
+   * Prior identifiers that resolve to this actor (v0.3 §3.6) — a per-channel DID, or a party
+   * absorbed by a merge. UNORDERED: the first entry is not "primary", and reading it that way would
+   * invent a precedence the protocol does not define.
+   */
+  aliases?: { did: string; reason: "channel" | "merge" }[];
+  /**
+   * Set by `RETIRED` when this actor was absorbed into another (§3.6c) — the surviving actor's DID.
+   * `rotatedTo` at actor scope: the old identifier is a label, not a dead end, and a verifier
+   * meeting it MUST follow the pointer rather than treat the party as gone.
+   */
+  succeededBy?: string;
 }
 
 /** The snapshot body: subject + chain binding + supersession (v0.3 §3.1/§5). */
@@ -188,6 +200,7 @@ export const EVENT_SCOPE = {
   SUSPENDED: "actor",
   RESUMED: "actor",
   RETIRED: "actor",
+  ALIAS_ADDED: "actor",
   RUNTIME_ATTESTED: "actor",
   SNAPSHOT_ISSUED: "actor",
 } as const satisfies Record<EventType, "credential" | "actor">;
@@ -417,12 +430,88 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
       }
       case "RETIRED": {
         subject.status = "retired"; // from active OR suspended; terminal
+        // §3.6c — a merge retires the absorbed actor and points it at the survivor. Optional: an
+        // ordinary retirement succeeds nobody, and inventing a pointer would claim a party
+        // continued somewhere when it simply stopped.
+        if (typeof detail.succeededBy === "string" && detail.succeededBy.length > 0) {
+          subject.succeededBy = detail.succeededBy;
+        }
+        break;
+      }
+      case "ALIAS_ADDED": {
+        // §3.6b — add the named identifier and NOTHING else: no rung, no key, no status. An alias
+        // says two names denote one party; what that party IS stays the fold of its own chain.
+        const did = typeof detail.alias === "string" ? detail.alias : undefined;
+        const reason = detail.aliasReason === "merge" ? "merge" : "channel";
+        if (!did) return fail("alias_invalid", i);
+        if (did === subject.id) return fail("alias_invalid", i); // an actor is not its own alias
+        subject.aliases ??= [];
+        // Idempotent by design: a migration that cannot be safely re-run is one nobody dares
+        // finish. A repeat is a no-op, not a duplicate error.
+        if (!subject.aliases.some((a) => a.did === did)) subject.aliases.push({ did, reason });
         break;
       }
     }
   }
 
   return subject ? { ok: true, subject } : fail("empty_chain");
+}
+
+// ── Party resolution across a merge (v0.3 §3.6) ─────────────────────────────
+
+/** How restrictive a status is. Only the ORDER matters; the numbers are private to this file. */
+const STATUS_SEVERITY: Record<ActorStatus, number> = { active: 0, suspended: 1, retired: 2 };
+
+/**
+ * The effective status of a PARTY whose identity spans a merge (§3.6, rules 6-8).
+ *
+ * A merge does not erase what an actor did under its previous name. If either the survivor or any
+ * actor it absorbed is suspended or retired, the party is — **the most restrictive status wins**.
+ *
+ * WITHOUT THIS, MERGING IS A LAUNDERING PRIMITIVE: get suspended, register again through another
+ * channel, have the two recognised as one person, and walk away clean. The survivor's own chain
+ * says `active` and would be believed.
+ *
+ * Restrictions only. Standing does NOT combine here — two weakly-verified parties do not become
+ * strongly verified (rule 8), and a grant reaches verifiers through the survivor's snapshot like
+ * any other change rather than by a fast path (§6). This function answers "may this party act",
+ * never "how well is it vouched for".
+ *
+ * `absorbed` is the folded subject of every actor the survivor aliases with `reason: "merge"`; the
+ * caller loads them, because the fold is pure and does not do I/O.
+ */
+export function partyStatus(survivor: ViaActorSubject, absorbed: ViaActorSubject[] = []): ActorStatus {
+  let worst = survivor.status;
+  for (const a of absorbed) {
+    if (STATUS_SEVERITY[a.status] > STATUS_SEVERITY[worst]) worst = a.status;
+  }
+  return worst;
+}
+
+/**
+ * Follow `succeededBy` from an absorbed actor to the party that survives it (§3.6c).
+ *
+ * Returns the DID chain walked, ending at the survivor. Terminates on a repeated identifier rather
+ * than looping: a malformed succession must fail, not hang. An unresolvable pointer yields
+ * `{ ok: false }` so the caller fails closed instead of treating the absorbed actor as current.
+ */
+export function resolveSuccession(
+  start: ViaActorSubject,
+  load: (did: string) => ViaActorSubject | undefined,
+): { ok: true; path: string[]; survivor: ViaActorSubject } | { ok: false; reason: string; path: string[] } {
+  const path: string[] = [start.id];
+  const seen = new Set<string>([start.id]);
+  let current = start;
+  while (current.succeededBy) {
+    const next = current.succeededBy;
+    if (seen.has(next)) return { ok: false, reason: "succession_cycle", path };
+    const loaded = load(next);
+    if (!loaded) return { ok: false, reason: "succession_unresolved", path: [...path, next] };
+    seen.add(next);
+    path.push(next);
+    current = loaded;
+  }
+  return { ok: true, path, survivor: current };
 }
 
 // ── D7 key resolution (v0.3 §7) — pin an ID, follow the succession ───────────

@@ -13,6 +13,8 @@
 import { evaluateRules } from "../src/cel/evaluate.js";
 import { describe, it, expect } from "vitest";
 import {
+  partyStatus,
+  resolveSuccession,
   foldActorChain,
   projectAgentContext,
   type ViaActorSubject,
@@ -743,5 +745,132 @@ describe("RUNTIME_ATTESTED — the runtime axis", () => {
     const ctx = projectAgentContext(r.subject);
     expect(ctx.runtime).toBe("tee");
     expect(ctx.runtimeAt).toBe("2026-09-03T10:00:00.000Z");
+  });
+});
+
+// ── §3.6 — one actor one DID, addresses, and merge succession ────────────────
+//
+// These pin the cases that are easy to state in prose and easy to get wrong in code. Case 2 below
+// is the one that matters most: it is the only one where a bug is a security hole rather than a
+// wrong answer, and it is the case the first draft of §3.6 missed entirely.
+
+describe("§3.6 aliases and succession", () => {
+  const alias = (did: string, reason = "channel") =>
+    (p: ViaEvent) => ev("ALIAS_ADDED", { alias: did, aliasReason: reason }, { prev: p });
+
+  it("ALIAS_ADDED records the identifier and moves nothing else", () => {
+    const before = foldActorChain([genesis()]);
+    const r = foldActorChain(chain(alias("did:web:humanos.tech:user:old-email")));
+    if (!before.ok || !r.ok) throw new Error("fold failed");
+    expect(r.subject.aliases).toEqual([{ did: "did:web:humanos.tech:user:old-email", reason: "channel" }]);
+    // the party is still exactly what its own chain says
+    expect([r.subject.status, r.subject.assurance, r.subject.binding]).toEqual([
+      before.subject.status, before.subject.assurance, before.subject.binding,
+    ]);
+    expect(r.subject.keys).toEqual(before.subject.keys);
+  });
+
+  it("re-adding the same alias is a NO-OP — a migration must be safe to re-run", () => {
+    const r = foldActorChain(chain(alias("did:x"), alias("did:x"), alias("did:x")));
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.subject.aliases).toHaveLength(1);
+  });
+
+  it("an actor cannot alias itself", () => {
+    const c = chain((p) => ev("ALIAS_ADDED", { alias: "did:web:humanos.tech:agent:a1" }, { prev: p }));
+    const r = foldActorChain(c);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("alias_invalid");
+  });
+
+  it("an alias is never INFERRED — sharing a key or a name creates none", () => {
+    // Two actors folded from chains that share key material still know nothing about each other.
+    const a = foldActorChain([genesis()]);
+    const b = foldActorChain([genesis()]);
+    if (!a.ok || !b.ok) throw new Error("fold failed");
+    expect(a.subject.aliases).toBeUndefined();
+    expect(b.subject.aliases).toBeUndefined();
+  });
+
+  it("RETIRED carries succeededBy on a merge, and nothing when a party simply stops", () => {
+    const merged = foldActorChain(chain((p) => ev("RETIRED", { succeededBy: "did:survivor" }, { prev: p })));
+    const stopped = foldActorChain(chain((p) => ev("RETIRED", {}, { prev: p })));
+    expect(merged.ok && merged.subject.succeededBy).toBe("did:survivor");
+    expect(stopped.ok && stopped.subject.succeededBy).toBeUndefined();
+    // absorbing either way
+    expect(merged.ok && merged.subject.status).toBe("retired");
+  });
+
+  it("an absorbed actor accepts NO further events", () => {
+    const c = chain(
+      (p) => ev("RETIRED", { succeededBy: "did:survivor" }, { prev: p }),
+      (p) => ev("KEY_ADDED", { keyId: "k2", jwk: {} }, { prev: p }),
+    );
+    const r = foldActorChain(c);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("event_after_retired");
+  });
+});
+
+describe("§3.6 partyStatus — restrictions survive a merge", () => {
+  const subj = (id: string, status: "active" | "suspended" | "retired") =>
+    ({ id, actorType: "user", status, keys: [], assurance: "pop", binding: "self",
+       bootstrapAnchor: "manual", verifiedAt: "2026-01-01T00:00:00.000Z" }) as never;
+
+  it("CASE 2 — a suspension on the absorbed party binds the survivor", () => {
+    // The laundering case: get suspended, register again through another channel, have the two
+    // recognised as one person. The survivor's own chain says `active` and must not be believed.
+    expect(partyStatus(subj("did:survivor", "active"), [subj("did:absorbed", "suspended")])).toBe("suspended");
+  });
+
+  it("a retirement is more restrictive than a suspension", () => {
+    expect(partyStatus(subj("s", "suspended"), [subj("a", "retired")])).toBe("retired");
+  });
+
+  it("a clean merge leaves the survivor active", () => {
+    expect(partyStatus(subj("s", "active"), [subj("a", "active")])).toBe("active");
+  });
+
+  it("the survivor's OWN restriction is not erased by a clean absorbed party", () => {
+    expect(partyStatus(subj("s", "suspended"), [subj("a", "active")])).toBe("suspended");
+  });
+
+  it("no absorbed parties is just the survivor", () => {
+    expect(partyStatus(subj("s", "active"))).toBe("active");
+  });
+});
+
+describe("§3.6 resolveSuccession — follow the pointer, or fail closed", () => {
+  const node = (id: string, succeededBy?: string) =>
+    ({ id, actorType: "user", status: succeededBy ? "retired" : "active", keys: [], assurance: "pop",
+       binding: "self", bootstrapAnchor: "manual", verifiedAt: "2026-01-01T00:00:00.000Z",
+       ...(succeededBy ? { succeededBy } : {}) }) as never;
+
+  it("walks a chain of merges to the party that survives", () => {
+    const world = new Map([["b", node("b", "c")], ["c", node("c")]]);
+    const r = resolveSuccession(node("a", "b"), (d) => world.get(d));
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.path).toEqual(["a", "b", "c"]);
+      expect(r.survivor.id).toBe("c");
+    }
+  });
+
+  it("CASE 5 — terminates on a cycle instead of hanging", () => {
+    const world = new Map([["b", node("b", "a")]]);
+    const r = resolveSuccession(node("a", "b"), (d) => world.get(d));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("succession_cycle");
+  });
+
+  it("fails closed when the survivor cannot be loaded", () => {
+    const r = resolveSuccession(node("a", "gone"), () => undefined);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("succession_unresolved");
+  });
+
+  it("an actor that succeeds nobody resolves to itself", () => {
+    const r = resolveSuccession(node("a"), () => undefined);
+    expect(r.ok && r.survivor.id).toBe("a");
   });
 });
