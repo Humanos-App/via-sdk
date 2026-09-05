@@ -421,13 +421,43 @@ function credentialKeyFromAuthData(authData: Uint8Array): Jwk | null {
  */
 export function coseKeyToJwk(coseKeyBytes: Uint8Array): Jwk | null {
   const cose = cbor.decode(Buffer.from(coseKeyBytes)) as unknown;
-  // COSE_Key (EC2): 1=kty, -1=crv, -2=x, -3=y. cbor-x decodes a map with negative integer
-  // keys (which real authenticators use) to a Map, not a plain object — so read via
-  // coseGet, which handles both Map and object decodings.
-  const x = coseGet(cose, -2);
-  const y = coseGet(cose, -3);
-  if (!x || !y) return null;
-  return { kty: "EC", crv: "P-256", x: toBase64Url(x), y: toBase64Url(y) };
+
+  // `kty` (label 1) MUST be read FIRST, because the negative labels mean different things per key
+  // type: for EC2 `-1` is the curve and `-2` is x, while for RSA `-1` is the modulus and `-2` the
+  // exponent. Reading -2/-3 blind — as this did — silently misreads an RSA key as a malformed EC
+  // one. cbor-x decodes a map with negative integer keys (which real authenticators use) to a Map
+  // rather than a plain object, so every read goes through `coseGet`.
+  switch (coseGetNum(cose, 1)) {
+    case 2: {
+      // EC2 — ES256 (P-256) is what nearly every passkey uses. The curve is READ, not assumed: an
+      // EC2 key on P-384 labelled "P-256" would be a JWK that says something false about itself.
+      const crvLabel = coseGetNum(cose, -1);
+      const crv = crvLabel === 1 ? "P-256" : crvLabel === 2 ? "P-384" : crvLabel === 3 ? "P-521" : null;
+      const x = coseGet(cose, -2);
+      const y = coseGet(cose, -3);
+      if (!crv || !x || !y) return null;
+      return { kty: "EC", crv, x: toBase64Url(x), y: toBase64Url(y) };
+    }
+    case 3: {
+      // RSA — RS256. Windows Hello on TPM-backed configurations registers these, because TPMs
+      // commonly do RSA; newer Windows does ES256. Supported so those enrolments reach the chain
+      // instead of being recorded as a login the actor never gained.
+      const n = coseGet(cose, -1);
+      const e = coseGet(cose, -2);
+      if (!n || !e) return null;
+      return { kty: "RSA", n: toBase64Url(n), e: toBase64Url(e) };
+    }
+    case 1: {
+      // OKP — EdDSA. Rare, and some security keys emit it.
+      const crvLabel = coseGetNum(cose, -1);
+      const crv = crvLabel === 6 ? "Ed25519" : crvLabel === 7 ? "Ed448" : null;
+      const x = coseGet(cose, -2);
+      if (!crv || !x) return null;
+      return { kty: "OKP", crv, x: toBase64Url(x) };
+    }
+    default:
+      return null; // a key type we cannot name honestly is one we decline to record
+  }
 }
 
 // Read a COSE_Key label from either a decoded Map (integer keys) or a plain object
@@ -435,6 +465,17 @@ export function coseKeyToJwk(coseKeyBytes: Uint8Array): Jwk | null {
 function coseGet(cose: unknown, label: number): Uint8Array | undefined {
   const v = cose instanceof Map ? cose.get(label) : (cose as Record<string, unknown>)?.[String(label)];
   return v instanceof Uint8Array ? v : undefined;
+}
+
+/**
+ * The same read for INTEGER-valued labels — `kty` (1), `alg` (3), and the EC2/OKP curve at `-1`.
+ *
+ * Separate from {@link coseGet} because that one returns byte strings only, so reading `kty`
+ * through it silently yields `undefined` and every key type looks unrecognised.
+ */
+function coseGetNum(cose: unknown, label: number): number | undefined {
+  const v = cose instanceof Map ? cose.get(label) : (cose as Record<string, unknown>)?.[String(label)];
+  return typeof v === "number" ? v : undefined;
 }
 
 // Real X.509 path validation for a leaf..intermediate `chain` terminating at a PINNED
