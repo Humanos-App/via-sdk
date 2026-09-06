@@ -23,6 +23,8 @@ export interface AgentEnv {
   verifiedAt: number;
   /** The entry's `did` (§16.4) — identity for rules (`agent.did`), never authentication. */
   did?: string;
+  /** The selected key's id (§16.7 step 0 / §9.9 `keyIdEvaluated`) — present on an id-pinned entry. */
+  keyId?: string;
 }
 
 export interface PopCheckInput {
@@ -83,7 +85,14 @@ export async function verifyAgentBinding(input: PopCheckInput, deps: PopCheckDep
   return {
     ok: true,
     boundKey: bk,
-    agent: { assurance: bk.assurance, binding: bk.binding, root: bk.root, verifiedAt: verifiedAtMs, ...(bk.did ? { did: bk.did } : {}) },
+    agent: {
+      assurance: bk.assurance,
+      binding: bk.binding,
+      root: bk.root,
+      verifiedAt: verifiedAtMs,
+      ...(bk.did ? { did: bk.did } : {}),
+      ...(bk.keyId ? { keyId: bk.keyId } : {}),
+    },
   };
 }
 
