@@ -12,21 +12,29 @@
 //     grants an agent nothing on its own; Acme must ALSO have signed "this agent
 //     operates for us". Without that link the agent floors at `unverified` no matter how
 //     verified Acme is — otherwise any agent could name Acme and inherit its green check.
-import { verifyOperatorCredential } from "./credential.js";
+import { verifyEvent } from "../event/build.js";
 import { verifyAffiliation } from "./affiliation.js";
 import type { ViaEvent, BitstringStatusListEntry } from "../types.js";
 import type {
+  OperatorClaims,
   OperatorEnv,
   OperatorReasonCode,
   OperatorRevocationReason,
-  ViaOperatorCredential,
 } from "./types.js";
 
 export interface OperatorVerifyInput {
   /** The agent whose effective operator level we are computing. */
   agentDid: string;
-  /** The registrar-signed operator credential, if the agent presents one. */
-  credential?: ViaOperatorCredential | null;
+  /**
+   * The registrar-signed **`ACCREDITED` event** from the operator's own chain, if the agent
+   * presents one (§18).
+   *
+   * An earlier draft took a standalone `VIAOperatorCredential`. It was dropped: a third party's
+   * claim about an actor is a `VIAEvent` signed by that party — the shape `AFFILIATION` and
+   * `REGULATORY` already use — so a second top-level artifact carried the same claims through a
+   * second verify routine for no gain. One primitive, one signature check.
+   */
+  accreditation?: ViaEvent | null;
   /** The org-signed `operates` link, if the agent presents one. */
   affiliation?: ViaEvent | null;
 }
@@ -63,7 +71,7 @@ export async function verifyOperator(input: OperatorVerifyInput, deps: OperatorV
   const now = deps.now ?? new Date();
 
   // Nothing presented → the normal unverified tier. NOT a failure.
-  if (!input.credential) {
+  if (!input.accreditation) {
     if (!input.affiliation) return { ok: true, operator: { ...UNVERIFIED } };
     // An affiliation with no operator credential vouches for nothing, but it was still
     // presented — so it must hold up structurally or it is a failed claim.
@@ -73,11 +81,19 @@ export async function verifyOperator(input: OperatorVerifyInput, deps: OperatorV
       : { ok: false, operator: { ...UNVERIFIED }, reason: "affiliation_invalid", detail: aff.reason };
   }
 
-  const cred = input.credential;
-  const claims = cred.credentialSubject;
+  const ev = input.accreditation;
+  const cs = ev.credentialSubject as unknown as {
+    id: string;
+    accreditation?: OperatorClaims & { status?: BitstringStatusListEntry };
+  };
+  const claims = cs.accreditation;
+  if (!claims) {
+    return { ok: false, operator: { ...UNVERIFIED }, reason: "operator_signature_invalid", detail: "event carries no accreditation" };
+  }
 
-  // O1 — the registrar's signature. A self-claimed "verified" dies here.
-  const sig = await verifyOperatorCredential(cred, deps.resolvePublicKey);
+  // O1 — the registrar's signature, through the SAME verify routine every other event uses. A
+  // self-claimed "verified" dies here.
+  const sig = await verifyEvent(ev, deps.resolvePublicKey);
   if (!sig.valid) {
     return { ok: false, operator: { ...UNVERIFIED }, reason: "operator_signature_invalid", detail: sig.reason };
   }
@@ -85,21 +101,21 @@ export async function verifyOperator(input: OperatorVerifyInput, deps: OperatorV
   // O2 — the ∧ link. Skipped only when the credential is about THIS agent directly
   // (the registrar verified the agent's own operator identity, no org in between).
   let org: string | undefined;
-  if (claims.id !== input.agentDid) {
+  if (cs.id !== input.agentDid) {
     if (!input.affiliation) {
       // Nothing linking this agent to the verified operator ⇒ floor, don't fail.
       return { ok: true, operator: { ...UNVERIFIED } };
     }
     const aff = await verifyAffiliation(input.affiliation, deps.resolvePublicKey, {
       subject: input.agentDid,
-      org: claims.id,
+      org: cs.id,
       relation: "operates",
       now,
     });
     if (!aff.valid) {
       return { ok: false, operator: { ...UNVERIFIED }, reason: "affiliation_invalid", detail: aff.reason };
     }
-    org = claims.id;
+    org = cs.id;
   }
 
   // O3 — published revocation (offline). A struck-off operator must not keep trading

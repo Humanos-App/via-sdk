@@ -50,6 +50,75 @@ export function buildAffiliation(input: BuildAffiliationInput, signer: Affiliati
   return signEvent(ev, signer);
 }
 
+export interface BuildAccreditationInput {
+  /** The organization or person being accredited — never an agent (§18.4). */
+  subject: string;
+  level: "unverified" | "domain" | "verified";
+  method: string;
+  /** The root that performed the verification — Humanos today, a QTSP or registry later (§18.9). */
+  registrar: string;
+  subjectType?: "individual" | "organization";
+  verifiedAt?: string;
+  expiresAt?: string;
+  /** Pointer to an EXTERNAL credential, when the accreditation came from outside. */
+  credential?: { id: string; digestSRI?: string; location?: string };
+  /**
+   * Published, offline-checkable revocation (O3). An accreditation must be withdrawable without a
+   * live registrar call — a struck-off operator that kept trading until its mandate expired is the
+   * failure this exists to prevent.
+   */
+  status?: Record<string, unknown>;
+  previousEvent?: string | null;
+  validFrom?: string;
+}
+
+/**
+ * `ACCREDITED` (§18) — a registrar's claim that this actor's identity was verified to a level.
+ *
+ * A VIAEvent signed by the REGISTRAR, on the accredited actor's own chain — the same shape as
+ * {@link buildAffiliation} (an org's claim about an agent) and {@link buildRegulatory} (a
+ * regulator's claim about a licence). Third-party claims about an actor are events signed by their
+ * author; that pattern already existed and this follows it.
+ *
+ * **There is deliberately no separate credential artifact.** An earlier draft had a
+ * `VIAOperatorCredential`, which put the same claims in a second top-level type that nothing
+ * issued. Folding the chain now reproduces the accreditation, which is the property the actor model
+ * exists to give and a standalone credential could not provide. Where a FOREIGN registrar issues in
+ * its own format, this event points at that credential rather than re-typing it as ours — evidence
+ * by reference, exactly as `keys[].attestation` handles an attestation quote.
+ */
+export function buildAccreditation(
+  input: BuildAccreditationInput & {
+    /** The registrar asserting it — Humanos today, a QTSP or registry later (§18.9). */
+    registrarDid: string;
+  },
+  signer: AffiliationSigner,
+): ViaEvent {
+  const at = input.validFrom ?? new Date().toISOString();
+  const ev = buildEvent({
+    subject: input.subject,
+    event: "ACCREDITED",
+    // The registrar asserts it and the registrar signs it. Humanos is the registrar today, so both
+    // are currently us — the separation is what lets an external registrar take over without a
+    // shape change, not a claim of independence today (§18.9).
+    actor: input.registrarDid,
+    issuer: input.registrarDid,
+    previousEvent: input.previousEvent ?? null,
+    validFrom: at,
+    accreditation: {
+      level: input.level,
+      method: input.method,
+      registrar: input.registrar,
+      ...(input.subjectType ? { subjectType: input.subjectType } : {}),
+      verifiedAt: input.verifiedAt ?? at,
+      ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
+      ...(input.credential ? { credential: input.credential } : {}),
+      ...(input.status ? { status: input.status } : {}),
+    },
+  });
+  return signEvent(ev, signer);
+}
+
 export interface BuildRegulatoryInput {
   /** The operator holding the licence. */
   subject: string;

@@ -72,18 +72,6 @@ export interface OperatorClaims {
 }
 
 /** A registrar-signed operator verification credential (a W3C VC, one securing proof). */
-export interface ViaOperatorCredential {
-  "@context": string[];
-  id: string;
-  type: string[];
-  specVersion?: SpecVersion;
-  /** The registrar (the root that verified). */
-  issuer: string;
-  validFrom: string;
-  validUntil?: string;
-  credentialSubject: OperatorClaims;
-  proof?: DataIntegrityProof;
-}
 
 /** The verified, composed result an agent actually carries into CEL as `operator.*`. */
 export interface OperatorEnv {

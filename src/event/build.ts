@@ -40,6 +40,8 @@ export interface BuildEventInput {
   agent?: Record<string, unknown>;
   /** §18 — operator detail (`AFFILIATION` org/relation, `REGULATORY` licence). */
   operator?: Record<string, unknown>;
+  /** §18 — `ACCREDITED` detail: the registrar's claim about THIS actor's identity. */
+  accreditation?: Record<string, unknown>;
   /**
    * Content-bound: the credential to hash (e.g. a {@link ViaMandateCredential}), or a
    * precomputed digest. Any existing `proof` is stripped before hashing (spec v0.2-new §5.4).
@@ -87,6 +89,7 @@ export function buildEvent(input: BuildEventInput): ViaEvent {
       ...(input.targetVerifier ? { targetVerifier: input.targetVerifier } : {}),
       ...(input.agent ? { agent: input.agent } : {}),
       ...(input.operator ? { operator: input.operator } : {}),
+      ...(input.accreditation ? { accreditation: input.accreditation } : {}),
     },
   };
 }
@@ -266,6 +269,8 @@ export interface BuildChainedEventInput {
   agent?: Record<string, unknown>;
   /** §18 — operator detail (`AFFILIATION` org/relation, `REGULATORY` licence). */
   operator?: Record<string, unknown>;
+  /** §18 — `ACCREDITED` detail: the registrar's claim about THIS actor's identity. */
+  accreditation?: Record<string, unknown>;
   signer: EventSigner;
 }
 
@@ -297,6 +302,7 @@ export function buildChainedEvent(input: BuildChainedEventInput): ViaEvent {
     ...(input.role ? { role: input.role } : {}),
     ...(input.agent ? { agent: input.agent } : {}),
     ...(input.operator ? { operator: input.operator } : {}),
+    ...(input.accreditation ? { accreditation: input.accreditation } : {}),
   });
   return signEvent(unsigned, input.signer);
 }

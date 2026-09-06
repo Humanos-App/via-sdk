@@ -63,6 +63,9 @@ export const EVENT_TYPES = [
   // proven at presentation like the PoP, not by writing an event per boot.
   // v0.3 §3.6 — a prior identifier that resolves to this actor: a per-channel DID, or a party
   // absorbed by a merge. State-neutral apart from the alias set.
+  // v0.3 §18 — a registrar's accreditation of THIS actor (KYB for an organization, KYC for a
+  // person). An agent never carries one: it INHERITS its operator's, via AFFILIATION.
+  "ACCREDITED",
   "ALIAS_ADDED",
   "RUNTIME_ATTESTED",
   "SNAPSHOT_ISSUED",

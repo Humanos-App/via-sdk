@@ -140,6 +140,33 @@ export interface ViaActorSubject {
    * absorbed by a merge. UNORDERED: the first entry is not "primary", and reading it that way would
    * invent a precedence the protocol does not define.
    */
+  /**
+   * This actor's own accreditation — the IDENTITY axis (§18), set by `ACCREDITED`.
+   *
+   * Orthogonal to `assurance`, which grades KEY CONFINEMENT. A KYB-verified company whose key sits
+   * in the platform's KMS is `accreditation.level: verified` AND `assurance: pop`: both true,
+   * neither implying the other.
+   *
+   * ORGANIZATIONS and PEOPLE carry this. **An agent never does** — it has no legal identity to
+   * verify and inherits its operator's through `operator` + `AFFILIATION` (§18.4). The presence of
+   * this field is therefore a fact about what KIND of actor this is.
+   */
+  accreditation?: {
+    level: "unverified" | "domain" | "verified";
+    method: string;
+    registrar: string;
+    subjectType?: "individual" | "organization";
+    verifiedAt: string;
+    expiresAt?: string;
+    /**
+     * Evidence BY REFERENCE, when the accreditation came from outside — an eIDAS attestation, a
+     * company registry. A foreign registrar issues in its own format and will not write an event on
+     * our chain, so the event points at their credential rather than re-typing it as ours.
+     */
+    credential?: { id: string; digestSRI?: string; location?: string };
+    /** Published revocation entry (O3) — checkable offline, no live registrar call. */
+    status?: Record<string, unknown>;
+  };
   aliases?: { did: string; reason: "channel" | "merge" }[];
   /**
    * Set by `RETIRED` when this actor was absorbed into another (§3.6c) — the surviving actor's DID.
@@ -227,6 +254,7 @@ export const EVENT_SCOPE = {
   SUSPENDED: "actor",
   RESUMED: "actor",
   RETIRED: "actor",
+  ACCREDITED: "actor",
   ALIAS_ADDED: "actor",
   RUNTIME_ATTESTED: "actor",
   SNAPSHOT_ISSUED: "actor",
@@ -247,6 +275,9 @@ function keyMaterial(detail: Record<string, unknown>): { jwk?: Jwk; publicKeyMul
 /** The four runtime classes (v0.3 §9.4ter). Categorical — deliberately a Set, not an array with
  * an index, so nothing can accidentally derive an order from it. */
 export const RUNTIME_CLASSES: ReadonlySet<string> = new Set(["none", "app", "host", "tee"]);
+
+/** §18's identity ladder. Ordinal — `operatorRank` compares it; `method` beside it is categorical. */
+export const ACCREDITATION_LEVELS: ReadonlySet<string> = new Set(["unverified", "domain", "verified"]);
 
 export const ACTOR_EVENT_TYPES = EVENT_TYPES.filter(
   (t): t is ActorEventType => EVENT_SCOPE[t] === "actor",
@@ -481,6 +512,21 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
             if (Object.keys(map).length > 0) subject.keySuccession = map;
           }
         }
+        break;
+      }
+      case "ACCREDITED": {
+        // §18 — a registrar's claim about THIS actor. Replaces wholesale, like ASSURANCE_UPDATED:
+        // an accreditation is a single coherent statement (level earned BY a method FROM a
+        // registrar), and merging fields across two of them would invent a claim nobody made.
+        const a = detail.accreditation as ViaActorSubject["accreditation"] | undefined;
+        if (!a || typeof a.level !== "string" || !ACCREDITATION_LEVELS.has(a.level)) {
+          return fail("accreditation_invalid", i);
+        }
+        // An AGENT has no legal identity to verify and inherits its operator's (§18.4). Accepting
+        // one here would let an agent hold standing no registrar granted it — the forgery the
+        // affiliation conjunction exists to prevent, arriving by a different door.
+        if (subject.actorType === "agent") return fail("accreditation_on_agent", i);
+        subject.accreditation = { ...a, verifiedAt: a.verifiedAt ?? e.validFrom };
         break;
       }
       case "ALIAS_ADDED": {

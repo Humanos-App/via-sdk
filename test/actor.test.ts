@@ -978,3 +978,61 @@ describe("§3.6c keySuccession — a mandate survives the merge, or fails closed
     expect(resolvePinnedKeysAcrossMerge(plain, "did:A#key-1", () => undefined).map((k) => k.id)).toEqual(["did:A#key-1"]);
   });
 });
+
+describe("§18 ACCREDITED — a registrar's claim, on the actor's own chain", () => {
+  const accredited = (over: Record<string, unknown> = {}) =>
+    (p: ViaEvent) => ev("ACCREDITED", { accreditation: { level: "verified", method: "kyb-registry", registrar: "humanos", verifiedAt: "2026-07-08T11:00:00.000Z", ...over } }, { prev: p });
+
+  /** `chain()` always starts from an AGENT genesis, and an agent may not be accredited — so these
+   *  build their own chain from an organization. */
+  const orgChain = (...steps: ((p: ViaEvent) => ViaEvent)[]) => {
+    const out = [genesis({ actorType: "organization" })];
+    for (const step of steps) out.push(step(out[out.length - 1]!));
+    return out;
+  };
+
+  it("folds onto the actor and leaves CONFINEMENT untouched — two axes, not one", () => {
+    const before = foldActorChain([genesis({ actorType: "organization" })]);
+    const r = foldActorChain(orgChain(accredited()));
+    if (!before.ok || !r.ok) throw new Error("fold failed");
+    expect(r.subject.accreditation?.level).toBe("verified");
+    expect(r.subject.accreditation?.method).toBe("kyb-registry");
+    // a KYB-verified company whose key sits in our KMS is BOTH verified and pop
+    expect(r.subject.assurance).toBe(before.subject.assurance);
+    expect(r.subject.binding).toBe(before.subject.binding);
+  });
+
+  it("REPLACES wholesale — an accreditation is one coherent statement", () => {
+    const r = foldActorChain(orgChain(
+      accredited({ level: "domain", method: "dns-challenge" }),
+      accredited({ level: "verified", method: "kyb-registry" }),
+    ));
+    if (!r.ok) throw new Error("fold failed");
+    expect(r.subject.accreditation?.level).toBe("verified");
+    // not merged: the earlier method is gone, not carried alongside
+    expect(r.subject.accreditation?.method).toBe("kyb-registry");
+  });
+
+  it("REFUSES an agent — an agent inherits standing, it is never accredited (§18.4)", () => {
+    // Accepting one would let an agent hold standing no registrar granted it: the forgery the
+    // affiliation conjunction exists to prevent, arriving by a different door.
+    const r = foldActorChain(chain(accredited()));  // genesis() defaults to actorType agent
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("accreditation_on_agent");
+  });
+
+  it("refuses a level outside the ladder", () => {
+    const r = foldActorChain(orgChain(accredited({ level: "super-verified" })));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("accreditation_invalid");
+  });
+
+  it("carries a pointer to an EXTERNAL credential rather than re-typing it", () => {
+    const r = foldActorChain(orgChain(accredited({
+      method: "eidas-high", registrar: "some-qtsp",
+      credential: { id: "urn:eidas:…", digestSRI: "sha256-…", location: "https://qtsp.example/…" },
+    })));
+    if (!r.ok) throw new Error("fold failed");
+    expect(r.subject.accreditation?.credential?.id).toBe("urn:eidas:…");
+  });
+});

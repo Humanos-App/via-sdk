@@ -297,18 +297,11 @@ export {
   type OperatorReasonCode,
   type OperatorRevocationReason,
   type OperatorClaims,
-  type ViaOperatorCredential,
   type OperatorEnv,
 } from "./operator/types.js";
 export {
-  buildOperatorCredential,
-  signOperatorCredential,
-  verifyOperatorCredential,
-  TYPE_VIA_OPERATOR,
-  type OperatorSigner,
-  type BuildOperatorCredentialInput,
-} from "./operator/credential.js";
-export {
+  type BuildAccreditationInput,
+  buildAccreditation,
   buildAffiliation,
   buildRegulatory,
   verifyAffiliation,
