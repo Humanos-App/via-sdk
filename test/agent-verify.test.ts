@@ -188,12 +188,12 @@ describe("§16.4 binding entry — the wire shape and the two verifiedAt encodin
     // …and the surfaced rung is in ms, so CEL freshness rules keep working on a number.
   });
 
-  it("buildMandate refuses an entry without did, and a keyRef naming a different actor", () => {
+  it("buildMandate refuses an entry without did, and a keyId that is not a key of did", () => {
     const base = { subjectOrg: "did:web:humanos.tech:org:acme", grantor: "g", authorizedDIDs: ["did:web:rp"], validFrom: "2026-01-01T00:00:00.000Z" };
     const noDid = { cnf: { jwk: attested.publicJwk }, assurance: "pop", binding: "self", verifiedAt: 1 } as unknown as BoundKey;
     expect(() => buildMandate({ ...base, authorizedAgents: [noDid] })).toThrow(/requires did/);
-    const mismatch: BoundKey = { ...boundKey(attested.publicJwk, { assurance: "pop", binding: "self" }), keyRef: { actor: "did:web:humanos.tech:agent:other", keyId: "x#key-1" } };
-    expect(() => buildMandate({ ...base, authorizedAgents: [mismatch] })).toThrow(/keyRef.actor/);
+    const mismatch: BoundKey = { ...boundKey(attested.publicJwk, { assurance: "pop", binding: "self" }), keyId: "did:web:humanos.tech:agent:other#key-1" };
+    expect(() => buildMandate({ ...base, authorizedAgents: [mismatch] })).toThrow(/not a key of did/);
   });
 
   it("a v0.2-signed entry (epoch-ms verifiedAt) still verifies, and A8 compares in ms either way", async () => {

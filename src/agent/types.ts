@@ -105,19 +105,19 @@ export interface BoundKey {
    * and the DID says whose key that is, whichever way it is pinned. Exposed to rules as
    * `agent.did`. OPTIONAL on this type only because registration (§16.5) produces a key before a
    * DID exists for it; `buildMandate` REQUIRES it on every entry it signs, so a signed mandate
-   * always carries it. When `keyRef` is present, `keyRef.actor` MUST equal `did`.
+   * always carries it. When `keyId` is present it is a key OF this actor (`<did>#key-N`).
    */
   did?: string;
   cnf: { jwk: Jwk };
   /**
-   * v0.3 D7 — pin by KEY ID resolved through the VIAActor instead of raw JWK
-   * material. When present, a v0.3 verifier MUST resolve the id through the
-   * actor's current snapshot (rotation succession included; per-key revocation
-   * bits win) and use the resolved key(s); a verifier that cannot resolve the
-   * actor MUST fail closed. Absent ⇒ the v0.2 raw-material pin (still honored —
-   * the high-assurance option).
+   * v0.3 §7 — pin by KEY ID (`<did>#key-N`) resolved through the VIAActor named by `did`, instead
+   * of by raw JWK material. When present, a v0.3 verifier MUST resolve the id through the actor's
+   * current state (rotation succession included; per-key revocation bits win) and check the PoP
+   * against the resulting usable set; a verifier that cannot resolve the actor MUST fail closed.
+   * Absent ⇒ the v0.2 raw-material pin: `cnf` is the whole binding (still honored — the
+   * high-assurance option). The actor is `did`; there is no second copy of it here.
    */
-  keyRef?: { actor: string; keyId: string };
+  keyId?: string;
   assurance: Assurance;
   binding: Binding;
   root?: Root;
