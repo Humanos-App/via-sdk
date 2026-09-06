@@ -99,6 +99,25 @@ export function buildEvidence(input: BuildEvidenceInput): EvidenceEntry {
  * single Humanos `STAMP` via {@link stampMandate}; consents and operational facts
  * are standalone `VIAEvent`s (see `src/event/build.ts`), not mandate proofs.
  */
+/**
+ * The §16.4 wire shape of a binding entry, whatever the caller handed in.
+ *
+ * `did` is REQUIRED on a signed entry: it is the agent's identity for rules and for "which
+ * mandates does this agent hold", and a raw-JWK pin has no other place to carry it. `verifiedAt`
+ * is written as ISO-8601 — a caller passing the epoch-ms a registration result carries gets it
+ * converted here, so no v0.3-signed artifact carries the v0.2 encoding. `keyRef.actor`, when
+ * present, must name the same actor as `did`.
+ */
+function normalizeBoundKey(bk: BoundKey, i: number): BoundKey {
+  if (!bk.did) throw new Error(`authorizedAgents[${i}] requires did (§16.4)`);
+  if (bk.keyRef && bk.keyRef.actor !== bk.did) {
+    throw new Error(`authorizedAgents[${i}]: keyRef.actor (${bk.keyRef.actor}) must equal did (${bk.did})`);
+  }
+  const ms = typeof bk.verifiedAt === "number" ? bk.verifiedAt : Date.parse(bk.verifiedAt);
+  if (!Number.isFinite(ms)) throw new Error(`authorizedAgents[${i}]: verifiedAt is not an instant`);
+  return { ...bk, verifiedAt: new Date(ms).toISOString() };
+}
+
 export function buildMandate(input: BuildMandateInput): ViaMandateCredential {
   if (input.authorizedDIDs.length === 0) throw new Error("mandate requires at least one authorizedDID");
   // Extensions (§19). Each extension in use contributes its term(s) and its name to the signed
@@ -122,7 +141,7 @@ export function buildMandate(input: BuildMandateInput): ViaMandateCredential {
         scope: input.scope ?? DEFAULT_SCOPE,
         context: {
           authorizedDIDs: input.authorizedDIDs,
-          ...(input.authorizedAgents ? { authorizedAgents: input.authorizedAgents } : {}),
+          ...(input.authorizedAgents ? { authorizedAgents: input.authorizedAgents.map(normalizeBoundKey) } : {}),
         },
         ...(input.action ? { action: input.action } : {}),
         ...(input.userParams ? { userParams: input.userParams } : {}),

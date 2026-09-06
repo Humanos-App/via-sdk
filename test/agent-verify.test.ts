@@ -18,8 +18,11 @@ import type { ActionDetail } from "../src/action/types.js";
 const RP = "acme-bank.example";
 const now = new Date("2026-07-20T12:00:00.000Z");
 
+const AGENT_DID = "did:web:humanos.tech:agent:test0000000000000";
+
 function boundKey(pub: P256KeyPair["publicJwk"], rung: { assurance: BoundKey["assurance"]; binding: BoundKey["binding"]; root?: BoundKey["root"] }): BoundKey {
-  return { cnf: { jwk: pub }, ...rung, verifiedAt: now.getTime() - 1000 };
+  // Handed in as epoch ms (what a registration result carries); buildMandate writes ISO (§16.4).
+  return { did: AGENT_DID, cnf: { jwk: pub }, ...rung, verifiedAt: now.getTime() - 1000 };
 }
 
 // The mandate requires hardware/attested/aws-nitro for transfers over 25k, cap 45k.
@@ -173,3 +176,50 @@ describe("verifyAgentDirect — A1–A8 + agent.* CEL (M4)", () => {
     expect(r.reason).toBe("credential_revoked");
   });
 });
+
+describe("§16.4 binding entry — the wire shape and the two verifiedAt encodings", () => {
+  it("buildMandate writes verifiedAt as ISO-8601 and carries did, whatever it was handed", () => {
+    const entries = mandate.credentialSubject.mandate.context.authorizedAgents!;
+    for (const e of entries) {
+      expect(e.did).toBe(AGENT_DID);
+      expect(typeof e.verifiedAt).toBe("string");
+      expect(Date.parse(e.verifiedAt as string)).toBe(now.getTime() - 1000);
+    }
+    // …and the surfaced rung is in ms, so CEL freshness rules keep working on a number.
+  });
+
+  it("buildMandate refuses an entry without did, and a keyRef naming a different actor", () => {
+    const base = { subjectOrg: "did:web:humanos.tech:org:acme", grantor: "g", authorizedDIDs: ["did:web:rp"], validFrom: "2026-01-01T00:00:00.000Z" };
+    const noDid = { cnf: { jwk: attested.publicJwk }, assurance: "pop", binding: "self", verifiedAt: 1 } as unknown as BoundKey;
+    expect(() => buildMandate({ ...base, authorizedAgents: [noDid] })).toThrow(/requires did/);
+    const mismatch: BoundKey = { ...boundKey(attested.publicJwk, { assurance: "pop", binding: "self" }), keyRef: { actor: "did:web:humanos.tech:agent:other", keyId: "x#key-1" } };
+    expect(() => buildMandate({ ...base, authorizedAgents: [mismatch] })).toThrow(/keyRef.actor/);
+  });
+
+  it("a v0.2-signed entry (epoch-ms verifiedAt) still verifies, and A8 compares in ms either way", async () => {
+    // Bypass buildMandate on purpose: this is an artifact signed while v0.2 was current.
+    const legacy = structuredClone(mandate) as ViaMandateCredential;
+    const entry = legacy.credentialSubject.mandate.context.authorizedAgents![0]!;
+    entry.verifiedAt = now.getTime() - 1000; // number, as v0.2 wrote it
+    entry.maxAttestationStaleness = 60;      // one minute window; 1 s old → fresh
+    const params = { amount: 10, action: "transfer" };
+    const fresh = await verifyAgentDirect(legacy, { pop: await pop(attested, "transfer", params), action: "transfer", params }, deps());
+    expect(fresh.decision).toBe("allow");
+    expect(fresh.agent?.verifiedAt).toBe(now.getTime() - 1000);
+    expect(fresh.agent?.did).toBe(AGENT_DID);
+
+    // The same window on the ISO form, now stale.
+    const iso = structuredClone(mandate) as ViaMandateCredential;
+    const e2 = iso.credentialSubject.mandate.context.authorizedAgents![0]!;
+    e2.verifiedAt = new Date(now.getTime() - 120_000).toISOString();
+    e2.maxAttestationStaleness = 60;
+    const stale = await verifyAgentDirect(iso, { pop: await pop(attested, "transfer", params), action: "transfer", params }, deps());
+    expect(stale).toMatchObject({ decision: "deny", reason: "attestation_stale" });
+
+    // An unreadable instant on an entry WITH a window fails closed.
+    e2.verifiedAt = "not-a-date";
+    const bad = await verifyAgentDirect(iso, { pop: await pop(attested, "transfer", params), action: "transfer", params }, deps());
+    expect(bad).toMatchObject({ decision: "deny", reason: "attestation_stale" });
+  });
+});
+

@@ -217,6 +217,7 @@ export {
   type AgentReasonCode,
   type CustodyRef,
   type BoundKey,
+  boundKeyVerifiedAtMs,
   type ConfinementEvidence,
   type ConfinementResult,
   type NitroCa,

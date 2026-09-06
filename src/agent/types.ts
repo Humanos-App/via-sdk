@@ -100,6 +100,14 @@ export interface CustodyRef {
  * named in the PoP and evaluates THAT key's rung.
  */
 export interface BoundKey {
+  /**
+   * The agent's DID (§16.4) — IDENTITY, never authentication: the PoP is checked against `cnf`,
+   * and the DID says whose key that is, whichever way it is pinned. Exposed to rules as
+   * `agent.did`. OPTIONAL on this type only because registration (§16.5) produces a key before a
+   * DID exists for it; `buildMandate` REQUIRES it on every entry it signs, so a signed mandate
+   * always carries it. When `keyRef` is present, `keyRef.actor` MUST equal `did`.
+   */
+  did?: string;
   cnf: { jwk: Jwk };
   /**
    * v0.3 D7 — pin by KEY ID resolved through the VIAActor instead of raw JWK
@@ -116,8 +124,13 @@ export interface BoundKey {
   custodyRef?: CustodyRef | null;
   /** Seconds; attested re-attest window (attested rungs only). */
   maxAttestationStaleness?: number;
-  /** Epoch ms — registration locked the rung here (principle P-B). */
-  verifiedAt: number;
+  /**
+   * When registration locked the rung (principle P-B). ON THE WIRE this is an ISO-8601 string —
+   * v0.3 §16.4, and what `buildMandate` writes. A NUMBER (epoch ms) is what v0.2 verifiers
+   * produced and what artifacts signed under v0.2 carry; a v0.3 verifier MUST still read those,
+   * so both are accepted here and normalized through {@link boundKeyVerifiedAtMs}.
+   */
+  verifiedAt: string | number;
   /**
    * Model C: digest of the raw attestation quote, pinned into the signed mandate,
    * so a relying party can re-validate confinement to public roots itself instead of
@@ -184,3 +197,14 @@ export interface NitroCa {
    */
   leafPrivateJwk?: Jwk;
 }
+
+/**
+ * `verifiedAt` as epoch ms, whichever encoding the entry carries — the ISO string v0.3 writes or
+ * the number v0.2-signed artifacts still have. NaN for a string that does not parse, which the
+ * A8 staleness check then treats as "no usable freshness" (a comparison with NaN is false, so an
+ * entry with a re-attest window and an unreadable instant is denied as stale).
+ */
+export function boundKeyVerifiedAtMs(bk: Pick<BoundKey, "verifiedAt">): number {
+  return typeof bk.verifiedAt === "number" ? bk.verifiedAt : Date.parse(bk.verifiedAt);
+}
+

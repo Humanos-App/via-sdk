@@ -11,7 +11,7 @@ import { agentReasonForRule } from "./constraints.js";
 import { unwrapUserParamValues, validateExecutionParams } from "../action/execution-params.js";
 import { actionDigestSRI } from "../action/build.js";
 import type { ActionDetail } from "../action/types.js";
-import type { AgentReasonCode, Assurance, Binding, BoundKey, Root } from "./types.js";
+import { boundKeyVerifiedAtMs, type AgentReasonCode, type Assurance, type Binding, type BoundKey, type Root } from "./types.js";
 import type { CredentialStatus, ViaMandateCredential } from "../types.js";
 
 /** The validated rung, surfaced into the CEL context as `agent.*` (§16.8). */
@@ -19,7 +19,10 @@ export interface AgentEnv {
   assurance: Assurance;
   binding: Binding;
   root?: Root;
+  /** Epoch ms — normalized from the entry's wire encoding (§16.4 ISO, or v0.2 epoch). */
   verifiedAt: number;
+  /** The entry's `did` (§16.4) — identity for rules (`agent.did`), never authentication. */
+  did?: string;
 }
 
 export interface PopCheckInput {
@@ -68,12 +71,20 @@ export async function verifyAgentBinding(input: PopCheckInput, deps: PopCheckDep
     return { ok: false, reason: "action_hash_mismatch" }; // A6
   }
 
-  const now = (deps.now ?? new Date()).getTime(); // A8
-  if (bk.maxAttestationStaleness !== undefined && now - bk.verifiedAt > bk.maxAttestationStaleness * 1000) {
+  // A8. `verifiedAt` is ISO on the wire (v0.3) or epoch ms (v0.2-signed); compare in ms either way.
+  // An unparseable instant on an entry WITH a window denies: `now - NaN > x` is false, so the
+  // condition is written to fail closed rather than fall through.
+  const now = (deps.now ?? new Date()).getTime();
+  const verifiedAtMs = boundKeyVerifiedAtMs(bk);
+  if (bk.maxAttestationStaleness !== undefined && !(now - verifiedAtMs <= bk.maxAttestationStaleness * 1000)) {
     return { ok: false, reason: "attestation_stale" };
   }
 
-  return { ok: true, boundKey: bk, agent: { assurance: bk.assurance, binding: bk.binding, root: bk.root, verifiedAt: bk.verifiedAt } };
+  return {
+    ok: true,
+    boundKey: bk,
+    agent: { assurance: bk.assurance, binding: bk.binding, root: bk.root, verifiedAt: verifiedAtMs, ...(bk.did ? { did: bk.did } : {}) },
+  };
 }
 
 export interface CredentialRecordLike {
