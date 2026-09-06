@@ -8,8 +8,15 @@ export interface CelContext {
   executionParams: Record<string, unknown>;
   /** §16.8 — the acting agent's verified rung `{ assurance, binding, root, verifiedAt, did }`. Present only under agent binding. */
   agent?: Record<string, unknown>;
-  /** §18 — the composed operator identity `{ level, method, subjectType, registrar, org }`. Present only under operator verification. */
-  operator?: Record<string, unknown>;
+  /**
+   * §18 — the composed accreditation `{ level, method, subjectType, registrar, org }`. Present
+   * only when an accreditation was presented and verified.
+   *
+   * Named for the AXIS, not the role. `agent.operator.org` is a different thing — the actor's
+   * relationship pointer, saying who an agent acts for. One word meaning both is what this
+   * rename removed.
+   */
+  accreditation?: Record<string, unknown>;
 }
 
 export interface RuleEvaluation {
@@ -51,9 +58,9 @@ const TIMESTAMP_RE = /timestamp\(([^()]*)\)/g;
 const ASSURANCE_RANK_RE = /assuranceRank\(([^()]*)\)/g;
 const ASSURANCE_RANK: Record<string, number> = { pop: 1, device: 2, hardware: 3 };
 
-/** §18 — the operator identity ladder, same ordinal trick as `assuranceRank`. */
-const OPERATOR_RANK_RE = /operatorRank\(([^()]*)\)/g;
-const OPERATOR_RANK: Record<string, number> = { unverified: 1, domain: 2, verified: 3 };
+/** §18 — the accreditation ladder, same ordinal trick as `assuranceRank`. */
+const OPERATOR_RANK_RE = /accreditationRank\(([^()]*)\)/g;
+const ACCREDITATION_RANK: Record<string, number> = { unverified: 1, domain: 2, verified: 3 };
 
 function resolveAssuranceArg(ref: string, ctx: CelContext): unknown {
   const t = ref.trim();
@@ -78,7 +85,7 @@ function prepare(expression: string, ctx: CelContext): string {
   });
   withRanks = withRanks.replace(OPERATOR_RANK_RE, (_whole, inner: string) => {
     const v = resolveAssuranceArg(inner, ctx);
-    return String(typeof v === "string" && v in OPERATOR_RANK ? OPERATOR_RANK[v] : 0);
+    return String(typeof v === "string" && v in ACCREDITATION_RANK ? ACCREDITATION_RANK[v] : 0);
   });
   return withRanks.replace(TIMESTAMP_RE, (whole, inner: string) => {
     const ref = inner.trim();

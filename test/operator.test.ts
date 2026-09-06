@@ -4,9 +4,9 @@ import {
   generateEd25519Key,
   buildAccreditation,
   buildAffiliation,
-  verifyOperator,
-  operatorRank,
-  meetsOperator,
+  verifyAccreditation,
+  accreditationRank,
+  meetsAccreditation,
   constraintsToRules,
   evaluateRules,
   agentReasonForRule,
@@ -63,33 +63,33 @@ const acmeLink = (over: { subject?: string; org?: string; expiresAt?: string } =
 
 describe("operator ladder (ordinal)", () => {
   it("ranks unverified < domain < verified", () => {
-    expect(operatorRank("unverified")).toBeLessThan(operatorRank("domain"));
-    expect(operatorRank("domain")).toBeLessThan(operatorRank("verified"));
-    expect(meetsOperator("verified", "domain")).toBe(true);
-    expect(meetsOperator("domain", "verified")).toBe(false);
-    expect(meetsOperator("domain", "domain")).toBe(true);
+    expect(accreditationRank("unverified")).toBeLessThan(accreditationRank("domain"));
+    expect(accreditationRank("domain")).toBeLessThan(accreditationRank("verified"));
+    expect(meetsAccreditation("verified", "domain")).toBe(true);
+    expect(meetsAccreditation("domain", "verified")).toBe(false);
+    expect(meetsAccreditation("domain", "domain")).toBe(true);
   });
 });
 
 describe("§18 O1–O4 + the ∧ composition", () => {
   it("honest: registrar credential ∧ org affiliation → verified, org attributed", async () => {
-    const r = await verifyOperator({ agentDid: AGENT, accreditation: acmeVerified(), affiliation: acmeLink() }, { resolvePublicKey, now });
+    const r = await verifyAccreditation({ agentDid: AGENT, accreditation: acmeVerified(), affiliation: acmeLink() }, { resolvePublicKey, now });
     expect(r.ok).toBe(true);
-    expect(r.operator).toMatchObject({ level: "verified", method: "kyb-registry", subjectType: "organization", org: ACME });
+    expect(r.accreditation).toMatchObject({ level: "verified", method: "kyb-registry", subjectType: "organization", org: ACME });
   });
 
   // ── absence ≠ impersonation (the ❔ tier, must NOT be flagged) ──────────────
   it("no credential at all → unverified and PASSES (normal tier, not a failure)", async () => {
-    const r = await verifyOperator({ agentDid: AGENT }, { resolvePublicKey, now });
+    const r = await verifyAccreditation({ agentDid: AGENT }, { resolvePublicKey, now });
     expect(r.ok).toBe(true);
-    expect(r.operator.level).toBe("unverified");
+    expect(r.accreditation.level).toBe("unverified");
     expect(r.reason).toBeUndefined();
   });
 
   it("verified credential but NO affiliation → floors at unverified, still passes", async () => {
-    const r = await verifyOperator({ agentDid: AGENT, accreditation: acmeVerified() }, { resolvePublicKey, now });
+    const r = await verifyAccreditation({ agentDid: AGENT, accreditation: acmeVerified() }, { resolvePublicKey, now });
     expect(r.ok).toBe(true);
-    expect(r.operator.level).toBe("unverified"); // inheritance needs the org's own signature
+    expect(r.accreditation.level).toBe("unverified"); // inheritance needs the org's own signature
     expect(r.reason).toBeUndefined();
   });
 
@@ -99,10 +99,10 @@ describe("§18 O1–O4 + the ∧ composition", () => {
       { subject: AGENT, org: ACME, relation: "operates" },
       { privateKey: evil.privateKey, verificationMethod: VM_EVIL }, // evil signs a claim about Acme
     );
-    const r = await verifyOperator({ agentDid: AGENT, accreditation: acmeVerified(), affiliation: forged }, { resolvePublicKey, now });
+    const r = await verifyAccreditation({ agentDid: AGENT, accreditation: acmeVerified(), affiliation: forged }, { resolvePublicKey, now });
     expect(r.ok).toBe(false);
     expect(r.reason).toBe("affiliation_invalid");
-    expect(r.operator.level).toBe("unverified");
+    expect(r.accreditation.level).toBe("unverified");
   });
 
   it("affiliation naming a different org than the credential → affiliation_invalid", async () => {
@@ -110,13 +110,13 @@ describe("§18 O1–O4 + the ∧ composition", () => {
       { subject: AGENT, org: "did:web:other.example", relation: "operates" },
       { privateKey: acme.privateKey, verificationMethod: VM_ACME },
     );
-    const r = await verifyOperator({ agentDid: AGENT, accreditation: acmeVerified(), affiliation: other }, { resolvePublicKey, now });
+    const r = await verifyAccreditation({ agentDid: AGENT, accreditation: acmeVerified(), affiliation: other }, { resolvePublicKey, now });
     expect(r.ok).toBe(false);
     expect(r.reason).toBe("affiliation_invalid");
   });
 
   it("affiliation for a DIFFERENT agent → affiliation_invalid", async () => {
-    const r = await verifyOperator(
+    const r = await verifyAccreditation(
       { agentDid: AGENT, accreditation: acmeVerified(), affiliation: acmeLink({ subject: "did:web:agents.acme.com:someone-else" }) },
       { resolvePublicKey, now },
     );
@@ -133,18 +133,18 @@ describe("§18 O1–O4 + the ∧ composition", () => {
         registrar: "humanos", verifiedAt: "2026-01-01T00:00:00.000Z", registrarDid: REGISTRAR } as never,
       { privateKey: evil.privateKey, verificationMethod: VM_REG },
     );
-    const r = await verifyOperator({ agentDid: AGENT, accreditation: selfClaimed, affiliation: acmeLink() }, { resolvePublicKey, now });
+    const r = await verifyAccreditation({ agentDid: AGENT, accreditation: selfClaimed, affiliation: acmeLink() }, { resolvePublicKey, now });
     expect(r.ok).toBe(false);
-    expect(r.reason).toBe("operator_signature_invalid");
+    expect(r.reason).toBe("accreditation_signature_invalid");
   });
 
   it("tampered level (domain → verified) invalidates the signature", async () => {
     const cred = acmeVerified({ level: "domain", method: "dns-challenge" });
     const tampered = { ...cred, credentialSubject: { ...cred.credentialSubject,
       accreditation: { ...(cred.credentialSubject as never as { accreditation: object }).accreditation, level: "verified" } } } as never;
-    const r = await verifyOperator({ agentDid: AGENT, accreditation: tampered, affiliation: acmeLink() }, { resolvePublicKey, now });
+    const r = await verifyAccreditation({ agentDid: AGENT, accreditation: tampered, affiliation: acmeLink() }, { resolvePublicKey, now });
     expect(r.ok).toBe(false);
-    expect(r.reason).toBe("operator_signature_invalid");
+    expect(r.reason).toBe("accreditation_signature_invalid");
   });
 
   // ── O3 revocation (verify-time, offline) ───────────────────────────────────
@@ -152,27 +152,27 @@ describe("§18 O1–O4 + the ∧ composition", () => {
     const cred = acmeVerified({
       status: { id: "https://status.humanos.tech/operator/list/1#42", type: "BitstringStatusListEntry", statusPurpose: "revocation", statusListIndex: "42", statusListCredential: "https://status.humanos.tech/operator/list/1" },
     });
-    const r = await verifyOperator(
+    const r = await verifyAccreditation(
       { agentDid: AGENT, accreditation: cred, affiliation: acmeLink() },
       { resolvePublicKey, now, checkStatus: () => ({ revoked: true, reason: "struck_off" }) },
     );
     expect(r.ok).toBe(false);
-    expect(r.reason).toBe("operator_revoked");
+    expect(r.reason).toBe("accreditation_revoked");
     expect(r.revocationReason).toBe("struck_off");
   });
 
   // ── O4 decay ───────────────────────────────────────────────────────────────
   it("expired credential → operator_expired (identity decays)", async () => {
-    const r = await verifyOperator(
+    const r = await verifyAccreditation(
       { agentDid: AGENT, accreditation: acmeVerified({ level: "domain", method: "dns-challenge", expiresAt: "2026-04-01T00:00:00.000Z" }), affiliation: acmeLink() },
       { resolvePublicKey, now },
     );
     expect(r.ok).toBe(false);
-    expect(r.reason).toBe("operator_expired");
+    expect(r.reason).toBe("accreditation_expired");
   });
 
   it("expired affiliation → affiliation_invalid", async () => {
-    const r = await verifyOperator(
+    const r = await verifyAccreditation(
       { agentDid: AGENT, accreditation: acmeVerified(), affiliation: acmeLink({ expiresAt: "2026-04-01T00:00:00.000Z" }) },
       { resolvePublicKey, now },
     );
@@ -182,21 +182,21 @@ describe("§18 O1–O4 + the ∧ composition", () => {
 
   it("credential about the agent itself needs no affiliation", async () => {
     const direct = acmeVerified({ id: AGENT, subjectType: "individual", method: "kyc-doc" });
-    const r = await verifyOperator({ agentDid: AGENT, accreditation: direct }, { resolvePublicKey, now });
+    const r = await verifyAccreditation({ agentDid: AGENT, accreditation: direct }, { resolvePublicKey, now });
     expect(r.ok).toBe(true);
-    expect(r.operator).toMatchObject({ level: "verified", subjectType: "individual", method: "kyc-doc" });
-    expect(r.operator.org).toBeUndefined();
+    expect(r.accreditation).toMatchObject({ level: "verified", subjectType: "individual", method: "kyc-doc" });
+    expect(r.accreditation.org).toBeUndefined();
   });
 });
 
 describe("§18 O5 — CEL floors over operator.*", () => {
   const CONSTRAINTS: Constraint[] = [
-    { type: "operator_required", min: "verified", whenAmountAbove: 100 },
-    { type: "operator_method_in", methods: ["kyb-registry", "eidas-high"] },
+    { type: "accreditation_required", min: "verified", whenAmountAbove: 100 },
+    { type: "accreditation_method_in", methods: ["kyb-registry", "eidas-high"] },
   ];
   const rules = constraintsToRules(CONSTRAINTS);
-  const evalWith = (operator: Record<string, unknown>, amount: number) =>
-    evaluateRules(rules, { userParams: {}, executionParams: { amount, action: "purchase" }, operator });
+  const evalWith = (accreditation: Record<string, unknown>, amount: number) =>
+    evaluateRules(rules, { userParams: {}, executionParams: { amount, action: "purchase" }, accreditation });
 
   it("verified operator clears the floor on a high-value action", () => {
     expect(evalWith({ level: "verified", method: "kyb-registry" }, 500).decision).toBe("allow");
@@ -206,7 +206,7 @@ describe("§18 O5 — CEL floors over operator.*", () => {
     const r = evalWith({ level: "unverified" }, 500);
     expect(r.decision).toBe("deny");
     const failed = r.evaluations.find((e) => e.result !== "pass")!;
-    expect(agentReasonForRule(failed.rule)).toBe("operator_insufficient");
+    expect(agentReasonForRule(failed.rule)).toBe("accreditation_insufficient");
   });
 
   it("the floor does not fire below the threshold (guarded)", () => {
@@ -217,7 +217,7 @@ describe("§18 O5 — CEL floors over operator.*", () => {
   it("a non-accepted method is rejected categorically", () => {
     const r = evalWith({ level: "verified", method: "dns-challenge" }, 500);
     expect(r.decision).toBe("deny");
-    const failed = r.evaluations.find((e) => e.rule.startsWith("operator_method_in"))!;
+    const failed = r.evaluations.find((e) => e.rule.startsWith("accreditation_method_in"))!;
     expect(failed.result).toBe("fail");
   });
 });

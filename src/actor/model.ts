@@ -276,7 +276,7 @@ function keyMaterial(detail: Record<string, unknown>): { jwk?: Jwk; publicKeyMul
  * an index, so nothing can accidentally derive an order from it. */
 export const RUNTIME_CLASSES: ReadonlySet<string> = new Set(["none", "app", "host", "tee"]);
 
-/** §18's identity ladder. Ordinal — `operatorRank` compares it; `method` beside it is categorical. */
+/** §18's identity ladder. Ordinal — `accreditationRank` compares it; `method` beside it is categorical. */
 export const ACCREDITATION_LEVELS: ReadonlySet<string> = new Set(["unverified", "domain", "verified"]);
 
 export const ACTOR_EVENT_TYPES = EVENT_TYPES.filter(

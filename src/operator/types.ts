@@ -16,19 +16,19 @@ import type { DataIntegrityProof } from "../crypto/proof.js";
  * - `domain`     — namespace control proven (ACME/DNS challenge, no humans). Decays.
  * - `verified`   — legal identity confirmed (documents / registry / liveness).
  *
- * KYC vs KYB is *how it was earned* ({@link OperatorMethod} / {@link SubjectType}),
+ * KYC vs KYB is *how it was earned* ({@link AccreditationMethod} / {@link SubjectType}),
  * never a separate top rung — a solo developer (KYC) must not be capped below a business.
  */
-export type OperatorLevel = "unverified" | "domain" | "verified";
+export type AccreditationLevel = "unverified" | "domain" | "verified";
 
-export const OPERATOR_RANK: Record<OperatorLevel, number> = { unverified: 1, domain: 2, verified: 3 };
-/** Ordinal rank of an operator level (CEL helper `operatorRank`). */
-export function operatorRank(level: OperatorLevel): number {
-  return OPERATOR_RANK[level] ?? 0;
+export const ACCREDITATION_RANK: Record<AccreditationLevel, number> = { unverified: 1, domain: 2, verified: 3 };
+/** Ordinal rank of an operator level (CEL helper `accreditationRank`). */
+export function accreditationRank(level: AccreditationLevel): number {
+  return ACCREDITATION_RANK[level] ?? 0;
 }
 /** True iff `actual` meets or exceeds the `floor` level. */
-export function meetsOperator(actual: OperatorLevel, floor: OperatorLevel): boolean {
-  return operatorRank(actual) >= operatorRank(floor);
+export function meetsAccreditation(actual: AccreditationLevel, floor: AccreditationLevel): boolean {
+  return accreditationRank(actual) >= accreditationRank(floor);
 }
 
 /**
@@ -36,8 +36,8 @@ export function meetsOperator(actual: OperatorLevel, floor: OperatorLevel): bool
  * A **fixed enum**: extending it is a spec change, so a verifier's categorical matches
  * stay total and registrars cannot invent private levels.
  */
-export type OperatorMethod = "dns-challenge" | "kyc-doc" | "kyb-registry" | "eidas-substantial" | "eidas-high";
-export const OPERATOR_METHODS: OperatorMethod[] = ["dns-challenge", "kyc-doc", "kyb-registry", "eidas-substantial", "eidas-high"];
+export type AccreditationMethod = "dns-challenge" | "kyc-doc" | "kyb-registry" | "eidas-substantial" | "eidas-high";
+export const ACCREDITATION_METHODS: AccreditationMethod[] = ["dns-challenge", "kyc-doc", "kyb-registry", "eidas-substantial", "eidas-high"];
 
 export type SubjectType = "individual" | "organization";
 
@@ -45,22 +45,22 @@ export type SubjectType = "individual" | "organization";
 export type AffiliationRelation = "operates" | "vouches";
 
 /** §18 deny reasons (the O1–O5 gate). */
-export type OperatorReasonCode =
-  | "operator_signature_invalid"
+export type AccreditationReasonCode =
+  | "accreditation_signature_invalid"
   | "affiliation_invalid"
-  | "operator_revoked"
-  | "operator_expired"
-  | "operator_insufficient";
+  | "accreditation_revoked"
+  | "accreditation_expired"
+  | "accreditation_insufficient";
 
 /** Why an operator's verification was pulled — underwriters need the *why*. */
-export type OperatorRevocationReason = "struck_off" | "fraud" | "sanctions";
+export type AccreditationRevocationReason = "struck_off" | "fraud" | "sanctions";
 
 /** The registrar's verification claims about one operator. */
-export interface OperatorClaims {
+export interface AccreditationClaims {
   /** The operator (organization or individual) this credential is about. */
   id: string;
-  level: OperatorLevel;
-  method: OperatorMethod;
+  level: AccreditationLevel;
+  method: AccreditationMethod;
   subjectType: SubjectType;
   /** The root that performed the verification — `humanos` today; QTSPs / registries later. */
   registrar: string;
@@ -74,9 +74,9 @@ export interface OperatorClaims {
 /** A registrar-signed operator verification credential (a W3C VC, one securing proof). */
 
 /** The verified, composed result an agent actually carries into CEL as `operator.*`. */
-export interface OperatorEnv {
-  level: OperatorLevel;
-  method?: OperatorMethod;
+export interface AccreditationEnv {
+  level: AccreditationLevel;
+  method?: AccreditationMethod;
   subjectType?: SubjectType;
   registrar?: string;
   /** The org the agent is affiliated to (present only when a valid `operates` link exists). */

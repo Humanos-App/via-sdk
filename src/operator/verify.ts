@@ -16,13 +16,13 @@ import { verifyEvent } from "../event/build.js";
 import { verifyAffiliation } from "./affiliation.js";
 import type { ViaEvent, BitstringStatusListEntry } from "../types.js";
 import type {
-  OperatorClaims,
-  OperatorEnv,
-  OperatorReasonCode,
-  OperatorRevocationReason,
+  AccreditationClaims,
+  AccreditationEnv,
+  AccreditationReasonCode,
+  AccreditationRevocationReason,
 } from "./types.js";
 
-export interface OperatorVerifyInput {
+export interface AccreditationVerifyInput {
   /** The agent whose effective operator level we are computing. */
   agentDid: string;
   /**
@@ -39,63 +39,63 @@ export interface OperatorVerifyInput {
   affiliation?: ViaEvent | null;
 }
 
-export interface OperatorVerifyDeps {
+export interface AccreditationVerifyDeps {
   resolvePublicKey: (vmId: string) => Uint8Array | Promise<Uint8Array>;
   /**
    * **O3** — resolve the PUBLISHED status list entry (offline; no live registrar call,
    * preserving the agent-direct property §16.11). Omit to skip revocation checking.
    */
-  checkStatus?: (entry: BitstringStatusListEntry) => Promise<{ revoked: boolean; reason?: OperatorRevocationReason }> | { revoked: boolean; reason?: OperatorRevocationReason };
+  checkStatus?: (entry: BitstringStatusListEntry) => Promise<{ revoked: boolean; reason?: AccreditationRevocationReason }> | { revoked: boolean; reason?: AccreditationRevocationReason };
   now?: Date;
 }
 
-export interface OperatorVerifyResult {
+export interface AccreditationVerifyResult {
   ok: boolean;
   /** Always present — floors at `unverified` rather than being absent. */
-  operator: OperatorEnv;
-  reason?: OperatorReasonCode;
+  accreditation: AccreditationEnv;
+  reason?: AccreditationReasonCode;
   /** Human-readable detail behind `reason`. */
   detail?: string;
   /** Present on `operator_revoked` — underwriters need the *why*. */
-  revocationReason?: OperatorRevocationReason;
+  revocationReason?: AccreditationRevocationReason;
 }
 
-const UNVERIFIED: OperatorEnv = { level: "unverified" };
+const UNVERIFIED: AccreditationEnv = { level: "unverified" };
 
 /**
  * Run O1–O4 and compose the effective operator environment. O5 (the CEL floor) is
  * evaluated by the rule engine against the returned `operator` — exactly as A7 is
  * CEL over `agent.*`.
  */
-export async function verifyOperator(input: OperatorVerifyInput, deps: OperatorVerifyDeps): Promise<OperatorVerifyResult> {
+export async function verifyAccreditation(input: AccreditationVerifyInput, deps: AccreditationVerifyDeps): Promise<AccreditationVerifyResult> {
   const now = deps.now ?? new Date();
 
   // Nothing presented → the normal unverified tier. NOT a failure.
   if (!input.accreditation) {
-    if (!input.affiliation) return { ok: true, operator: { ...UNVERIFIED } };
+    if (!input.affiliation) return { ok: true, accreditation: { ...UNVERIFIED } };
     // An affiliation with no operator credential vouches for nothing, but it was still
     // presented — so it must hold up structurally or it is a failed claim.
     const aff = await verifyAffiliation(input.affiliation, deps.resolvePublicKey, { subject: input.agentDid, relation: "operates", now });
     return aff.valid
-      ? { ok: true, operator: { ...UNVERIFIED } }
-      : { ok: false, operator: { ...UNVERIFIED }, reason: "affiliation_invalid", detail: aff.reason };
+      ? { ok: true, accreditation: { ...UNVERIFIED } }
+      : { ok: false, accreditation: { ...UNVERIFIED }, reason: "affiliation_invalid", detail: aff.reason };
   }
 
   const ev = input.accreditation;
   const cs = ev.credentialSubject as unknown as {
     id: string;
-    accreditation?: OperatorClaims & { status?: BitstringStatusListEntry };
+    accreditation?: AccreditationClaims & { status?: BitstringStatusListEntry };
   };
   const claims = cs.accreditation;
   if (!claims) {
-    return { ok: false, operator: { ...UNVERIFIED }, reason: "operator_signature_invalid", detail: "event carries no accreditation" };
+    return { ok: false, accreditation: { ...UNVERIFIED }, reason: "accreditation_signature_invalid", detail: "event carries no accreditation" };
   }
 
   // O1 — the registrar's signature, through the SAME verify routine every other event uses. A
   // self-claimed "verified" dies here.
   const sig = await verifyEvent(ev, deps.resolvePublicKey);
   if (!sig.valid) {
-    return { ok: false, operator: { ...UNVERIFIED }, reason: "operator_signature_invalid", detail: sig.reason };
+    return { ok: false, accreditation: { ...UNVERIFIED }, reason: "accreditation_signature_invalid", detail: sig.reason };
   }
 
   // O2 — the ∧ link. Skipped only when the credential is about THIS agent directly
@@ -104,7 +104,7 @@ export async function verifyOperator(input: OperatorVerifyInput, deps: OperatorV
   if (cs.id !== input.agentDid) {
     if (!input.affiliation) {
       // Nothing linking this agent to the verified operator ⇒ floor, don't fail.
-      return { ok: true, operator: { ...UNVERIFIED } };
+      return { ok: true, accreditation: { ...UNVERIFIED } };
     }
     const aff = await verifyAffiliation(input.affiliation, deps.resolvePublicKey, {
       subject: input.agentDid,
@@ -113,7 +113,7 @@ export async function verifyOperator(input: OperatorVerifyInput, deps: OperatorV
       now,
     });
     if (!aff.valid) {
-      return { ok: false, operator: { ...UNVERIFIED }, reason: "affiliation_invalid", detail: aff.reason };
+      return { ok: false, accreditation: { ...UNVERIFIED }, reason: "affiliation_invalid", detail: aff.reason };
     }
     org = cs.id;
   }
@@ -125,8 +125,8 @@ export async function verifyOperator(input: OperatorVerifyInput, deps: OperatorV
     if (st.revoked) {
       return {
         ok: false,
-        operator: { ...UNVERIFIED },
-        reason: "operator_revoked",
+        accreditation: { ...UNVERIFIED },
+        reason: "accreditation_revoked",
         ...(st.reason ? { revocationReason: st.reason } : {}),
         detail: `operator verification revoked${st.reason ? `: ${st.reason}` : ""}`,
       };
@@ -135,12 +135,12 @@ export async function verifyOperator(input: OperatorVerifyInput, deps: OperatorV
 
   // O4 — identity decays: domain rungs re-challenge, `verified` refreshes.
   if (claims.expiresAt && now > new Date(claims.expiresAt)) {
-    return { ok: false, operator: { ...UNVERIFIED }, reason: "operator_expired", detail: `expired at ${claims.expiresAt}` };
+    return { ok: false, accreditation: { ...UNVERIFIED }, reason: "accreditation_expired", detail: `expired at ${claims.expiresAt}` };
   }
 
   return {
     ok: true,
-    operator: {
+    accreditation: {
       level: claims.level,
       method: claims.method,
       subjectType: claims.subjectType,

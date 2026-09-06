@@ -286,18 +286,18 @@ export {
 
 // Operator Verification (§18 proposal) — the identity axis
 export {
-  operatorRank,
-  meetsOperator,
-  OPERATOR_RANK,
-  OPERATOR_METHODS,
-  type OperatorLevel,
-  type OperatorMethod,
+  accreditationRank,
+  meetsAccreditation,
+  ACCREDITATION_RANK,
+  ACCREDITATION_METHODS,
+  type AccreditationLevel,
+  type AccreditationMethod,
   type SubjectType,
   type AffiliationRelation,
-  type OperatorReasonCode,
-  type OperatorRevocationReason,
-  type OperatorClaims,
-  type OperatorEnv,
+  type AccreditationReasonCode,
+  type AccreditationRevocationReason,
+  type AccreditationClaims,
+  type AccreditationEnv,
 } from "./operator/types.js";
 export {
   type BuildAccreditationInput,
@@ -310,10 +310,10 @@ export {
   type BuildRegulatoryInput,
 } from "./operator/affiliation.js";
 export {
-  verifyOperator,
-  type OperatorVerifyInput,
-  type OperatorVerifyDeps,
-  type OperatorVerifyResult,
+  verifyAccreditation,
+  type AccreditationVerifyInput,
+  type AccreditationVerifyDeps,
+  type AccreditationVerifyResult,
 } from "./operator/verify.js";
 
 // Grantor Binding (§17)

@@ -5,7 +5,7 @@
 // pass (there is no separate rung engine — see §16.7 A7). Ported from kya/contract.ts.
 import type { ActionRule } from "../action/types.js";
 import type { AgentReasonCode, Assurance, Binding, Root } from "./types.js";
-import type { OperatorLevel, OperatorMethod, OperatorReasonCode } from "../operator/types.js";
+import type { AccreditationLevel, AccreditationMethod, AccreditationReasonCode } from "../operator/types.js";
 
 /** Structured per-mandate policy (kya authoring form); compiled to CEL by this module. */
 export type Constraint =
@@ -15,9 +15,9 @@ export type Constraint =
   | { type: "binding_required"; binding: Binding; whenAmountAbove?: number }
   | { type: "root_allow"; roots: Root[] }
   | { type: "max_attestation_staleness"; seconds: number }
-  // §18 operator verification — the IDENTITY axis (ordinal floor + categorical match).
-  | { type: "operator_required"; min: OperatorLevel; whenAction?: string[]; whenAmountAbove?: number }
-  | { type: "operator_method_in"; methods: OperatorMethod[] };
+  // §18 accreditation — the IDENTITY axis (ordinal floor + categorical match).
+  | { type: "accreditation_required"; min: AccreditationLevel; whenAction?: string[]; whenAmountAbove?: number }
+  | { type: "accreditation_method_in"; methods: AccreditationMethod[] };
 
 const celList = (items: string[]): string => "[" + items.map((s) => JSON.stringify(s)).join(", ") + "]";
 
@@ -53,17 +53,17 @@ export function constraintToRule(c: Constraint, i = 0): ActionRule {
       // Needs the 🔮 `now` context item; enforced procedurally as A8 (v0.3 §16.7) until
       // then, against the key's `maxAttestationStaleness` (v0.3 §16.4).
       return rule(`max_attestation_staleness_${i}`, "true", "attestation staleness (procedural, A8)");
-    case "operator_required": {
+    case "accreditation_required": {
       // ORDINAL floor on the identity ladder — the §18 analogue of assurance_floor.
-      const base = `operatorRank(operator.level) >= operatorRank(${JSON.stringify(c.min)})`;
+      const base = `accreditationRank(accreditation.level) >= accreditationRank(${JSON.stringify(c.min)})`;
       const guards: string[] = [];
       if (c.whenAction) guards.push(`!(executionParams.action in ${celList(c.whenAction)})`);
       if (c.whenAmountAbove !== undefined) guards.push(`executionParams.amount <= ${c.whenAmountAbove}`);
-      return rule(`operator_required_${i}`, guards.length ? `${guards.join(" || ")} || ${base}` : base, "operator not verified enough");
+      return rule(`accreditation_required_${i}`, guards.length ? `${guards.join(" || ")} || ${base}` : base, "operator not verified enough");
     }
-    case "operator_method_in":
+    case "accreditation_method_in":
       // CATEGORICAL — how the level was earned (e.g. eIDAS for a regulated flow).
-      return rule(`operator_method_in_${i}`, `operator.method in ${celList(c.methods)}`, "operator verification method not accepted");
+      return rule(`accreditation_method_in_${i}`, `accreditation.method in ${celList(c.methods)}`, "operator verification method not accepted");
   }
 }
 
@@ -77,12 +77,12 @@ export function constraintsToRules(constraints: Constraint[]): ActionRule[] {
  * (`agent_assurance_insufficient` / `agent_binding_insufficient` / `root_not_accepted`);
  * `undefined` ⇒ a non-agent rule → the generic `rule_failed`.
  */
-export function agentReasonForRule(name: string): AgentReasonCode | OperatorReasonCode | undefined {
+export function agentReasonForRule(name: string): AgentReasonCode | AccreditationReasonCode | undefined {
   if (name.startsWith("assurance_floor")) return "agent_assurance_insufficient";
   if (name.startsWith("binding_required")) return "agent_binding_insufficient";
   if (name.startsWith("root_allow")) return "root_not_accepted";
   // §18 — O5: the identity floor / method match failed.
-  if (name.startsWith("operator_required") || name.startsWith("operator_method_in")) return "operator_insufficient";
+  if (name.startsWith("accreditation_required") || name.startsWith("accreditation_method_in")) return "accreditation_insufficient";
   return undefined;
 }
 
