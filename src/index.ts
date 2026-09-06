@@ -227,6 +227,8 @@ export {
 export {
   actionHash,
   buildPoP,
+  algForKey,
+  allowedPopAlgs,
   decodePoP,
   verifyPoPSignature,
   type PopPayload,

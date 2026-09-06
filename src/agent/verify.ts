@@ -23,6 +23,12 @@ export interface AgentEnv {
 }
 
 export interface PopCheckInput {
+  /**
+   * Whose key is presenting — `agent` (the default) or `user`/`organization`. Selects the permitted
+   * PoP algorithms (§16.6): agents ES256-only because §16.2 chose P-256 for keys the ISSUER
+   * controls; a person's authenticator chooses for them, so RS256 and EdDSA are permitted there.
+   */
+  actorType?: string;
   authorizedAgents: BoundKey[];
   pop: string; // the via-pop+jwt JWS
   verifier: string; // aud
