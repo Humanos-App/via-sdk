@@ -31,7 +31,7 @@ import { EVENT_TYPES, type EventType } from "../crypto/proof.js";
 import type { ViaEvent, SpecVersion } from "../types.js";
 import { VIA_SPEC_VERSION } from "../types.js";
 import type { Assurance, Binding, RuntimeAttestation } from "../agent/types.js";
-import { isAssurance, isBinding } from "../agent/types.js";
+import { assuranceRank, isAssurance, isBinding } from "../agent/types.js";
 import type { Jwk } from "../crypto/p256.js";
 
 // ── Types (v0.3 §3.1 — assurance fields FLAT, §16 tokens verbatim) ───────────
@@ -156,7 +156,6 @@ export interface ViaActorSubject {
     level: "unverified" | "domain" | "verified";
     method: string;
     registrar: string;
-    subjectType?: "individual" | "organization";
     verifiedAt: string;
     expiresAt?: string;
     /**
@@ -279,6 +278,12 @@ export const RUNTIME_CLASSES: ReadonlySet<string> = new Set(["none", "app", "hos
 
 /** §18's identity ladder. Ordinal — `accreditationRank` compares it; `method` beside it is categorical. */
 export const ACCREDITATION_LEVELS: ReadonlySet<string> = new Set(["unverified", "domain", "verified"]);
+/** Which methods can earn which level (v0.3 §18.2). `unverified` carries no method. */
+export const ACCREDITATION_METHODS_BY_LEVEL = {
+  unverified: new Set<string>(),
+  domain: new Set<string>(["dns-challenge"]),
+  verified: new Set<string>(["kyc-doc", "kyb-registry", "eidas-substantial", "eidas-high"]),
+} as const;
 
 export const ACTOR_EVENT_TYPES = EVENT_TYPES.filter(
   (t): t is ActorEventType => EVENT_SCOPE[t] === "actor",
@@ -326,15 +331,58 @@ function keyRung(
   fallback: { assurance?: unknown; binding?: unknown; root?: unknown },
   at: string,
 ): Pick<ActorKeyState, "assurance" | "binding" | "verifiedAt" | "root"> {
-  const assurance = (detail.assurance ?? fallback.assurance) as Assurance | undefined;
-  const binding = (detail.binding ?? fallback.binding) as Binding | undefined;
-  const root = (detail.root ?? fallback.root) as string | undefined;
+  // A key with NO rung of its own falls back to the actor summary as a whole (v0.3 §9.1bis
+  // rule 4). A key that carries a rung carries the whole rung: a key graded `pop` without a root
+  // does not inherit a sibling's `aws-nitro` field by field.
+  const own = detail.assurance !== undefined || detail.binding !== undefined;
+  const assurance = (own ? detail.assurance : fallback.assurance) as Assurance | undefined;
+  const binding = (own ? detail.binding : fallback.binding) as Binding | undefined;
+  const root = (own ? detail.root : fallback.root) as string | undefined;
   return {
     ...(assurance ? { assurance } : {}),
     ...(binding ? { binding } : {}),
     ...(root ? { root } : {}),
     verifiedAt: (detail.verifiedAt as string) ?? at,
   };
+}
+
+/** How confined a binding is. Only the ORDER matters (v0.3 §9.1bis rule 5). */
+const BINDING_RANK: Record<Binding, number> = { self: 0, custodial: 1, attested: 2 };
+
+/**
+ * The actor summary is DERIVED (v0.3 §9.1bis rule 5): the floor across usable keys — the weakest
+ * an attacker can choose. `assurance` the lowest rung, `binding` the weakest by
+ * self < custodial < attested, `root` only when every usable key shares one, `verifiedAt` the
+ * oldest. Keys with no rung of their own (chains written before per-key rungs) do not vote; when
+ * no usable key carries a rung the summary is whatever was asserted, and `null` says so.
+ */
+export function actorSummaryFloor(
+  keys: ActorKeyState[],
+): Pick<ViaActorSubject, "assurance" | "binding" | "verifiedAt" | "root"> | null {
+  const voting = keys.filter((k) => k.status !== "revoked" && k.assurance && k.binding);
+  if (voting.length === 0) return null;
+  let assurance = voting[0]!.assurance!;
+  let binding = voting[0]!.binding!;
+  let verifiedAt = voting[0]!.verifiedAt ?? "";
+  for (const k of voting) {
+    if (assuranceRank(k.assurance!) < assuranceRank(assurance)) assurance = k.assurance!;
+    if (BINDING_RANK[k.binding!] < BINDING_RANK[binding]) binding = k.binding!;
+    if (k.verifiedAt && (!verifiedAt || k.verifiedAt < verifiedAt)) verifiedAt = k.verifiedAt;
+  }
+  const roots = new Set(voting.map((k) => k.root ?? ""));
+  const root = roots.size === 1 && voting[0]!.root ? voting[0]!.root : undefined;
+  return { assurance, binding, verifiedAt, ...(root ? { root } : {}) };
+}
+
+/** Apply the derived floor to the subject; a no-op when no usable key carries a rung. */
+function deriveSummary(subject: ViaActorSubject): void {
+  const floor = actorSummaryFloor(subject.keys);
+  if (!floor) return;
+  subject.assurance = floor.assurance;
+  subject.binding = floor.binding;
+  subject.verifiedAt = floor.verifiedAt;
+  if (floor.root) subject.root = floor.root;
+  else delete subject.root;
 }
 
 export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldResult {
@@ -472,12 +520,21 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
           if (detail.root) k.root = String(detail.root);
           else delete k.root;
           k.verifiedAt = (detail.verifiedAt as string) ?? e.validFrom;
+          deriveSummary(subject); // the floor follows the re-graded key (§9.1bis rule 5)
           break;
         }
-        // Without `keyId`: replaces the actor's assurance FIELDS (summary) — never the anchor. The
-        // anchor is history, who let the actor in (v0.3 §9.5); an update that names a different one
-        // is refused rather than applied, so a later vouch cannot rewrite genesis.
+        // Without `keyId` (v0.3 §9.1bis rule 6): an AUDIT of the summary, not a second writer. The
+        // summary is the floor across usable keys, derived below after every key event; this event
+        // exists so a floor MOVE is a signed, visible fact. Its values must be that floor. The anchor
+        // is history, who let the actor in (§9.5): naming a different one is refused, not applied.
         if (detail.bootstrapAnchor !== undefined && detail.bootstrapAnchor !== subject.bootstrapAnchor) return fail("anchor_immutable", i);
+        const floor = actorSummaryFloor(subject.keys);
+        if (floor) {
+          if (detail.assurance !== floor.assurance || detail.binding !== floor.binding) return fail("summary_mismatch", i);
+          deriveSummary(subject);
+          break;
+        }
+        // No usable key carries a rung (a chain written before per-key rungs): the assertion stands.
         subject.assurance = detail.assurance as Assurance;
         subject.binding = detail.binding as Binding;
         subject.verifiedAt = (detail.verifiedAt as string) ?? e.validFrom;
@@ -543,6 +600,11 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         if (!a || typeof a.level !== "string" || !ACCREDITATION_LEVELS.has(a.level)) {
           return fail("accreditation_invalid", i);
         }
+        // `level` and `method` cohere (v0.3 §18.2): a registrar cannot claim `verified` by DNS.
+        const allowed = ACCREDITATION_METHODS_BY_LEVEL[a.level as keyof typeof ACCREDITATION_METHODS_BY_LEVEL];
+        if (a.level === "unverified" ? a.method !== undefined : !a.method || !allowed.has(a.method)) {
+          return fail("accreditation_invalid", i);
+        }
         // An AGENT has no legal identity to verify and inherits its operator's (§18.4). Accepting
         // one here would let an agent hold standing no registrar granted it — the forgery the
         // affiliation conjunction exists to prevent, arriving by a different door.
@@ -564,10 +626,16 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         break;
       }
     }
+    // The summary follows the keys (v0.3 §9.1bis rule 5). Derived here, after the event, so a
+    // revoked weak key raises the floor and an added weak key lowers it without anyone asserting.
+    if (KEY_EVENTS.has(kind)) deriveSummary(subject);
   }
 
   return subject ? { ok: true, subject } : fail("empty_chain");
 }
+
+/** The events after which the summary is re-derived. `ASSURANCE_UPDATED` derives inside its case. */
+const KEY_EVENTS: ReadonlySet<string> = new Set(["KEY_ADDED", "KEY_ROTATED", "KEY_REVOKED", "ATTESTATION_RENEWED"]);
 
 // ── Party resolution across a merge (v0.3 §3.6) ─────────────────────────────
 
@@ -809,6 +877,9 @@ export function projectAgentContext(
     // A2/A3 against `cnf` before any rule runs, and v0.3 §7 resolves an id-pinned mandate THROUGH
     // this actor. This is policy about identity, layered on a binding already proven.
     did: subject.id,
+    // The projection is for the PRESENTING actor whatever its type (v0.3 §9.3): a person with a
+    // passkey or an org under its own key lands here too, and this says which.
+    actorType: subject.actorType,
     assurance,
     binding,
     bootstrapAnchor: subject.bootstrapAnchor,

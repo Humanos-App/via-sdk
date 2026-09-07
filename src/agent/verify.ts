@@ -121,6 +121,13 @@ export interface AgentDirectDeps {
    * role-specific.
    */
   agentEnvExtras?: Record<string, unknown>;
+  /**
+   * v0.3 §18.5 — the presenting actor's OPERATOR's `accreditation` (its own, when it has no
+   * operator), projected as `accreditation.*`. A loader, called only when a rule references
+   * `accreditation`, so the extra actor resolution costs nothing otherwise. A rule that references
+   * it while no loader is supplied errors in CEL and therefore denies (fail closed, §16.8).
+   */
+  loadAccreditation?: () => Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined>;
 }
 
 export interface AgentDirectResult {
@@ -192,10 +199,13 @@ export async function verifyAgentDirect(
   // 9. CEL — with the rung env as `agent.*` (this is where A7 is enforced).
   // v0.3: the env EXTENDS with actor-projection fields (bootstrapAnchor, status)
   // supplied by the deployment — same namespace, no `actor.*` (v0.3 §9.3).
+  const wantsAccreditation = action.rules.some((r) => String(r.expression ?? "").includes("accreditation"));
+  const accreditation = wantsAccreditation && deps.loadAccreditation ? await deps.loadAccreditation() : undefined;
   const { decision, evaluations } = evaluateRules(action.rules, {
     userParams: unwrapUserParamValues(m.userParams),
     executionParams: req.params,
     agent: { ...pop.agent, ...(deps.agentEnvExtras ?? {}) },
+    ...(accreditation ? { accreditation } : {}),
   });
   if (decision === "allow") return { decision: "allow", credentialId: urn, evaluations, agent: pop.agent };
 

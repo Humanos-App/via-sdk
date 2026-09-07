@@ -258,24 +258,42 @@ describe("foldActorChain — attestation and assurance", () => {
     expect(r.subject.verifiedAt).toBe("2026-10-01T00:00:00.000Z");
   });
 
-  it("ASSURANCE_UPDATED replaces the rung fields wholesale, drops root when the update omits it, and never moves the anchor", () => {
-    const g = genesis({ root: "aws-nitro" });
-    const downgrade = ev(
-      "ASSURANCE_UPDATED",
-      { assurance: "pop", binding: "self", verifiedAt: "2026-10-02T00:00:00.000Z" },
-      { prev: g },
-    );
-    const r = foldActorChain([g, downgrade]);
+  it("the summary is DERIVED — the floor across usable keys — and ASSURANCE_UPDATED without keyId only audits it (§9.1bis rules 5–6)", () => {
+    const g = genesis({ root: "aws-nitro" }); // one key: hardware/attested, root aws-nitro
+    // Asserting a summary the keys do not support is refused: there is one writer, the keys.
+    const lie = ev("ASSURANCE_UPDATED", { assurance: "pop", binding: "self" }, { prev: g });
+    expect(foldActorChain([g, lie])).toMatchObject({ ok: false, reason: expect.stringContaining("summary_mismatch") });
+
+    // Lower the KEY (the §9.1bis downgrade path); the summary follows without being asserted…
+    const regrade = ev("ASSURANCE_UPDATED", { keyId: "k1", assurance: "pop", binding: "self" }, { prev: g });
+    const r = foldActorChain([g, regrade]);
     if (!r.ok) throw new Error(r.reason);
     expect(r.subject).toMatchObject({ assurance: "pop", binding: "self", bootstrapAnchor: "api_key" });
-    // A stale root would claim hardware backing the actor no longer has.
+    // …and a root no usable key carries is gone from the summary — a stale root would claim
+    // hardware backing the actor no longer has.
     expect(r.subject.root).toBeUndefined();
+    // …and the audit event that states the new floor is accepted.
+    const audit = ev("ASSURANCE_UPDATED", { assurance: "pop", binding: "self" }, { prev: regrade });
+    expect(foldActorChain([g, regrade, audit]).ok).toBe(true);
 
     // The anchor is history (§9.5): restating it is fine, changing it fails the fold.
-    const same = ev("ASSURANCE_UPDATED", { assurance: "pop", binding: "self", bootstrapAnchor: "api_key" }, { prev: g });
+    const same = ev("ASSURANCE_UPDATED", { assurance: "hardware", binding: "attested", bootstrapAnchor: "api_key" }, { prev: g });
     expect(foldActorChain([g, same]).ok).toBe(true);
-    const rewrite = ev("ASSURANCE_UPDATED", { assurance: "pop", binding: "self", bootstrapAnchor: "manual" }, { prev: g });
+    const rewrite = ev("ASSURANCE_UPDATED", { assurance: "hardware", binding: "attested", bootstrapAnchor: "manual" }, { prev: g });
     expect(foldActorChain([g, rewrite])).toMatchObject({ ok: false, reason: expect.stringContaining("anchor_immutable") });
+  });
+
+  it("a weak key added lowers the floor; revoking it raises the floor back — nobody asserts either", () => {
+    const g = genesis({ root: "aws-nitro" });
+    const weak = ev("KEY_ADDED", { keyId: "k2", jwk: JWK, assurance: "pop", binding: "self" }, { prev: g });
+    const lowered = foldActorChain([g, weak]);
+    if (!lowered.ok) throw new Error(lowered.reason);
+    expect(lowered.subject).toMatchObject({ assurance: "pop", binding: "self" });
+    expect(lowered.subject.root).toBeUndefined(); // not every usable key shares aws-nitro
+    const kill = ev("KEY_REVOKED", { keyId: "k2" }, { prev: weak });
+    const raised = foldActorChain([g, weak, kill]);
+    if (!raised.ok) throw new Error(raised.reason);
+    expect(raised.subject).toMatchObject({ assurance: "hardware", binding: "attested", root: "aws-nitro" });
   });
 
   it("an unknown assurance or binding token fails the fold — an unranked rung would fail OPEN", () => {
@@ -288,7 +306,7 @@ describe("foldActorChain — attestation and assurance", () => {
     expect(foldActorChain([g, bogusBinding])).toMatchObject({ ok: false, reason: expect.stringContaining("invalid_binding") });
   });
 
-  it("ASSURANCE_UPDATED with keyId re-grades THAT key and leaves the actor summary alone (§9.1bis downgrade path)", () => {
+  it("ASSURANCE_UPDATED with keyId re-grades THAT key, and the summary follows as the floor (§9.1bis downgrade path)", () => {
     const g = genesis({ root: "aws-nitro" });
     const before = foldActorChain([g]);
     if (!before.ok) throw new Error(before.reason);
@@ -305,8 +323,8 @@ describe("foldActorChain — attestation and assurance", () => {
     const k = r.subject.keys.find((x) => x.id === keyId)!;
     expect(k).toMatchObject({ assurance: "pop", binding: "self", verifiedAt: "2026-10-02T00:00:00.000Z" });
     expect(k.root).toBeUndefined();
-    expect(r.subject.assurance).toBe(before.subject.assurance);
-    expect(r.subject.root).toBe("aws-nitro");
+    expect(r.subject.assurance).toBe("pop"); // the floor follows the re-graded key (rule 5)
+    expect(r.subject.root).toBeUndefined(); // no usable key carries the root any more
 
     // A keyId the actor never had fails the fold, like every other key-addressed event.
     const bad = ev("ASSURANCE_UPDATED", { keyId: "did:web:x#key-9", assurance: "pop" }, { prev: g });
@@ -710,8 +728,10 @@ describe("projectAgentContext (§9 / KYA A.3) — the agent.* CEL namespace", ()
     // Authorization reads the PRESENTING key…
     expect(projectAgentContext(folded.subject, k2).assurance).toBe("pop");
     expect(projectAgentContext(folded.subject, k1).assurance).toBe("hardware");
-    // …and with no key supplied it falls back to the actor summary, for reporting.
-    expect(projectAgentContext(folded.subject).assurance).toBe("hardware");
+    // …and with no key supplied it reports the actor summary — the FLOOR across usable keys
+    // (§9.1bis rule 5), which the weak key just lowered. Reporting never overstates.
+    expect(projectAgentContext(folded.subject).assurance).toBe("pop");
+    expect(projectAgentContext(folded.subject, k2).actorType).toBe("agent");
   });
 
   it("renewing ONE key does not refresh a sibling's freshness claim", () => {

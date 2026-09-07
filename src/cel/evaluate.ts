@@ -9,8 +9,8 @@ export interface CelContext {
   /** §16.8 — the acting agent's verified rung `{ assurance, binding, root, verifiedAt, did }`. Present only under agent binding. */
   agent?: Record<string, unknown>;
   /**
-   * §18 — the composed accreditation `{ level, method, subjectType, registrar, org }`. Present
-   * only when an accreditation was presented and verified.
+   * §18 — the operator's accreditation `{ level, method, registrar, verifiedAt }` (v0.3 §18.5/§18.6),
+   * resolved from the operator's own actor. Present only when a rule asked for it and it resolved.
    *
    * Named for the AXIS, not the role. `agent.operator.org` is a different thing — the actor's
    * relationship pointer, saying who an agent acts for. One word meaning both is what this
