@@ -902,7 +902,7 @@ export function projectAgentContext(
 
 export interface ActorAudit {
   ok: boolean;
-  /** `fold_failed:<reason>` | `chain_binding_mismatch` | `snapshot_subject_mismatch` — the fold's `subject_mismatch` is about one event */
+  /** `fold_failed:<reason>` | `chain_binding_mismatch` | `snapshot_outdated` (older than the fold: every stored value matches, newer derived fields are absent — re-issue) | `snapshot_subject_mismatch` (a stored value disagrees with the chain) */
   reason?: string;
 }
 
@@ -922,8 +922,16 @@ export function auditActorSnapshot(snapshot: ActorSnapshot, events: ViaEvent[]):
   if (head < 0) return { ok: false, reason: "chain_binding_mismatch" };
   const folded = foldActorChain(events.slice(0, head + 1));
   if (!folded.ok) return { ok: false, reason: `fold_failed:${folded.reason}` };
-  const same =
-    canonicalizeRFC8785(folded.subject as unknown as Record<string, unknown>) ===
-    canonicalizeRFC8785(snapshot.subject as unknown as Record<string, unknown>);
-  return same ? { ok: true } : { ok: false, reason: "snapshot_subject_mismatch" };
+  const fresh = folded.subject as unknown as Record<string, unknown>;
+  const stored = snapshot.subject as unknown as Record<string, unknown>;
+  if (canonicalizeRFC8785(fresh) === canonicalizeRFC8785(stored)) return { ok: true };
+  // The fold learns to derive new fields over time (`genesisAt`, `existedSince`, `runtime`…). A
+  // snapshot issued before such a field existed still says nothing FALSE — every value it carries
+  // matches — it is merely older than the fold. That is `snapshot_outdated`: re-issue it. A stored
+  // value that disagrees with the chain is the lie this audit exists to catch.
+  const differing = [...new Set([...Object.keys(fresh), ...Object.keys(stored)])].filter(
+    (k) => canonicalizeRFC8785({ v: fresh[k] }) !== canonicalizeRFC8785({ v: stored[k] }),
+  );
+  const onlyMissing = differing.every((k) => stored[k] === undefined && fresh[k] !== undefined);
+  return { ok: false, reason: onlyMissing ? "snapshot_outdated" : "snapshot_subject_mismatch" };
 }
