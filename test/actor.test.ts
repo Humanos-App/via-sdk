@@ -271,6 +271,31 @@ describe("foldActorChain — attestation and assurance", () => {
     // A stale root would claim hardware backing the actor no longer has.
     expect(r.subject.root).toBeUndefined();
   });
+
+  it("ASSURANCE_UPDATED with keyId re-grades THAT key and leaves the actor summary alone (§9.1bis downgrade path)", () => {
+    const g = genesis({ root: "aws-nitro" });
+    const before = foldActorChain([g]);
+    if (!before.ok) throw new Error(before.reason);
+    const keyId = before.subject.keys[0]!.id;
+
+    // The root the key was graded under is distrusted: the KEY drops, the actor summary stays.
+    const downgrade = ev(
+      "ASSURANCE_UPDATED",
+      { keyId, assurance: "pop", binding: "self", verifiedAt: "2026-10-02T00:00:00.000Z" },
+      { prev: g },
+    );
+    const r = foldActorChain([g, downgrade]);
+    if (!r.ok) throw new Error(r.reason);
+    const k = r.subject.keys.find((x) => x.id === keyId)!;
+    expect(k).toMatchObject({ assurance: "pop", binding: "self", verifiedAt: "2026-10-02T00:00:00.000Z" });
+    expect(k.root).toBeUndefined();
+    expect(r.subject.assurance).toBe(before.subject.assurance);
+    expect(r.subject.root).toBe("aws-nitro");
+
+    // A keyId the actor never had fails the fold, like every other key-addressed event.
+    const bad = ev("ASSURANCE_UPDATED", { keyId: "did:web:x#key-9", assurance: "pop" }, { prev: g });
+    expect(foldActorChain([g, bad])).toMatchObject({ ok: false, reason: expect.stringContaining("unknown_key") });
+  });
 });
 
 // ── status (§4 transition table) ─────────────────────────────────────────────

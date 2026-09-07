@@ -455,7 +455,20 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         break;
       }
       case "ASSURANCE_UPDATED": {
-        // replaces the assurance FIELDS wholesale — exactly these five (v0.3 §5)
+        // With `keyId` (v0.3 §5 / §9.1bis): re-grade THAT key's own rung and leave the summary
+        // alone. This is the per-key downgrade path — a root that becomes distrusted lowers the
+        // key graded under it, and authorization reads the key, not the summary.
+        if (detail.keyId) {
+          const k = key(detail.keyId);
+          if (!k) return fail("unknown_key", i);
+          if (detail.assurance) k.assurance = detail.assurance as Assurance;
+          if (detail.binding) k.binding = detail.binding as Binding;
+          if (detail.root) k.root = String(detail.root);
+          else delete k.root;
+          k.verifiedAt = (detail.verifiedAt as string) ?? e.validFrom;
+          break;
+        }
+        // Without `keyId`: replaces the actor's assurance FIELDS wholesale — exactly these five (v0.3 §5)
         subject.assurance = detail.assurance as Assurance;
         subject.binding = detail.binding as Binding;
         subject.bootstrapAnchor = detail.bootstrapAnchor as BootstrapAnchor;
