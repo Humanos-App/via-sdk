@@ -258,18 +258,24 @@ describe("foldActorChain — attestation and assurance", () => {
     expect(r.subject.verifiedAt).toBe("2026-10-01T00:00:00.000Z");
   });
 
-  it("ASSURANCE_UPDATED replaces the fields wholesale, and drops root when the update omits it", () => {
+  it("ASSURANCE_UPDATED replaces the rung fields wholesale, drops root when the update omits it, and never moves the anchor", () => {
     const g = genesis({ root: "aws-nitro" });
     const downgrade = ev(
       "ASSURANCE_UPDATED",
-      { assurance: "pop", binding: "self", bootstrapAnchor: "manual", verifiedAt: "2026-10-02T00:00:00.000Z" },
+      { assurance: "pop", binding: "self", verifiedAt: "2026-10-02T00:00:00.000Z" },
       { prev: g },
     );
     const r = foldActorChain([g, downgrade]);
     if (!r.ok) throw new Error(r.reason);
-    expect(r.subject).toMatchObject({ assurance: "pop", binding: "self", bootstrapAnchor: "manual" });
+    expect(r.subject).toMatchObject({ assurance: "pop", binding: "self", bootstrapAnchor: "api_key" });
     // A stale root would claim hardware backing the actor no longer has.
     expect(r.subject.root).toBeUndefined();
+
+    // The anchor is history (§9.5): restating it is fine, changing it fails the fold.
+    const same = ev("ASSURANCE_UPDATED", { assurance: "pop", binding: "self", bootstrapAnchor: "api_key" }, { prev: g });
+    expect(foldActorChain([g, same]).ok).toBe(true);
+    const rewrite = ev("ASSURANCE_UPDATED", { assurance: "pop", binding: "self", bootstrapAnchor: "manual" }, { prev: g });
+    expect(foldActorChain([g, rewrite])).toMatchObject({ ok: false, reason: expect.stringContaining("anchor_immutable") });
   });
 
   it("an unknown assurance or binding token fails the fold — an unranked rung would fail OPEN", () => {
@@ -561,7 +567,7 @@ describe("auditActorSnapshot", () => {
   it("rejects a tampered subject — the chain is authoritative", () => {
     const { c, snapshot } = built();
     const lying = { ...snapshot, subject: { ...snapshot.subject, assurance: "hardware" as never, status: "active" as never, id: "did:web:humanos.tech:agent:someone-else" } };
-    expect(auditActorSnapshot(lying, c)).toMatchObject({ reason: "subject_mismatch" });
+    expect(auditActorSnapshot(lying, c)).toMatchObject({ reason: "snapshot_subject_mismatch" });
   });
 
   it("surfaces a fold failure with its reason attached", () => {

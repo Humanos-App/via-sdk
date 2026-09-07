@@ -474,10 +474,12 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
           k.verifiedAt = (detail.verifiedAt as string) ?? e.validFrom;
           break;
         }
-        // Without `keyId`: replaces the actor's assurance FIELDS wholesale — exactly these five (v0.3 §5)
+        // Without `keyId`: replaces the actor's assurance FIELDS (summary) — never the anchor. The
+        // anchor is history, who let the actor in (v0.3 §9.5); an update that names a different one
+        // is refused rather than applied, so a later vouch cannot rewrite genesis.
+        if (detail.bootstrapAnchor !== undefined && detail.bootstrapAnchor !== subject.bootstrapAnchor) return fail("anchor_immutable", i);
         subject.assurance = detail.assurance as Assurance;
         subject.binding = detail.binding as Binding;
-        subject.bootstrapAnchor = detail.bootstrapAnchor as BootstrapAnchor;
         subject.verifiedAt = (detail.verifiedAt as string) ?? e.validFrom;
         if (detail.root) subject.root = String(detail.root);
         else delete subject.root;
@@ -829,7 +831,7 @@ export function projectAgentContext(
 
 export interface ActorAudit {
   ok: boolean;
-  /** `fold_failed:<reason>` | `chain_binding_mismatch` | `subject_mismatch` */
+  /** `fold_failed:<reason>` | `chain_binding_mismatch` | `snapshot_subject_mismatch` — the fold's `subject_mismatch` is about one event */
   reason?: string;
 }
 
@@ -852,5 +854,5 @@ export function auditActorSnapshot(snapshot: ActorSnapshot, events: ViaEvent[]):
   const same =
     canonicalizeRFC8785(folded.subject as unknown as Record<string, unknown>) ===
     canonicalizeRFC8785(snapshot.subject as unknown as Record<string, unknown>);
-  return same ? { ok: true } : { ok: false, reason: "subject_mismatch" };
+  return same ? { ok: true } : { ok: false, reason: "snapshot_subject_mismatch" };
 }

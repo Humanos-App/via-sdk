@@ -324,11 +324,12 @@ export {
 // Grantor Binding (§17)
 export {
   enrollGrantor,
-  grantorDidFromThumbprint,
+  grantorBindingMethod,
   grantorTermsDigest,
   verifyGrantorAssertion,
   buildGrantorBinding,
   type GrantorBinding,
+  type LegacyGrantorBinding,
   type GrantorReasonCode,
   type GrantorTerms,
   type WebauthnAssertion,

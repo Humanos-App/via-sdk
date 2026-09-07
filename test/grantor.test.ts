@@ -3,7 +3,7 @@ import { generateP256Key, signES256, jwkThumbprint, type P256KeyPair } from "../
 import { verifyWebauthnAssertion } from "../src/crypto/webauthn.js";
 import {
   enrollGrantor,
-  grantorDidFromThumbprint,
+  grantorBindingMethod,
   grantorTermsDigest,
   verifyGrantorAssertion,
   buildGrantorBinding,
@@ -13,6 +13,8 @@ import { createHash } from "node:crypto";
 const te = new TextEncoder();
 const RP_ID = "humanos.tech";
 const ORIGIN = "https://humanos.tech";
+/** The grantor is a PERSON ACTOR (§3.5): one DID per party, never one per passkey (§3.6). */
+const GRANTOR = "did:web:humanos.tech:user:68c0a1b2c3d4e5f6a7b8c9d0";
 
 // Mint a WebAuthn `get` assertion the way a passkey would (challenge = b64u(nonce·termsDigest)),
 // signing authenticatorData ‖ SHA-256(clientDataJSON) with the credential's P-256 key.
@@ -51,13 +53,15 @@ beforeAll(async () => {
 });
 
 describe("§17 grantor binding (M5)", () => {
-  it("enroll derives a did:web user DID from the passkey thumbprint", () => {
-    const { did, cnf: c } = enrollGrantor(key.publicJwk, ORIGIN);
+  it("enroll returns the passkey thumbprint beside the person's actor DID — it mints nothing (§3.6)", () => {
+    const { did, cnf: c } = enrollGrantor(key.publicJwk, GRANTOR);
     expect(c).toBe(cnf);
-    expect(did).toBe(`did:web:humanos.tech:user:${cnf.slice(0, 12)}`);
-    expect(grantorDidFromThumbprint(cnf, "https://demo.example.com:443")).toBe(
-      `did:web:demo.example.com:user:${cnf.slice(0, 12)}`,
-    );
+    expect(did).toBe(GRANTOR);
+    // Any WebAuthn key family enrols (§16.6bis); the thumbprint is RFC 7638 for each.
+    const rsa = { kty: "RSA", n: "AQAB-n", e: "AQAB" };
+    expect(enrollGrantor(rsa, GRANTOR).cnf).toBe(jwkThumbprint(rsa));
+    expect(() => enrollGrantor(key.publicJwk, "")).toThrow(/actor DID/);
+    expect(() => enrollGrantor(key.publicJwk, "user:abc")).toThrow(/actor DID/);
   });
 
   it("termsDigest is a digestSRI, deterministic and purpose/scope-sensitive", () => {
@@ -70,23 +74,31 @@ describe("§17 grantor binding (M5)", () => {
     expect(grantorTermsDigest({ purpose: "stepup", mandateId: "m1", amount: 999, item: "gpu" })).not.toBe(s);
   });
 
-  it("verifies a valid grantor assertion and builds the binding", async () => {
+  it("verifies a valid grantor assertion and builds the binding with `method`, not a rung", async () => {
     const nonce = "n-abc";
     const termsDigest = grantorTermsDigest({ purpose: "stepup", mandateId: "m1", amount: 250, item: "gpu" });
     const assertion = await mintAssertion(key, { nonce, termsDigest });
     const v = await verifyGrantorAssertion(assertion, key.publicJwk, { nonce, termsDigest, rpId: RP_ID, origin: ORIGIN });
     expect(v.ok).toBe(true);
 
-    const gb = buildGrantorBinding(grantorDidFromThumbprint(cnf, ORIGIN), cnf, "2026-07-20T00:00:00.000Z");
+    const gb = buildGrantorBinding(GRANTOR, cnf, "2026-07-20T00:00:00.000Z");
     expect(gb).toEqual({
-      grantor: `did:web:humanos.tech:user:${cnf.slice(0, 12)}`,
+      grantor: GRANTOR,
       cnf: { jkt: cnf }, // D2: RFC 7800 object form
-      assurance: "passkey",
+      method: "webauthn",
       verifiedAt: "2026-07-20T00:00:00.000Z",
     });
+    expect(gb).not.toHaveProperty("assurance");
+    expect(grantorBindingMethod(gb)).toBe("webauthn");
   });
 
-  it("tampered terms → action_hash_mismatch (signed a different payment)", async () => {
+  it("reads the v0.2 encoding (`assurance: \"passkey\"`) as the same fact, and nothing else as one", () => {
+    expect(grantorBindingMethod({ grantor: GRANTOR, cnf: { jkt: cnf }, assurance: "passkey", verifiedAt: "2026-01-01T00:00:00.000Z" })).toBe("webauthn");
+    expect(grantorBindingMethod({ grantor: GRANTOR, cnf: { jkt: cnf }, assurance: "hardware", verifiedAt: "x" })).toBeNull();
+    expect(grantorBindingMethod({})).toBeNull();
+  });
+
+  it("tampered terms → action_hash_mismatch (signed a different payment) — the one code shared with §16.7", async () => {
     const nonce = "n-abc";
     const realTerms = grantorTermsDigest({ purpose: "stepup", mandateId: "m1", amount: 250, item: "gpu" });
     const signedTerms = grantorTermsDigest({ purpose: "stepup", mandateId: "m1", amount: 5000, item: "gpu" });
@@ -96,23 +108,23 @@ describe("§17 grantor binding (M5)", () => {
     expect(v.reason).toBe("action_hash_mismatch");
   });
 
-  it("wrong origin (agent's page, not Humanos's) → pop_invalid", async () => {
+  it("wrong origin (agent's page, not Humanos's) → grantor_assertion_invalid, never the agent's pop_invalid (§17.5)", async () => {
     const nonce = "n-abc";
     const termsDigest = grantorTermsDigest({ purpose: "mandate", agentDid: "a", constraints: [] });
     const assertion = await mintAssertion(key, { nonce, termsDigest, origin: "https://evil-agent.app" });
     const v = await verifyGrantorAssertion(assertion, key.publicJwk, { nonce, termsDigest, rpId: RP_ID, origin: ORIGIN });
     expect(v.ok).toBe(false);
-    expect(v.reason).toBe("pop_invalid");
+    expect(v.reason).toBe("grantor_assertion_invalid");
   });
 
-  it("wrong key → pop_invalid", async () => {
+  it("wrong key → grantor_assertion_invalid", async () => {
     const other = await generateP256Key();
     const nonce = "n-abc";
     const termsDigest = grantorTermsDigest({ purpose: "mandate", agentDid: "a", constraints: [] });
     const assertion = await mintAssertion(key, { nonce, termsDigest });
     const v = await verifyGrantorAssertion(assertion, other.publicJwk, { nonce, termsDigest, rpId: RP_ID, origin: ORIGIN });
     expect(v.ok).toBe(false);
-    expect(v.reason).toBe("pop_invalid");
+    expect(v.reason).toBe("grantor_assertion_invalid");
   });
 
   it("verifyWebauthnAssertion rejects a cleared user-present flag", async () => {
