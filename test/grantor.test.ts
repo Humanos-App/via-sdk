@@ -136,3 +136,21 @@ describe("§17 grantor binding (M5)", () => {
     expect(v.reason).toBe("pop_invalid");
   });
 });
+
+describe("§17.4 — a step-up over a tool call co-signs the agent's own action_hash", () => {
+  it("the terms digest of { mandateId, action, params } IS the PoP action_hash for the same call", async () => {
+    const { actionHash } = await import("../src/agent/pop.js");
+    const params = { tool: "slack_send_message", channel_id: "C0BVB1KBPG8", message: "ship it" };
+    const digest = grantorTermsDigest({ purpose: "stepup", mandateId: "urn:via:credential:m", action: "slack_send_message", params });
+    expect(digest).toBe(actionHash("urn:via:credential:m", "slack_send_message", params));
+    // Any change to the call is a different digest — the human's yes does not travel to another call.
+    expect(grantorTermsDigest({ purpose: "stepup", mandateId: "urn:via:credential:m", action: "slack_send_message", params: { ...params, channel_id: "C0OTHER" } })).not.toBe(digest);
+  });
+
+  it("the purchase-shaped variant still digests as before", () => {
+    const a = grantorTermsDigest({ purpose: "stepup", mandateId: "urn:via:credential:m", amount: 120, currency: "EUR", item: "hotel" });
+    const b = grantorTermsDigest({ purpose: "stepup", mandateId: "urn:via:credential:m", amount: 120, currency: "EUR", item: "hotel" });
+    expect(a).toBe(b);
+    expect(a).toMatch(/^sha256-/);
+  });
+});

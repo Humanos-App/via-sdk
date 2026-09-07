@@ -58,16 +58,26 @@ export function enrollGrantor(jwk: Jwk, grantorDid: string): { did: string; cnf:
   return { did: grantorDid, cnf: jwkThumbprint(jwk) };
 }
 
-/** The exact thing the passkey authorizes — a mandate scope, or a specific step-up payment (§17.3/§17.4). */
+/**
+ * The exact thing the passkey authorizes (§17.3/§17.4): a mandate scope, or one step-up.
+ *
+ * A step-up over a TOOL CALL binds `{ mandateId, action, params }` — the SAME digest the agent's
+ * PoP carries as `action_hash` (§16.6), so the human co-signs the very transaction the agent
+ * signed and a verifier compares one value against both proofs. The purchase-shaped variant is the
+ * v0.2-era example and stays for its callers.
+ */
 export type GrantorTerms =
   | { purpose: "mandate"; agentDid: string; constraints: unknown[] }
+  | { purpose: "stepup"; mandateId: string; action: string; params: Record<string, unknown> }
   | { purpose: "stepup"; mandateId: string; amount: number; currency?: string; item?: string };
 
 /** Compute the `termsDigest` bound into the grantor challenge — a `digestSRI` over the authorized terms. */
 export function grantorTermsDigest(t: GrantorTerms): string {
-  return t.purpose === "stepup"
-    ? actionHash(`stepup:${t.mandateId}`, "purchase", { amount: t.amount, currency: t.currency ?? "USD", item: t.item ?? "" })
-    : actionHash(`grant:${t.agentDid}`, "grant", { constraints: t.constraints });
+  if (t.purpose === "stepup") {
+    if ("action" in t) return actionHash(t.mandateId, t.action, t.params);
+    return actionHash(`stepup:${t.mandateId}`, "purchase", { amount: t.amount, currency: t.currency ?? "USD", item: t.item ?? "" });
+  }
+  return actionHash(`grant:${t.agentDid}`, "grant", { constraints: t.constraints });
 }
 
 /**
