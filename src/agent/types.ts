@@ -49,6 +49,15 @@ export type Binding = "self" | "custodial" | "attested";
 export type Root = "aws-nitro" | "fido" | (string & {});
 
 export const ASSURANCE_RANK: Record<Assurance, number> = { pop: 1, device: 2, hardware: 3 };
+export const BINDINGS: readonly Binding[] = ["self", "custodial", "attested"];
+
+/** Token guards — a fold or a writer that accepts anything else fails OPEN: an unknown rung ranks as NaN. */
+export function isAssurance(x: unknown): x is Assurance {
+  return typeof x === "string" && x in ASSURANCE_RANK;
+}
+export function isBinding(x: unknown): x is Binding {
+  return typeof x === "string" && (BINDINGS as readonly string[]).includes(x);
+}
 /** Ordinal rank of an assurance level (§16.8 `assuranceRank`). */
 export function assuranceRank(a: Assurance): number {
   return ASSURANCE_RANK[a];

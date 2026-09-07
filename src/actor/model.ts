@@ -31,6 +31,7 @@ import { EVENT_TYPES, type EventType } from "../crypto/proof.js";
 import type { ViaEvent, SpecVersion } from "../types.js";
 import { VIA_SPEC_VERSION } from "../types.js";
 import type { Assurance, Binding, RuntimeAttestation } from "../agent/types.js";
+import { isAssurance, isBinding } from "../agent/types.js";
 import type { Jwk } from "../crypto/p256.js";
 
 // ── Types (v0.3 §3.1 — assurance fields FLAT, §16 tokens verbatim) ───────────
@@ -347,6 +348,11 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
     const cs = e.credentialSubject;
     const kind = cs.event as ActorEventType;
     const detail = detailOf(e);
+
+    // §16.3 tokens only, checked once for every writer. An unknown rung ranks as NaN and every
+    // floor comparison against NaN is false — which is fail-OPEN, so a token typo must not fold.
+    if (detail.assurance !== undefined && !isAssurance(detail.assurance)) return fail("invalid_assurance", i);
+    if (detail.binding !== undefined && !isBinding(detail.binding)) return fail("invalid_binding", i);
 
     // chain-link discipline: genesis previousEvent === null, else link to prior
     if (cs.previousEvent === undefined) return fail("previous_event_missing", i);

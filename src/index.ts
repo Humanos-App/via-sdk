@@ -218,6 +218,8 @@ export {
   type CustodyRef,
   type BoundKey,
   boundKeyVerifiedAtMs,
+  isAssurance,
+  isBinding,
   type ConfinementEvidence,
   type ConfinementResult,
   type NitroCa,

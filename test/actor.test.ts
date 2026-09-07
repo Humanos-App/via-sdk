@@ -262,14 +262,24 @@ describe("foldActorChain — attestation and assurance", () => {
     const g = genesis({ root: "aws-nitro" });
     const downgrade = ev(
       "ASSURANCE_UPDATED",
-      { assurance: "software", binding: "self", bootstrapAnchor: "manual", verifiedAt: "2026-10-02T00:00:00.000Z" },
+      { assurance: "pop", binding: "self", bootstrapAnchor: "manual", verifiedAt: "2026-10-02T00:00:00.000Z" },
       { prev: g },
     );
     const r = foldActorChain([g, downgrade]);
     if (!r.ok) throw new Error(r.reason);
-    expect(r.subject).toMatchObject({ assurance: "software", binding: "self", bootstrapAnchor: "manual" });
+    expect(r.subject).toMatchObject({ assurance: "pop", binding: "self", bootstrapAnchor: "manual" });
     // A stale root would claim hardware backing the actor no longer has.
     expect(r.subject.root).toBeUndefined();
+  });
+
+  it("an unknown assurance or binding token fails the fold — an unranked rung would fail OPEN", () => {
+    const g = genesis({ root: "aws-nitro" });
+    // `software` was never a rung (§16.3: pop < device < hardware). Ranked, it is NaN, and every
+    // floor comparison against NaN is false — so a token typo would have passed every check.
+    const bogus = ev("ASSURANCE_UPDATED", { assurance: "software", binding: "self", bootstrapAnchor: "manual" }, { prev: g });
+    expect(foldActorChain([g, bogus])).toMatchObject({ ok: false, reason: expect.stringContaining("invalid_assurance") });
+    const bogusBinding = ev("ASSURANCE_UPDATED", { assurance: "pop", binding: "floating", bootstrapAnchor: "manual" }, { prev: g });
+    expect(foldActorChain([g, bogusBinding])).toMatchObject({ ok: false, reason: expect.stringContaining("invalid_binding") });
   });
 
   it("ASSURANCE_UPDATED with keyId re-grades THAT key and leaves the actor summary alone (§9.1bis downgrade path)", () => {
