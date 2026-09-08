@@ -42,6 +42,8 @@ export interface BuildEventInput {
   operator?: Record<string, unknown>;
   /** §18 — `ACCREDITED` detail: the registrar's claim about THIS actor's identity. */
   accreditation?: Record<string, unknown>;
+  /** §17.4 — step-up detail: `{ id, method, termsDigest, tool }` on `STEP_UP_*`; the reference on a `VERIFICATION_*`. */
+  stepUp?: Record<string, unknown>;
   /**
    * Content-bound: the credential to hash (e.g. a {@link ViaMandateCredential}), or a
    * precomputed digest. Any existing `proof` is stripped before hashing (spec v0.2-new §5.4).
@@ -88,6 +90,7 @@ export function buildEvent(input: BuildEventInput): ViaEvent {
       ...(input.executionParams ? { executionParams: input.executionParams } : {}),
       ...(input.targetVerifier ? { targetVerifier: input.targetVerifier } : {}),
       ...(input.agent ? { agent: input.agent } : {}),
+    ...(input.stepUp ? { stepUp: input.stepUp } : {}),
       ...(input.operator ? { operator: input.operator } : {}),
       ...(input.accreditation ? { accreditation: input.accreditation } : {}),
     },

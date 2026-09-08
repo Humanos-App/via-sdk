@@ -45,6 +45,11 @@ export const EVENT_TYPES = [
   // CREDENTIAL-scoped: they name a credential URN, never an actor DID.
   "ACTION_COMPLETED",
   "ACTION_FAILED",
+  // v0.3 §17.4 — the grantor's fresh co-sign of ONE call (or their refusal): a consent act like
+  // ACCEPT/REJECT, credential-scoped, the grantor as actor. What a VERIFICATION_APPROVED that
+  // rested on a step-up references (§9.9).
+  "STEP_UP_APPROVED",
+  "STEP_UP_DECLINED",
   // v0.3 §3.4 — the ACTOR-SCOPED lifecycle taxonomy (subject = the actor DID,
   // not a credential URN). Lifecycle-only: per-action and per-boot facts stay
   // off the actor chain (v0.3 §2/§9.5).

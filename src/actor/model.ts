@@ -239,6 +239,8 @@ export const EVENT_SCOPE = {
   VERIFICATION_DENIED: "credential",
   ACTION_COMPLETED: "credential",
   ACTION_FAILED: "credential",
+  STEP_UP_APPROVED: "credential",
+  STEP_UP_DECLINED: "credential",
   AGENT_REGISTERED: "credential",
   REGULATORY: "credential",
   // actor-scoped — about the actor itself

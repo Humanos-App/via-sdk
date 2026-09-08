@@ -172,6 +172,8 @@ export interface ViaEvent {
     agent?: Record<string, unknown>;
     /** §18 — operator detail (`AFFILIATION` org/relation, `REGULATORY` licence). */
     operator?: Record<string, unknown>;
+    /** §17.4 — a step-up: the `STEP_UP_*` event's own detail, or on a `VERIFICATION_*` the co-sign it rested on. */
+    stepUp?: Record<string, unknown>;
   };
   proof?: DataIntegrityProof;
 }
