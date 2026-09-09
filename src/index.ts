@@ -196,6 +196,13 @@ export {
   type PresentSdJwtInput,
   type VerifiedSdJwt,
 } from "./presentation/sd-jwt.js";
+export {
+  buildSdJwtSignal,
+  redactSdJwtSignal,
+  verifySdJwtSignal,
+  VIA_SIGNAL_VCT,
+} from "./signal/sd-jwt.js";
+export type { ViaSignalBody, BuildSdJwtSignalInput, VerifiedSdJwtSignal } from "./signal/sd-jwt.js";
 
 // Verify
 export {
