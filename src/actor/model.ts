@@ -56,7 +56,7 @@ export type ActorKeyStatus = "active" | "rotated" | "revoked";
  * deliberately absent: `"wit"` previously sat in this union with no definition and no writer, which
  * is the same drift that produced `VP_DENIED`. Add the token when the path that emits it exists.
  */
-export type BootstrapAnchor = "api_key" | "manual";
+export type BootstrapAnchor = "api_key" | "person" | "manual";
 
 /** By-reference pointer to a signed attestation event (v0.3 §9.4 — never inline). */
 export interface AttestationRef {
@@ -125,6 +125,27 @@ export interface ViaActorSubject {
   root?: string;
   /** Pointer to the org-signed AFFILIATION event — never an inline claim. */
   operator?: { org: string; affiliationEvent: string };
+  /**
+   * WHY this actor exists, when a PERSON is what let it through the door (v0.3 §3.1, §16.14).
+   *
+   * Present with `bootstrapAnchor: "person"`. `actor` is the person's DID — the ADDRESS they
+   * authenticated at, not the party (§3.6), which is how `grantor` already behaves. `method` is
+   * graded honestly: `session` is a browser session and the weakest of the three, and `event`
+   * points at the signed fact behind the method only when one exists (a passkey's `KEY_ADDED`) —
+   * its ABSENCE is the grading, not an omission.
+   *
+   * GENESIS ONLY. Writing it later would be a claim about the past, which is the one thing a chain
+   * must not let anyone do. And no rule reads it: policy compares the anchor TOKEN (§9.2); this is
+   * provenance for a person reading the record.
+   */
+  anchoredBy?: {
+    actor: string;
+    actorSnapshot?: { sequence: number };
+    method: "passkey" | "otp" | "session";
+    event?: string;
+    host?: string;
+    at: string;
+  };
   /** Pointer to the parent-signed DELEGATED event — set at genesis (delegated actors). */
   lineage?: { parent: string; event: string };
   /**
@@ -440,6 +461,7 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         verifiedAt: (detail.verifiedAt as string) ?? e.validFrom,
         ...(detail.root ? { root: String(detail.root) } : {}),
         ...(detail.lineage ? { lineage: detail.lineage as ViaActorSubject["lineage"] } : {}),
+        ...(detail.anchoredBy ? { anchoredBy: detail.anchoredBy as ViaActorSubject["anchoredBy"] } : {}),
       };
       continue;
     }
