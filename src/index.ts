@@ -343,6 +343,23 @@ export {
 } from "./grantor/binding.js";
 export { verifyWebauthnAssertion, type WebauthnAssertionInput } from "./crypto/webauthn.js";
 
+// VIAActor — the artifact itself (v0.3 §3.1): the envelope and its STAMP around the fold's body.
+export {
+  buildActorCredential,
+  stampActorCredential,
+  issueActorCredential,
+  verifyActorStamp,
+  isActorCredential,
+  unwrapActorCredential,
+  actorSnapshotBody,
+  auditActorArtifact,
+  actorArtifactDigest,
+  TYPE_VIA_ACTOR,
+  type ViaActorCredential,
+  type ViaActorCredentialSubject,
+  type PublishedActorKey,
+} from "./actor/credential.js";
+
 // VIAActor — the actor axis (v0.3 §3–§5)
 export {
   foldActorChain,

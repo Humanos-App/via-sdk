@@ -590,7 +590,7 @@ describe("auditActorSnapshot", () => {
     // A snapshot issued before the fold learned a field is OUTDATED, not a lie: every value it
     // carries still matches. The platform re-issues it; a verifier never authorizes from it anyway.
     const older = structuredClone(snapshot);
-    delete (older.subject as Record<string, unknown>).genesisAt;
+    delete (older.subject as unknown as Record<string, unknown>).genesisAt;
     expect(auditActorSnapshot(older, c)).toMatchObject({ reason: "snapshot_outdated" });
     // Missing a field AND lying about another is a mismatch — the missing field does not launder it.
     const olderAndLying = structuredClone(older);

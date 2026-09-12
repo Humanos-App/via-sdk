@@ -806,7 +806,19 @@ export type SnapshotResult =
  */
 export function issueSnapshot(
   events: ViaEvent[],
-  opts: { previous?: ActorSnapshot | null; validFrom?: string; validUntil?: string } = {},
+  opts: {
+    previous?: ActorSnapshot | null;
+    /**
+     * The prior copy's digest, when it differs from this body's own hash — which it does once the
+     * body is published inside the §3.1 credential: `supersedes` names the ARTIFACT a consumer was
+     * handed, so the digest must be taken over that, not over the body it wraps
+     * (`actorArtifactDigest`). Omitted, the digest is computed from `previous` as a bare body, which
+     * is what pre-envelope chains carry.
+     */
+    previousDigest?: string;
+    validFrom?: string;
+    validUntil?: string;
+  } = {},
 ): SnapshotResult {
   const folded = foldActorChain(events);
   if (!folded.ok) return { ok: false, reason: folded.reason };
@@ -821,7 +833,7 @@ export function issueSnapshot(
         headEvent: eventChainLink(events[events.length - 1]!),
         sequence: previous ? previous.chain.sequence + 1 : 1,
       },
-      supersedes: previous ? snapshotDigest(previous) : null,
+      supersedes: opts.previousDigest ?? (previous ? snapshotDigest(previous) : null),
       validFrom: opts.validFrom ?? new Date().toISOString(),
       ...(opts.validUntil ? { validUntil: opts.validUntil } : {}),
     },
