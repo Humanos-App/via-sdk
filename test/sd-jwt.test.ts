@@ -97,6 +97,33 @@ describe("SD-JWT VC presentation (D-f)", () => {
     ).rejects.toThrow();
   });
 
+  /**
+   * The guard this pins came from the platform's dev line, where it lived only in the VENDORED copy
+   * — which carries no tests, and which `sync-via-sdk` overwrites wholesale. It was one sync away
+   * from disappearing. The test is the point: an empty nonce must not reach the underlying verifier,
+   * because that library reads "" as opting OUT of key binding, and the presentation would then
+   * verify without the holder having proven anything at all.
+   */
+  it("refuses an empty or missing nonce instead of passing it down as 'no key binding'", async () => {
+    const presentation = await presentSdJwt({
+      sdJwt,
+      holderPrivateKey: holder.privateKey,
+      disclose: { userParams: ["maxAmount"] },
+      audience: "did:web:verifier.example",
+      nonce: "n-3",
+    });
+    await expect(
+      verifySdJwtPresentation({ presentation, issuerPublicKey: issuer.publicKey, nonce: "" }),
+    ).rejects.toThrow(/non-empty nonce/);
+    await expect(
+      verifySdJwtPresentation({ presentation, issuerPublicKey: issuer.publicKey, nonce: undefined as unknown as string }),
+    ).rejects.toThrow(/non-empty nonce/);
+    // …and the same presentation still verifies with the nonce it was actually made for.
+    await expect(
+      verifySdJwtPresentation({ presentation, issuerPublicKey: issuer.publicKey, nonce: "n-3", audience: "did:web:verifier.example" }),
+    ).resolves.toMatchObject({ valid: true, nonce: "n-3" });
+  });
+
   it("rejects a wrong issuer key", async () => {
     const presentation = await presentSdJwt({
       sdJwt,

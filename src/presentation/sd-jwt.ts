@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { SDJwtInstance } from "@sd-jwt/core";
-import type { DisclosureFrame, PresentationFrame, Hasher } from "@sd-jwt/types";
+import type { DisclosureFrame, PresentationFrame, Hasher } from "@sd-jwt/core";
 import { signRaw, verifyRaw } from "../crypto/ed25519.js";
 import { sha256 } from "../crypto/digest.js";
 import { toBase64Url, fromBase64Url, fromUtf8 } from "../crypto/encoding.js";
@@ -126,6 +126,13 @@ export async function verifySdJwtPresentation(input: {
   nonce: string;
   audience?: string;
 }): Promise<VerifiedSdJwt> {
+  // An EMPTY nonce is not "no nonce" to the underlying verifier — it reads as opting OUT of key
+  // binding, so the presentation would verify without the holder proving anything. Refuse it here
+  // rather than pass it down. (Fix from the platform's dev line, ported upstream 2026-09-12: it
+  // lived only in the vendored copy, which `sync-via-sdk` overwrites wholesale.)
+  if (typeof input.nonce !== "string" || input.nonce.length === 0) {
+    throw new Error("SD-JWT verification requires a non-empty nonce");
+  }
   // holder key for KB comes from the issuer-signed `cnf`
   const issuerJwt = input.presentation.split("~", 1)[0]!;
   const payloadJson = JSON.parse(fromUtf8(fromBase64Url(issuerJwt.split(".")[1]!))) as {

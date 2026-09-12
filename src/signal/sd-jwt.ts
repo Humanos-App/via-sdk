@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { SDJwtInstance } from "@sd-jwt/core";
-import type { DisclosureFrame, Hasher, PresentationFrame } from "@sd-jwt/types";
+import type { DisclosureFrame, Hasher, PresentationFrame } from "@sd-jwt/core";
 import { signRaw, verifyRaw } from "../crypto/ed25519.js";
 import { sha256 } from "../crypto/digest.js";
 import { toBase64Url, fromBase64Url, fromUtf8 } from "../crypto/encoding.js";
