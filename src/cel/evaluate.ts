@@ -78,15 +78,35 @@ function resolveRef(ref: string, ctx: CelContext): unknown {
   return cur;
 }
 
+/**
+ * An argument that is not on the ladder is an AUTHORING ERROR, and it must not rank.
+ *
+ * Substituting `0` — what this did before 2026-09-12 — turns a rule that reads like a floor into one
+ * that passes for everything: `assuranceRank(agent.runtime) >= assuranceRank("tee")` becomes
+ * `0 >= 0`, i.e. TRUE for an actor with no runtime evidence at all, and a typo'd token
+ * (`assuranceRank("hardwaer")`) does the same. §9.2 and §9.4ter say why the mistake is easy to make:
+ * `binding`, `bootstrapAnchor` and `runtime` are CATEGORICAL and "MUST be matched categorically —
+ * never passed to a rank helper".
+ *
+ * So throwing is the whole fix: `evaluateRule` catches it as `result: "error"`, `evaluateRules`
+ * denies on anything that is not `pass`, and the verifier reports the rule. That is the same
+ * fail-closed reading the fold already takes on an unknown rung (`invalid_assurance`).
+ */
+const rank = (table: Record<string, number>, fn: string, inner: string, ctx: CelContext): string => {
+  const v = resolveAssuranceArg(inner, ctx);
+  if (typeof v !== "string" || !(v in table)) {
+    throw new Error(
+      `${fn}(${inner.trim()}) is not on the ladder (${Object.keys(table).join(" < ")})${
+        v === undefined ? ": the value is absent" : `: got ${JSON.stringify(v)}`
+      }. A categorical axis is matched with \`in\`, never ranked (v0.3 §9.2).`,
+    );
+  }
+  return String(table[v]);
+};
+
 function prepare(expression: string, ctx: CelContext): string {
-  let withRanks = expression.replace(ASSURANCE_RANK_RE, (_whole, inner: string) => {
-    const v = resolveAssuranceArg(inner, ctx);
-    return String(typeof v === "string" && v in ASSURANCE_RANK ? ASSURANCE_RANK[v] : 0);
-  });
-  withRanks = withRanks.replace(OPERATOR_RANK_RE, (_whole, inner: string) => {
-    const v = resolveAssuranceArg(inner, ctx);
-    return String(typeof v === "string" && v in ACCREDITATION_RANK ? ACCREDITATION_RANK[v] : 0);
-  });
+  let withRanks = expression.replace(ASSURANCE_RANK_RE, (_whole, inner: string) => rank(ASSURANCE_RANK, "assuranceRank", inner, ctx));
+  withRanks = withRanks.replace(OPERATOR_RANK_RE, (_whole, inner: string) => rank(ACCREDITATION_RANK, "accreditationRank", inner, ctx));
   return withRanks.replace(TIMESTAMP_RE, (whole, inner: string) => {
     const ref = inner.trim();
     return typeof resolveRef(ref, ctx) === "number" ? ref : whole;

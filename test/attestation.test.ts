@@ -621,6 +621,8 @@ describe("registerChallenge / registerAgentKey (§16.5)", () => {
   it("unverifiable webauthn quote (no pinned FIDO root) DEGRADES to pop/self via registerAgentKey", async () => {
     const ca = await mintNitroCa();
     const key = await generateP256Key();
+    const store = createRegChallengeStore();
+    const { regNonce } = await registerChallenge({ store });
     // Reuse the packed builder shape inline: a valid statement, but the registrar pins no FIDO root.
     const cbor = new Encoder({ useRecords: false, mapsAsObjects: true, tagUint8Array: false });
     const rpIdHash = sha256(te.encode("example.com"));
@@ -628,14 +630,14 @@ describe("registerChallenge / registerAgentKey (§16.5)", () => {
     const y = fromBase64Url(String(key.publicJwk.y));
     const coseKey = new Uint8Array(cbor.encode(new Map<number, unknown>([[1, 2], [3, -7], [-1, 1], [-2, Buffer.from(x)], [-3, Buffer.from(y)]])));
     const authData = new Uint8Array([...rpIdHash, 0x41, 0, 0, 0, 1, ...new Uint8Array(16), 0, 4, 9, 9, 9, 9, ...coseKey]);
-    const clientDataJSON = te.encode(JSON.stringify({ type: "webauthn.create", challenge: "x", origin: "https://example.com" }));
+    const clientDataJSON = te.encode(JSON.stringify({ type: "webauthn.create", challenge: regNonce, origin: "https://example.com" }));
     const verificationData = new Uint8Array([...authData, ...sha256(clientDataJSON)]);
     const sig = new Uint8Array(await ca.leafSign(verificationData));
     const ao = cbor.encode({ fmt: "packed", attStmt: { alg: -7, sig: Buffer.from(sig), x5c: [Buffer.from(pemToDerLocal(ca.chainPems[0]!)), Buffer.from(pemToDerLocal(ca.chainPems[1]!))] }, authData: Buffer.from(authData) });
 
     const res = await registerAgentKey(
-      { cnf: { jwk: key.publicJwk }, evidence: { type: "webauthn", attestationObjectB64: toBase64Url(new Uint8Array(ao)), clientDataJSONB64: toBase64Url(clientDataJSON) } },
-      { fidoRoots: { device: [], hardware: [] } }, // registrar pins NO fido root → provenance unverifiable → degrade
+      { cnf: { jwk: key.publicJwk }, evidence: { type: "webauthn", attestationObjectB64: toBase64Url(new Uint8Array(ao)), clientDataJSONB64: toBase64Url(clientDataJSON) }, regNonce },
+      { store, fidoRoots: { device: [], hardware: [] } }, // registrar pins NO fido root → provenance unverifiable → degrade
     );
     expect(res.ok).toBe(true);
     if (res.ok) {
@@ -643,6 +645,83 @@ describe("registerChallenge / registerAgentKey (§16.5)", () => {
       expect(res.binding).toBe("self");
       expect(jwkThumbprint(res.cnf.jwk)).toBe(jwkThumbprint(key.publicJwk));
     }
+  });
+
+  /**
+   * §16.5: "The verifier MUST bind the attestation to the `regNonce`: the quote MUST embed it, and
+   * the nonce MUST be outstanding, unexpired, and single-use."
+   *
+   * The webauthn row used to skip this entirely — only the COSE row was gated. It matters MORE here:
+   * the bound key is derived from `authData`, so the submitter proves nothing by submitting. A
+   * captured {attestationObject, clientDataJSON} pair therefore re-registered the same credential
+   * under any actor, in any organization, at the full attested rung.
+   */
+  describe("webauthn registration is bound to the challenge (§16.5)", () => {
+    /** A valid packed attestation over whatever clientDataJSON it is handed. */
+    async function packed(clientData: Record<string, unknown>) {
+      const ca = await mintNitroCa();
+      const key = await generateP256Key();
+      const cbor = new Encoder({ useRecords: false, mapsAsObjects: true, tagUint8Array: false });
+      const rpIdHash = sha256(te.encode("example.com"));
+      const x = fromBase64Url(String(key.publicJwk.x));
+      const y = fromBase64Url(String(key.publicJwk.y));
+      const coseKey = new Uint8Array(cbor.encode(new Map<number, unknown>([[1, 2], [3, -7], [-1, 1], [-2, Buffer.from(x)], [-3, Buffer.from(y)]])));
+      const authData = new Uint8Array([...rpIdHash, 0x41, 0, 0, 0, 1, ...new Uint8Array(16), 0, 4, 9, 9, 9, 9, ...coseKey]);
+      const clientDataJSON = te.encode(JSON.stringify(clientData));
+      const sig = new Uint8Array(await ca.leafSign(new Uint8Array([...authData, ...sha256(clientDataJSON)])));
+      const ao = cbor.encode({
+        fmt: "packed",
+        attStmt: { alg: -7, sig: Buffer.from(sig), x5c: [Buffer.from(pemToDerLocal(ca.chainPems[0]!)), Buffer.from(pemToDerLocal(ca.chainPems[1]!))] },
+        authData: Buffer.from(authData),
+      });
+      return {
+        key,
+        evidence: { type: "webauthn" as const, attestationObjectB64: toBase64Url(new Uint8Array(ao)), clientDataJSONB64: toBase64Url(clientDataJSON) },
+      };
+    }
+
+    it("refuses a challenge that is not the presented regNonce", async () => {
+      const store = createRegChallengeStore();
+      const { regNonce } = await registerChallenge({ store });
+      const other = await registerChallenge({ store }); // also outstanding — still not THIS registration's
+      const { key, evidence } = await packed({ type: "webauthn.create", challenge: other.regNonce, origin: "https://example.com" });
+
+      const res = await registerAgentKey({ cnf: { jwk: key.publicJwk }, evidence, regNonce }, { store, fidoRoots: { device: [], hardware: [] } });
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.reason).toBe("attestation_nonce_invalid");
+    });
+
+    it("refuses evidence with no regNonce at all", async () => {
+      const store = createRegChallengeStore();
+      const { key, evidence } = await packed({ type: "webauthn.create", challenge: "x", origin: "https://example.com" });
+
+      const res = await registerAgentKey({ cnf: { jwk: key.publicJwk }, evidence }, { store, fidoRoots: { device: [], hardware: [] } });
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.reason).toBe("attestation_nonce_invalid");
+    });
+
+    it("refuses an ASSERTION replayed as a registration", async () => {
+      const store = createRegChallengeStore();
+      const { regNonce } = await registerChallenge({ store });
+      // webauthn.get is a login; reusing one to register a key is not a registration ceremony.
+      const { key, evidence } = await packed({ type: "webauthn.get", challenge: regNonce, origin: "https://example.com" });
+
+      const res = await registerAgentKey({ cnf: { jwk: key.publicJwk }, evidence, regNonce }, { store, fidoRoots: { device: [], hardware: [] } });
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.reason).toBe("attestation_nonce_invalid");
+    });
+
+    it("is single-use: the same evidence cannot register twice", async () => {
+      const store = createRegChallengeStore();
+      const { regNonce } = await registerChallenge({ store });
+      const { key, evidence } = await packed({ type: "webauthn.create", challenge: regNonce, origin: "https://example.com" });
+      const deps = { store, fidoRoots: { device: [], hardware: [] } };
+
+      expect((await registerAgentKey({ cnf: { jwk: key.publicJwk }, evidence, regNonce }, deps)).ok).toBe(true);
+      const replay = await registerAgentKey({ cnf: { jwk: key.publicJwk }, evidence, regNonce }, deps);
+      expect(replay.ok).toBe(false);
+      if (!replay.ok) expect(replay.reason).toBe("attestation_nonce_invalid");
+    });
   });
 });
 

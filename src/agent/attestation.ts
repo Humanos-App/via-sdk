@@ -343,6 +343,30 @@ export function readAttestationNonce(docB64: string): string | null {
   }
 }
 
+/**
+ * Decode-only: WebAuthn `clientDataJSON`'s `challenge`, `type` and `origin` (or null).
+ *
+ * The registration flow binds an attested registration to a fresh, single-use challenge the same
+ * way the COSE path does with `readAttestationNonce`. What makes these values trustworthy is the
+ * attestation statement's signature over `authData ‖ SHA-256(clientDataJSON)`, which
+ * {@link validateWebauthnAttestation} checks: tamper with the challenge and that signature breaks.
+ * Reading them is therefore only useful TOGETHER with a validated statement — which is why this is
+ * a decode, and the gate lives where the nonce store is.
+ */
+export function readWebauthnClientData(clientDataJSONB64: string): { challenge: string; type: string; origin?: string } | null {
+  try {
+    const json = JSON.parse(Buffer.from(fromBase64Url(clientDataJSONB64)).toString("utf8")) as {
+      challenge?: unknown;
+      type?: unknown;
+      origin?: unknown;
+    };
+    if (typeof json.challenge !== "string" || typeof json.type !== "string") return null;
+    return { challenge: json.challenge, type: json.type, ...(typeof json.origin === "string" ? { origin: json.origin } : {}) };
+  } catch {
+    return null;
+  }
+}
+
 // ── Internal helpers (ported verbatim from kya/crypto/index.ts) ───────────────
 
 // Verify an attestation-statement signature by a leaf cert's public key. Accepts DER

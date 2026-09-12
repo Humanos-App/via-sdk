@@ -127,8 +127,18 @@ export interface AgentDirectDeps {
    * `accreditation`, so the extra actor resolution costs nothing otherwise. A rule that references
    * it while no loader is supplied errors in CEL and therefore denies (fail closed, §16.8).
    */
-  loadAccreditation?: () => Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined>;
+  loadAccreditation?: () => AccreditationLoad | Promise<AccreditationLoad>;
 }
+
+/**
+ * What the accreditation loader may answer (v0.3 §18.5): the env to evaluate, nothing at all, or a
+ * FAILURE that denies.
+ *
+ * O1–O4 are ordered and "the first failure denies" — so an expired or revoked operator credential
+ * cannot be projected as data and left for a rule to notice. Quietly downgrading it to `unverified`
+ * would pass any floor written at `unverified`, which is the opposite of what decay means.
+ */
+export type AccreditationLoad = Record<string, unknown> | undefined | { denied: true; reason: string };
 
 export interface AgentDirectResult {
   decision: "allow" | "deny" | "rechallenge";
@@ -200,7 +210,12 @@ export async function verifyAgentDirect(
   // v0.3: the env EXTENDS with actor-projection fields (bootstrapAnchor, status)
   // supplied by the deployment — same namespace, no `actor.*` (v0.3 §9.3).
   const wantsAccreditation = action.rules.some((r) => String(r.expression ?? "").includes("accreditation"));
-  const accreditation = wantsAccreditation && deps.loadAccreditation ? await deps.loadAccreditation() : undefined;
+  const loaded = wantsAccreditation && deps.loadAccreditation ? await deps.loadAccreditation() : undefined;
+  // §18.5 — O1–O4 are ordered and the first failure denies. `accreditation_expired` and
+  // `accreditation_revoked` are decisions, not data for a rule to weigh.
+  const failure = loaded && "denied" in loaded ? (loaded as { denied: true; reason: string }) : null;
+  if (failure) return deny(failure.reason, urn);
+  const accreditation = loaded;
   const { decision, evaluations } = evaluateRules(action.rules, {
     userParams: unwrapUserParamValues(m.userParams),
     executionParams: req.params,

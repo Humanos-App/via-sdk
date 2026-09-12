@@ -16,6 +16,7 @@ import {
   type PinnedRoots,
   validateCoseAttestation,
   validateCustody,
+  readWebauthnClientData,
   validateWebauthnAttestation,
   readAttestationNonce,
   type DescribeKey,
@@ -206,10 +207,36 @@ export async function registerAgentKey(
       if (result.ok) await deps.store?.consume(input.regNonce);
       break;
     }
-    case "webauthn":
-      // Packed/android-key attestation chained to a pinned FIDO/vendor root.
+    case "webauthn": {
+      // Freshness FIRST, exactly as the COSE path does it (v0.3 §16.5: "the verifier MUST bind the
+      // attestation to the `regNonce` … outstanding, unexpired, and single-use").
+      //
+      // WHY THIS MATTERS HERE MORE THAN ANYWHERE. The bound key is DERIVED from the evidence
+      // (`authData` carries the credential public key), so possession is never proven by the
+      // submitter — the attestation IS the whole claim. Without this gate a captured
+      // {attestationObject, clientDataJSON} pair re-registers the same credential under a different
+      // actor, in a different organization, at the full attested rung.
+      //
+      // `challenge` is inside `clientDataJSON`, which the attestation statement signs
+      // (authData ‖ SHA-256(clientDataJSON)) — so a forged challenge breaks that signature and the
+      // validator below rejects it. Checking `type` refuses an assertion (`webauthn.get`) replayed
+      // as a registration.
+      const client = readWebauthnClientData(ev.clientDataJSONB64);
+      const rc = input.regNonce ? await deps.store?.take(input.regNonce) : null;
+      if (
+        !client ||
+        client.type !== "webauthn.create" ||
+        !input.regNonce ||
+        client.challenge !== input.regNonce ||
+        !rc ||
+        now > rc.exp
+      ) {
+        return { ok: false, reason: "attestation_nonce_invalid" };
+      }
       result = await validateWebauthnAttestation(ev.attestationObjectB64, ev.clientDataJSONB64, deps.fidoRoots ?? NO_ROOTS);
+      if (result.ok) await deps.store?.consume(input.regNonce);
       break;
+    }
     default:
       // A string `type` that is not one of ours. Also the arm a NEW ConfinementEvidence variant
       // lands in if it is added to the union without a validator here — refused, not crashed.
