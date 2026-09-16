@@ -19,7 +19,10 @@ describe("did:web", () => {
     const org = generateViaDID("org", { uuid: "u1" });
     expect(org).toBe("did:web:humanos.tech:org:u1");
     expect(generateDomainDID("HTTPS://www.Fidelidade.pt/").did).toBe("did:web:fidelidade.pt");
-    expect(() => generateViaDID("agent" as never)).toThrow();
+    // `agent` joined the union in v0.3 (§16.1, §16.14) — it used to throw here. Something outside
+    // the union still does; see did-web.test.ts for the shape and the parse round-trip.
+    expect(generateViaDID("agent", { uuid: "a1" })).toBe("did:web:humanos.tech:agent:a1");
+    expect(() => generateViaDID("robot" as never)).toThrow();
   });
   it("parses + resolves URLs + verifier domain", () => {
     expect(parseDidWeb("did:web:humanos.tech:user:abc")).toMatchObject({ actorType: "user", id: "abc" });

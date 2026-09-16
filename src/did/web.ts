@@ -3,11 +3,24 @@ import { randomUUID } from "node:crypto";
 export const VIA_PLATFORM_DOMAIN = "humanos.tech";
 export const VIA_PLATFORM_DID = `did:web:${VIA_PLATFORM_DOMAIN}`;
 
-export type ActorType = "org" | "user";
+export const ACTOR_TYPES = ["org", "user", "agent"] as const;
 
-/** `did:web:humanos.tech:{org|user}:{uuid}` (spec v0.2-new §3.1). */
+export type ActorType = (typeof ACTOR_TYPES)[number];
+
+function isActorType(value: string): value is ActorType {
+  return (ACTOR_TYPES as readonly string[]).includes(value);
+}
+
+/**
+ * `did:web:humanos.tech:{org|user|agent}:{uuid}` (v0.2-new §3.1; agents per v0.3 §16.1, §16.14).
+ *
+ * The id is RANDOM, and for agents that is the point: it was briefly minted from the genesis key's
+ * RFC 7638 thumbprint, which read as self-certifying without being so — nothing re-derived it, so it
+ * bought no property while breaking the shape every other actor uses and `parseDidWeb` with it. A
+ * DID names an actor; the KEY is proven by the chain, not by the name.
+ */
 export function generateViaDID(actorType: ActorType, opts: { uuid?: string; domain?: string } = {}): string {
-  if (actorType !== "org" && actorType !== "user") throw new Error(`invalid actor type: ${actorType}`);
+  if (!isActorType(actorType)) throw new Error(`invalid actor type: ${actorType}`);
   return `did:web:${opts.domain ?? VIA_PLATFORM_DOMAIN}:${actorType}:${opts.uuid ?? randomUUID()}`;
 }
 
@@ -56,19 +69,26 @@ export function didWebToUrl(did: string): string {
 
 export interface ParsedDidWeb {
   domain: string;
-  /** `org` / `user` for platform DIDs; `undefined` for a bare graduated/platform DID. */
+  /** `org` / `user` / `agent` for platform DIDs; `undefined` for a bare graduated/platform DID. */
   actorType?: ActorType;
-  /** The uuid for platform org/user DIDs. */
+  /** The id for platform DIDs — a uuid for anything minted by {@link generateViaDID}. */
   id?: string;
 }
 
-/** Classify a `did:web` into platform-org/user vs bare domain. */
+/**
+ * Classify a `did:web` into a platform actor vs a bare domain.
+ *
+ * `id` is returned as it was WRITTEN, never validated as a uuid: agents minted before v0.3 §16.1
+ * was implemented carry a 16-character key-thumbprint tail, and those DIDs are named in signed
+ * chains that cannot be rewritten. A parser that refused them would refuse history.
+ */
 export function parseDidWeb(did: string): ParsedDidWeb {
   if (!did.startsWith("did:web:")) throw new Error(`not a did:web identifier: ${did}`);
   const parts = didFromUrl(did).slice("did:web:".length).split(":");
   const domain = decodeURIComponent(parts[0]!);
-  if (parts.length >= 3 && (parts[1] === "org" || parts[1] === "user")) {
-    return { domain, actorType: parts[1] as ActorType, id: parts.slice(2).join(":") };
+  const actorType = parts[1];
+  if (parts.length >= 3 && actorType !== undefined && isActorType(actorType)) {
+    return { domain, actorType, id: parts.slice(2).join(":") };
   }
   return { domain };
 }

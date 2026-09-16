@@ -60,6 +60,7 @@ export {
 
 // DID
 export {
+  ACTOR_TYPES,
   generateViaDID,
   generateDomainDID,
   normalizeDomain,
