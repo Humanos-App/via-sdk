@@ -108,7 +108,8 @@ export async function mintNitroCa(): Promise<NitroCa> {
 
   const leafPublicJwk = (await subtle.exportKey("jwk", leafKeys.publicKey)) as Jwk;
   const leafSign = async (message: Uint8Array): Promise<Uint8Array> =>
-    new Uint8Array(await subtle.sign(ES256, leafKeys.privateKey, message));
+    // Copy the view for the same reason signES256 does: WebCrypto wants an ArrayBuffer-backed input.
+    new Uint8Array(await subtle.sign(ES256, leafKeys.privateKey, new Uint8Array(message)));
 
   return {
     rootPem: root.toString("pem"),
@@ -140,7 +141,7 @@ export async function restoreNitroCa(saved: {
     leafPublicJwk: saved.leafPublicJwk,
     leafPrivateJwk: saved.leafPrivateJwk,
     leafSign: async (message: Uint8Array): Promise<Uint8Array> =>
-      new Uint8Array(await subtle.sign(ES256, key, message)),
+      new Uint8Array(await subtle.sign(ES256, key, new Uint8Array(message))),
   };
 }
 

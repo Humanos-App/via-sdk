@@ -44,7 +44,7 @@
   },
   "devDependencies": {
     "@peculiar/x509": "^1.14.3",
-    "@types/node": "^22.20.1",
+    "@types/node": "^25.9.6",
     "canonicalize": "^4.0.0",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",

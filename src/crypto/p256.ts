@@ -45,7 +45,9 @@ export async function signES256(message: Uint8Array, privateJwk: Jwk): Promise<U
     false,
     ["sign"],
   );
-  return new Uint8Array(await subtle.sign(ES256, key, message));
+  // WebCrypto requires ArrayBuffer-backed inputs. Copy the view so callers can
+  // also supply pooled buffers or SharedArrayBuffer-backed typed arrays.
+  return new Uint8Array(await subtle.sign(ES256, key, new Uint8Array(message)));
 }
 
 /** ES256 verify — accepts raw `r‖s` (WebCrypto/our sim) OR DER (real WebAuthn), normalising DER→raw. */
@@ -60,7 +62,7 @@ export async function verifyES256(message: Uint8Array, signature: Uint8Array, pu
     );
     const raw = signature.length === 64 ? signature : derToRawEcdsa(signature);
     if (!raw) return false;
-    return await subtle.verify(ES256, key, raw, message);
+    return await subtle.verify(ES256, key, new Uint8Array(raw), new Uint8Array(message));
   } catch {
     return false;
   }
