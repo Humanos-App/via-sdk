@@ -6,7 +6,7 @@
  * operator/form evaluates, these fail rather than silently changing decisions.
  */
 import { describe, it, expect } from "vitest";
-import { evaluateRule, evaluateRules } from "../src/cel/evaluate.js";
+import { evaluateRule, evaluateRules, validateCelExpression, CEL_EXPRESSION_MAX_LENGTH } from "../src/cel/evaluate.js";
 import { buildActionVersion } from "../src/action/build.js";
 
 const ctx = {
@@ -128,5 +128,65 @@ describe("generateCelExpression × engine — end to end", () => {
     expect(bad.evaluations.find((e) => e.rule === "amt")?.result).toBe("fail"); // 999 > 500
     expect(bad.evaluations.find((e) => e.rule === "cat")?.result).toBe("fail"); // "x" not in [a,b]
     expect(bad.evaluations.find((e) => e.rule === "notblocked")?.result).toBe("fail"); // "x" IS blocked
+  });
+});
+
+describe("validateCelExpression — the door a written rule comes through", () => {
+  const cases: [string, string][] = [
+    ["a comparison over both param sides", "userParams.maxPageSize >= executionParams.pageSize"],
+    ["membership", "executionParams.category in userParams.categories"],
+    ["a negation", "!(executionParams.category in userParams.blocked)"],
+    ["the assurance ladder helper", 'assuranceRank(agent.assurance) >= assuranceRank("tee")'],
+  ];
+  it.each(cases)("accepts an expression that parses — %s", (_name, expression) => {
+    expect(validateCelExpression(expression)).toEqual({ ok: true });
+  });
+
+  const bad: [string, string][] = [
+    ["an unclosed call", "foo("],
+    ["a dangling operator", "1 +"],
+    ["prose", "this is not (cel"],
+    ["empty", ""],
+    ["blank", "   "],
+  ];
+  it.each(bad)("refuses an expression that does not parse, and says why — %s", (_name, expression) => {
+    const result = validateCelExpression(expression);
+    expect(result.ok).toBe(false);
+    // The reason is one line: it is shown to whoever wrote the rule, which may be an agent.
+    expect((result as { error: string }).error).toMatch(/\S/);
+    expect((result as { error: string }).error).not.toContain("\n");
+  });
+
+  it("refuses an expression longer than the cap, without parsing it", () => {
+    // The parser never sees it: size is bounded BEFORE the work starts.
+    const huge = `userParams.a > ${"0 + ".repeat(2000)}1`;
+    expect(huge.length).toBeGreaterThan(CEL_EXPRESSION_MAX_LENGTH);
+    expect(validateCelExpression(huge)).toEqual({
+      ok: false,
+      error: `expression is longer than ${CEL_EXPRESSION_MAX_LENGTH} characters`,
+    });
+  });
+
+  it("survives nesting deep enough to exhaust the stack — a refusal, never a crash", () => {
+    // Under the length cap, so it reaches the parser. A RangeError here must read as "not a rule",
+    // not propagate as a 500 to whoever is proposing.
+    const deep = `${"(".repeat(400)}1${")".repeat(400)} > 0`;
+    expect(deep.length).toBeLessThanOrEqual(CEL_EXPRESSION_MAX_LENGTH);
+    const result = validateCelExpression(deep);
+    if (!result.ok) expect(result.error.length).toBeLessThanOrEqual(201);
+  });
+
+  it("bounds the reason it quotes back, however long the offending input", () => {
+    const noisy = `"${"x".repeat(1500)}" +`;
+    const result = validateCelExpression(noisy);
+    expect(result.ok).toBe(false);
+    expect((result as { error: string }).error.length).toBeLessThanOrEqual(201);
+  });
+
+  it("parsing is not meaning: an expression that parses can still fail at evaluation", () => {
+    // References a param that does not exist. It PARSES, so the door lets it through; evaluation
+    // is where it becomes `error` -> deny. Nothing here can know the action's params.
+    expect(validateCelExpression("userParams.nosuch > 1")).toEqual({ ok: true });
+    expect(evaluateRule(rule("userParams.nosuch > 1"), ctx).result).toBe("error");
   });
 });

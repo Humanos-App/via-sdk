@@ -1,4 +1,4 @@
-import { evaluate as celEvaluate } from "@marcbachmann/cel-js";
+import { evaluate as celEvaluate, parse as celParse } from "@marcbachmann/cel-js";
 import type { ActionRule } from "../action/types.js";
 
 export interface CelContext {
@@ -111,6 +111,45 @@ function prepare(expression: string, ctx: CelContext): string {
     const ref = inner.trim();
     return typeof resolveRef(ref, ctx) === "number" ? ref : whole;
   });
+}
+
+/**
+ * Does this expression PARSE? Syntax only — nothing is evaluated and no context is needed.
+ *
+ * For the boundary where a rule is written rather than run: a malformed expression is otherwise
+ * stored intact and only shows up at verification, where it reads as `error` → deny. That is the
+ * safe direction, but it strands a mandate nobody can use and blames the call instead of the rule.
+ * Rejecting at the door hands the message to whoever can still fix it — which, since an agent may
+ * PROPOSE rules, is often not a person.
+ *
+ * Parsing is not meaning: a rule that parses can still reference a param that does not exist, or
+ * return a non-boolean. Both are caught at evaluation (`result: "error"`), and neither can be
+ * decided here without the action's params and a runtime context.
+ */
+export const CEL_EXPRESSION_MAX_LENGTH = 2000;
+
+export function validateCelExpression(expression: string): { ok: true } | { ok: false; error: string } {
+  if (typeof expression !== "string" || expression.trim() === "") {
+    return { ok: false, error: "expression is empty" };
+  }
+  // Size is the attack surface here, not semantics. PARSING never runs the expression — that is
+  // `evaluate`, and nothing calls it at this door — so a hostile rule cannot compute. What it can
+  // still do is make the PARSER work: a megabyte of operators, or nesting deep enough to exhaust
+  // the stack. The length cap bounds both before the parser sees the string.
+  if (expression.length > CEL_EXPRESSION_MAX_LENGTH) {
+    return { ok: false, error: `expression is longer than ${CEL_EXPRESSION_MAX_LENGTH} characters` };
+  }
+  try {
+    celParse(expression);
+    return { ok: true };
+  } catch (e) {
+    // Catches RangeError (stack exhaustion from deep nesting) as well as ParseError: both are
+    // "this is not a rule we accept", and neither should reach a caller as a 500.
+    const first = (e as Error)?.message?.split("\n")[0]?.trim() ?? "";
+    // The reason quotes the input back. Bound it: it travels into logs and into an agent's context.
+    const reason = first.length > 200 ? `${first.slice(0, 200)}…` : first;
+    return { ok: false, error: reason || "expression could not be parsed" };
+  }
 }
 
 export function evaluateRule(rule: Pick<ActionRule, "name" | "description" | "expression">, ctx: CelContext): RuleEvaluation {
