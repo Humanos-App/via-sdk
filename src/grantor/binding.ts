@@ -21,12 +21,32 @@ export type GrantorReasonCode = "grantor_not_enrolled" | "grantor_challenge_inva
  * lives on the person's key entry (§16.3bis). v0.2 wrote the same fact as
  * `assurance: "passkey"`; that encoding is still READ (`grantorBindingMethod`), never written.
  */
-export interface GrantorBinding {
+/** The KIND of channel a code went to — never the address: the mandate travels to relying parties. */
+export type GrantorChannel = "email" | "sms";
+
+/** Authenticated by a WebAuthn credential with user verification. `cnf` names the key. */
+export interface WebauthnGrantorBinding {
   grantor: string; // the person's actor DID, == mandate.grantor
   cnf: { jkt: string }; // RFC 7638 thumbprint of the grantor's passkey
   method: "webauthn";
-  verifiedAt: string; // ISO
+  verifiedAt: string; // ISO — when the ASSERTION was verified, never when the decision was taken
 }
+
+/**
+ * Authenticated by a single-use code to a channel the grantor controls (v0.2-new §9).
+ *
+ * No `cnf`: there is no key. What it records is that the ordinary path HAPPENED — before this shape
+ * existed, a code-approved mandate carried nothing at all, so absence of a binding meant both "a
+ * code" and "nobody wrote it down", and a reader could not tell which.
+ */
+export interface OtpGrantorBinding {
+  grantor: string;
+  method: "otp";
+  channel: GrantorChannel;
+  verifiedAt: string; // ISO — when the CODE was verified
+}
+
+export type GrantorBinding = WebauthnGrantorBinding | OtpGrantorBinding;
 
 /** The v0.2 wire shape, accepted on read only. */
 export interface LegacyGrantorBinding {
@@ -37,9 +57,12 @@ export interface LegacyGrantorBinding {
 }
 
 /** How the grantor authenticated, from either encoding; `null` if the object is neither. */
-export function grantorBindingMethod(gb: GrantorBinding | LegacyGrantorBinding | Record<string, unknown>): "webauthn" | null {
+export function grantorBindingMethod(
+  gb: GrantorBinding | LegacyGrantorBinding | Record<string, unknown>,
+): "webauthn" | "otp" | null {
   const o = gb as Record<string, unknown>;
   if (o.method === "webauthn") return "webauthn";
+  if (o.method === "otp") return "otp";
   if (o.assurance === "passkey") return "webauthn"; // v0.2 encoding (§17.2)
   return null;
 }
@@ -102,7 +125,23 @@ export async function verifyGrantorAssertion(
   return { ok: false, reason: v.reason === "action_hash_mismatch" ? "action_hash_mismatch" : "grantor_assertion_invalid" };
 }
 
-/** Build the signed-into-the-mandate `grantorBinding` after a successful verify (§17.2). */
-export function buildGrantorBinding(grantorDid: string, thumbprint: string, verifiedAt: string): GrantorBinding {
+/** Build the signed-into-the-mandate `grantorBinding` after a successful passkey verify (§17.2). */
+export function buildGrantorBinding(grantorDid: string, thumbprint: string, verifiedAt: string): WebauthnGrantorBinding {
   return { grantor: grantorDid, cnf: { jkt: thumbprint }, method: "webauthn", verifiedAt };
+}
+
+/**
+ * The same field for the code path (§17.2): who consented, how they were reached, and when that was
+ * verified. `verifiedAt` is the instant the CODE was accepted, not the instant of the decision.
+ *
+ * Deliberately not a `cnf`-shaped object with an empty key: a reader must be able to tell at a glance
+ * that no key signed anything here. What this buys is that absence of a binding now means exactly
+ * one thing — nobody recorded it — so no verifier has to guess a method from an empty field.
+ */
+export function buildOtpGrantorBinding(
+  grantorDid: string,
+  channel: GrantorChannel,
+  verifiedAt: string,
+): OtpGrantorBinding {
+  return { grantor: grantorDid, method: "otp", channel, verifiedAt };
 }

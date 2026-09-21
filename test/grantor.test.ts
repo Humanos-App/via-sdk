@@ -7,6 +7,7 @@ import {
   grantorTermsDigest,
   verifyGrantorAssertion,
   buildGrantorBinding,
+  buildOtpGrantorBinding,
 } from "../src/grantor/binding.js";
 import { createHash } from "node:crypto";
 
@@ -96,6 +97,28 @@ describe("§17 grantor binding (M5)", () => {
     expect(grantorBindingMethod({ grantor: GRANTOR, cnf: { jkt: cnf }, assurance: "passkey", verifiedAt: "2026-01-01T00:00:00.000Z" })).toBe("webauthn");
     expect(grantorBindingMethod({ grantor: GRANTOR, cnf: { jkt: cnf }, assurance: "hardware", verifiedAt: "x" })).toBeNull();
     expect(grantorBindingMethod({})).toBeNull();
+  });
+
+  it("builds the otp arm with the channel KIND and no cnf — the ordinary path is recorded too", () => {
+    const gb = buildOtpGrantorBinding(GRANTOR, "email", "2026-01-01T00:00:00.000Z");
+    expect(gb).toEqual({ grantor: GRANTOR, method: "otp", channel: "email", verifiedAt: "2026-01-01T00:00:00.000Z" });
+    // @invariant no key is named, because none signed: a reader must see that at a glance.
+    expect("cnf" in gb).toBe(false);
+    expect(grantorBindingMethod(gb)).toBe("otp");
+  });
+
+  it("carries the channel's KIND, never the address — the mandate travels to relying parties", () => {
+    const sms = buildOtpGrantorBinding(GRANTOR, "sms", "2026-01-01T00:00:00.000Z");
+    expect(sms.channel).toBe("sms");
+    expect(JSON.stringify(sms)).not.toMatch(/@|\+\d/);
+  });
+
+  it("an absent binding is not a method: nothing reads as otp unless it says so", () => {
+    // The reason the otp arm exists. Absence used to mean four things — code-approved, pre-§17.2,
+    // multi-grantor, no session — and a reader had to guess which.
+    expect(grantorBindingMethod({})).toBeNull();
+    expect(grantorBindingMethod({ grantor: GRANTOR, verifiedAt: "x" })).toBeNull();
+    expect(grantorBindingMethod({ grantor: GRANTOR, method: "sms-code", verifiedAt: "x" })).toBeNull();
   });
 
   it("tampered terms → action_hash_mismatch (signed a different payment) — the one code shared with §16.7", async () => {
