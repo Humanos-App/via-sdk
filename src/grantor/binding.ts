@@ -30,6 +30,14 @@ export interface WebauthnGrantorBinding {
   cnf: { jkt: string }; // RFC 7638 thumbprint of the grantor's passkey
   method: "webauthn";
   verifiedAt: string; // ISO — when the ASSERTION was verified, never when the decision was taken
+  /**
+   * §17.3 — the digest the assertion actually signed, over the EXACT thing authorized
+   * (`grantorTermsDigest`). Present ⇒ the passkey signed *these terms for this agent*, and a
+   * reader can recompute it from the mandate body and check. Absent ⇒ the assertion proved the
+   * person was present holding the key, and nothing about what they approved: still a real fact,
+   * a weaker one, and the difference is now legible instead of inferred.
+   */
+  termsDigest?: string;
 }
 
 /**
@@ -90,7 +98,19 @@ export function enrollGrantor(jwk: Jwk, grantorDid: string): { did: string; cnf:
  * v0.2-era example and stays for its callers.
  */
 export type GrantorTerms =
-  | { purpose: "mandate"; agentDid: string; constraints: unknown[] }
+  | {
+      purpose: "mandate";
+      agentDid: string;
+      constraints: unknown[];
+      /**
+       * §20.1 — the words the person is being shown. An input to the digest because they are what
+       * the person is actually agreeing to: a signature over the constraints alone would let the
+       * sentence beside them change without breaking anything.
+       */
+      description?: { text: string; lang: string; author: string };
+      /** The grant's lifetime in seconds, when it has one (§17.3). */
+      ttlSeconds?: number;
+    }
   | { purpose: "stepup"; mandateId: string; action: string; params: Record<string, unknown> }
   | { purpose: "stepup"; mandateId: string; amount: number; currency?: string; item?: string };
 
@@ -100,7 +120,14 @@ export function grantorTermsDigest(t: GrantorTerms): string {
     if ("action" in t) return actionHash(t.mandateId, t.action, t.params);
     return actionHash(`stepup:${t.mandateId}`, "purchase", { amount: t.amount, currency: t.currency ?? "USD", item: t.item ?? "" });
   }
-  return actionHash(`grant:${t.agentDid}`, "grant", { constraints: t.constraints });
+  return actionHash(`grant:${t.agentDid}`, "grant", {
+    constraints: t.constraints,
+    // Both are OMITTED when absent rather than sent as null: JCS keeps an explicit null and drops
+    // an undefined key, so writing them unconditionally would change the digest of every mandate
+    // that has neither — including the ones a deployment already signed.
+    ...(t.description ? { description: t.description } : {}),
+    ...(t.ttlSeconds !== undefined ? { ttlSeconds: t.ttlSeconds } : {}),
+  });
 }
 
 /**
@@ -125,9 +152,27 @@ export async function verifyGrantorAssertion(
   return { ok: false, reason: v.reason === "action_hash_mismatch" ? "action_hash_mismatch" : "grantor_assertion_invalid" };
 }
 
-/** Build the signed-into-the-mandate `grantorBinding` after a successful passkey verify (§17.2). */
-export function buildGrantorBinding(grantorDid: string, thumbprint: string, verifiedAt: string): WebauthnGrantorBinding {
-  return { grantor: grantorDid, cnf: { jkt: thumbprint }, method: "webauthn", verifiedAt };
+/**
+ * Build the signed-into-the-mandate `grantorBinding` after a successful passkey verify (§17.2).
+ *
+ * `termsDigest` is what turns "the person was present" into "the person approved THESE terms".
+ * It is optional because a deployment whose ceremony binds only a session nonce (§17.3's status
+ * note) has nothing to put there, and writing a digest nobody signed would be worse than leaving
+ * the field out.
+ */
+export function buildGrantorBinding(
+  grantorDid: string,
+  thumbprint: string,
+  verifiedAt: string,
+  termsDigest?: string,
+): WebauthnGrantorBinding {
+  return {
+    grantor: grantorDid,
+    cnf: { jkt: thumbprint },
+    method: "webauthn",
+    verifiedAt,
+    ...(termsDigest ? { termsDigest } : {}),
+  };
 }
 
 /**

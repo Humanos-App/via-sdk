@@ -177,6 +177,121 @@ describe("verifyAgentDirect — A1–A8 + agent.* CEL (M4)", () => {
   });
 });
 
+describe("§20 — enforcement, semantic review, and when a person is asked (S7)", () => {
+  const params = { amount: 40000, action: "transfer" };
+  const words = { text: "Move money between my own accounts, nothing outbound.", lang: "en", author: "grantor" as const };
+
+  /** The same mandate shape, minus the action: the words are the grant (§20.3). */
+  const semantic = () =>
+    buildMandate({
+      subjectOrg: "did:web:humanos.tech:org:acme",
+      grantor: "did:web:humanos.tech:user:op",
+      authorizedDIDs: [`did:web:${RP}`],
+      authorizedAgents: [boundKey(attested.publicJwk, { assurance: "hardware", binding: "attested", root: "aws-nitro" })],
+      validFrom: "2026-01-01T00:00:00.000Z",
+      enforcement: "semantic",
+      description: words,
+      stepUp: { triggers: ["verifier"], reasons: ["semantic_review"] },
+    });
+
+  const present = async (m: ViaMandateCredential, over: Partial<AgentDirectDeps> = {}) => {
+    const popJwt = await buildPoP(
+      {
+        cnf: { jkt: jwkThumbprint(attested.publicJwk) },
+        aud: `did:web:${RP}`,
+        nonce: "n-1",
+        iat: 1,
+        action_hash: actionHash(m.id, "transfer", params),
+      },
+      attested.privateJwk,
+    );
+    return verifyAgentDirect(m, { pop: popJwt, action: "transfer", params }, deps(over));
+  };
+
+  it("says which machinery governed, on an allow and on a deny alike", async () => {
+    const allowed = await verifyAgentDirect(mandate, { pop: await pop(attested, "transfer", params), action: "transfer", params }, deps());
+    expect(allowed).toMatchObject({ decision: "allow", enforcement: "rules" });
+    const denied = await verifyAgentDirect(
+      mandate,
+      { pop: await pop(attested, "transfer", { amount: 60000, action: "transfer" }), action: "transfer", params: { amount: 60000, action: "transfer" } },
+      deps(),
+    );
+    expect(denied).toMatchObject({ decision: "deny", enforcement: "rules" });
+  });
+
+  // @invariant A mandate whose enforcement IS a reader is unenforced without one. Allowing here
+  // would be the whole of §20.6 undone by a missing dependency.
+  it("denies a semantic mandate when no reviewer is wired", async () => {
+    expect(await present(semantic())).toMatchObject({ decision: "deny", reason: "reviewer_unavailable" });
+  });
+
+  it("denies when the reviewer cannot be reached, and names it in the audit", async () => {
+    const r = await present(semantic(), {
+      review: () => ({ verdict: "unavailable", reviewer: { id: "reys", version: "2026-09-14" } }),
+    });
+    expect(r).toMatchObject({ decision: "deny", reason: "reviewer_unavailable", reviewer: { id: "reys" } });
+  });
+
+  it("allows a call the words entail, recording the reviewer and its version (§9.9)", async () => {
+    const r = await present(semantic(), {
+      review: () => ({ verdict: "entailed", reviewer: { id: "reys", version: "2026-09-14" } }),
+    });
+    expect(r).toMatchObject({ decision: "allow", enforcement: "semantic", reviewer: { id: "reys", version: "2026-09-14" } });
+  });
+
+  it("denies a call the words do not entail", async () => {
+    const r = await present(semantic(), { review: () => ({ verdict: "not_entailed" }) });
+    expect(r).toMatchObject({ decision: "deny", reason: "semantic_denied" });
+  });
+
+  it("escalates to the person as a rechallenge the event can attribute", async () => {
+    const r = await present(semantic(), { review: () => ({ verdict: "escalate", reviewer: { id: "reys" } }) });
+    expect(r).toMatchObject({
+      decision: "rechallenge",
+      reason: "semantic_review",
+      stepUp: { trigger: "verifier", reason: "semantic_review" },
+    });
+  });
+
+  // §20.2's narrowing rule: the requester wrote these words, so a reviewer reading them may refuse
+  // or escalate — it may not hand the agent an allow on its own sentence.
+  it("will not allow on words the agent wrote, even when the reviewer says they entail the call", async () => {
+    const m = buildMandate({
+      subjectOrg: "did:web:humanos.tech:org:acme",
+      grantor: "did:web:humanos.tech:user:op",
+      authorizedDIDs: [`did:web:${RP}`],
+      authorizedAgents: [boundKey(attested.publicJwk, { assurance: "hardware", binding: "attested", root: "aws-nitro" })],
+      validFrom: "2026-01-01T00:00:00.000Z",
+      enforcement: "semantic",
+      description: { ...words, author: "agent", proposedBy: { actor: AGENT_DID, adopted: true } },
+    });
+    const r = await present(m, { review: () => ({ verdict: "entailed" }) });
+    expect(r.decision).toBe("rechallenge");
+  });
+
+  // S7: the step-up used to be raised BEFORE the rules ran, so a call the rules would deny sent a
+  // person to their authenticator first — a ceremony spent on a decision that was wrong anyway.
+  it("denies a call the rules refuse instead of asking the person to co-sign it", async () => {
+    const over = { amount: 60000, action: "transfer" };
+    const r = await verifyAgentDirect(
+      mandate,
+      { pop: await pop(attested, "transfer", over), action: "transfer", params: over },
+      deps({ requiresStepUp: () => true, stepUpSatisfied: false }),
+    );
+    expect(r.decision).toBe("deny");
+  });
+
+  it("asks for the co-sign once authority has passed, and says who demanded it", async () => {
+    const r = await verifyAgentDirect(
+      mandate,
+      { pop: await pop(attested, "transfer", params), action: "transfer", params },
+      deps({ requiresStepUp: () => true, stepUpSatisfied: false }),
+    );
+    expect(r).toMatchObject({ decision: "rechallenge", stepUp: { trigger: "action", reason: "stepup_required" } });
+    expect(r.evaluations.length).toBeGreaterThan(0);
+  });
+});
+
 describe("§16.4 binding entry — the wire shape and the two verifiedAt encodings", () => {
   it("buildMandate writes verifiedAt as ISO-8601 and carries did, whatever it was handed", () => {
     const entries = mandate.credentialSubject.mandate.context.authorizedAgents!;
@@ -189,7 +304,11 @@ describe("§16.4 binding entry — the wire shape and the two verifiedAt encodin
   });
 
   it("buildMandate refuses an entry without did, and a keyId that is not a key of did", () => {
-    const base = { subjectOrg: "did:web:humanos.tech:org:acme", grantor: "g", authorizedDIDs: ["did:web:rp"], validFrom: "2026-01-01T00:00:00.000Z" };
+    const base = {
+      subjectOrg: "did:web:humanos.tech:org:acme", grantor: "g", authorizedDIDs: ["did:web:rp"],
+      validFrom: "2026-01-01T00:00:00.000Z",
+      description: { text: "Act for Acme within this scope.", lang: "en", author: "grantor" as const },
+    };
     const noDid = { cnf: { jwk: attested.publicJwk }, assurance: "pop", binding: "self", verifiedAt: 1 } as unknown as BoundKey;
     expect(() => buildMandate({ ...base, authorizedAgents: [noDid] })).toThrow(/requires did/);
     const mismatch: BoundKey = { ...boundKey(attested.publicJwk, { assurance: "pop", binding: "self" }), keyId: "did:web:humanos.tech:agent:other#key-1" };

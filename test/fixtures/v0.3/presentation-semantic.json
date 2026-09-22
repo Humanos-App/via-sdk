@@ -1,0 +1,80 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/credentials/v2",
+    "https://via.humanos.tech/ns/v1"
+  ],
+  "type": [
+    "VerifiablePresentation"
+  ],
+  "holder": "did:web:humanos.tech",
+  "verifiableCredential": {
+    "@context": [
+      "https://www.w3.org/ns/credentials/v2",
+      "https://via.humanos.tech/ns/v1"
+    ],
+    "id": "urn:via:credential:fixture-v03-semantic",
+    "type": [
+      "VerifiableCredential",
+      "VIAMandate"
+    ],
+    "specVersion": "0.3",
+    "issuer": "did:web:humanos.tech",
+    "validFrom": "2026-09-22T10:00:00.000Z",
+    "validUntil": "2026-10-22T10:00:00.000Z",
+    "credentialSubject": {
+      "id": "did:web:humanos.tech:org:fixture-org",
+      "mandate": {
+        "grantor": "did:web:humanos.tech:user:fixture-user",
+        "scope": "humanos.credential.request",
+        "context": {
+          "authorizedDIDs": [
+            "did:web:fidelidade.pt"
+          ]
+        },
+        "description": {
+          "text": "Draft replies in my support inbox. Never send one without showing it to me first.",
+          "lang": "en",
+          "author": "grantor",
+          "proposedBy": {
+            "actor": "did:web:humanos.tech:agent:fixture-agent",
+            "adopted": true
+          }
+        },
+        "enforcement": "semantic",
+        "initiator": {
+          "actor": "did:web:humanos.tech:agent:fixture-agent",
+          "role": "execution",
+          "at": "2026-09-22T09:59:00.000Z"
+        },
+        "stepUp": {
+          "triggers": [
+            "verifier"
+          ],
+          "reasons": [
+            "semantic_review"
+          ]
+        },
+        "extensions": [
+          "semanticReview"
+        ]
+      }
+    },
+    "proof": {
+      "type": "DataIntegrityProof",
+      "cryptosuite": "eddsa-jcs-2022",
+      "created": "2026-09-22T10:00:00.000Z",
+      "verificationMethod": "did:web:humanos.tech#key-1",
+      "proofPurpose": "assertionMethod",
+      "event": "STAMP",
+      "proofValue": "z38ENcJjkcuRN5Cwzjx72GNYdc59C1eegKyqATbMNGrhmcwzrNuMGsrHi622u9YMN8DimyLE62nqNPV6BQFGpMtLR"
+    }
+  },
+  "proof": {
+    "type": "DataIntegrityProof",
+    "cryptosuite": "eddsa-jcs-2022",
+    "created": "2026-09-22T10:02:00.000Z",
+    "verificationMethod": "did:web:humanos.tech#key-1",
+    "proofPurpose": "authentication",
+    "proofValue": "z4AWum1J8Sei1LUHN28J21EdKEdBYbUNgTnDvEzi4NzwpTLkohgtrutWYvsQ41EyQ2f9xuurUndws9jVEC1gdij8A"
+  }
+}

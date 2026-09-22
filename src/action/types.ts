@@ -36,6 +36,22 @@ export interface ActionRule {
   conditions: RuleCondition[];
   /** Auto-generated CEL (N13). Derived from `conditions`; never hand-edited. */
   expression: string;
+  /**
+   * The tools this rule GOVERNS, by `executionParams.tool` (S13).
+   *
+   * Absent ⇒ it governs every call. Present ⇒ a call by a tool outside the list skips it, which is
+   * what makes a per-tool limit expressible for a service whose tools do not all carry the same
+   * parameter. It replaces the guard this generated instead —
+   * `!has(executionParams.p) || …` — which was skipped by any call that simply omitted `p`, so the
+   * limit a person believed they had set bound only the calls that volunteered the value.
+   */
+  appliesTo?: string[];
+  /**
+   * Execution parameters a GOVERNED call MUST carry (S13). A governed call missing one is DENIED
+   * with `required_param_missing` — the fail-closed direction, and the one a grantor assumes when
+   * they fix an allowlist.
+   */
+  requires?: string[];
 }
 
 export interface ActionTarget {

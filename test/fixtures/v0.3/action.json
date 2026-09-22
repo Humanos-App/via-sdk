@@ -1,0 +1,64 @@
+{
+  "$id": "urn:via:action:fixture-slack-1",
+  "type": "VIAAction",
+  "version": "5",
+  "userParams": {
+    "allowed_tools": {
+      "type": "array",
+      "items": "string",
+      "required": true,
+      "description": "the tools the person allowed"
+    },
+    "allowed_channels": {
+      "type": "array",
+      "items": "string",
+      "required": true,
+      "description": "the channels the person allowed"
+    }
+  },
+  "executionParams": {
+    "tool": {
+      "type": "string",
+      "required": true
+    },
+    "channel_id": {
+      "type": "string"
+    },
+    "list_id": {
+      "type": "string"
+    }
+  },
+  "rules": [
+    {
+      "name": "allowed_tools",
+      "description": "Only the tools the person allowed",
+      "conditions": [
+        {
+          "left": "executionParams.tool",
+          "operator": "in",
+          "right": "userParams.allowed_tools"
+        }
+      ],
+      "expression": "executionParams.tool in userParams.allowed_tools"
+    },
+    {
+      "name": "allowed_channels",
+      "description": "A channel the person allowed",
+      "appliesTo": [
+        "slack_send_message",
+        "slack_read_channel"
+      ],
+      "requires": [
+        "channel_id"
+      ],
+      "conditions": [
+        {
+          "left": "executionParams.channel_id",
+          "operator": "in",
+          "right": "userParams.allowed_channels"
+        }
+      ],
+      "expression": "executionParams.channel_id in userParams.allowed_channels"
+    }
+  ]
+}

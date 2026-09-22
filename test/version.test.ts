@@ -33,6 +33,8 @@ const newMandate = () =>
     grantor: generateViaDID("user", { uuid: "u" }),
     authorizedDIDs: [verifierDid],
     validFrom: "2026-01-01T00:00:00.000Z",
+    // §20.3 — with no action, the words ARE the grant, so the builder requires them.
+    description: { text: "Act for Acme within this scope.", lang: "en", author: "grantor" },
   });
 
 describe("version identity", () => {

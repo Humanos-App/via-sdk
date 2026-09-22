@@ -116,6 +116,7 @@ export {
 // Mandate
 export {
   buildMandate,
+  // §20 — the mandate description (spec §20.1–§20.3)
   buildEvidence,
   stampMandate,
   verifyStamp,
@@ -131,6 +132,25 @@ export {
   type MandateProofCheck,
   type ResolvePublicKey,
 } from "./mandate/build.js";
+export type {
+  DescriptionAuthor,
+  Enforcement,
+  MandateDescription,
+  MandateInitiator,
+  MandateStepUp,
+  StepUpTrigger,
+} from "./types.js";
+export {
+  DESCRIPTION_MAX_LENGTH,
+  validateDescription,
+  validateMandateDescription,
+  enforcementOf,
+  descriptionOf,
+  adoptDescription,
+  mayWidenAuthority,
+  type DescriptionProblem,
+  type AdoptInput,
+} from "./mandate/description.js";
 
 // Credential-level signer (v0.2-new §5.4) — the SDK owns HOW the securing STAMP is made.
 export {
@@ -290,6 +310,8 @@ export {
   type PopCheckResult,
   type AgentDirectDeps,
   type AgentDirectResult,
+  type SemanticReviewInput,
+  type SemanticReviewVerdict,
   type CredentialRecordLike,
 } from "./agent/verify.js";
 

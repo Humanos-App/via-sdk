@@ -40,6 +40,7 @@ const SEED_USER = new Uint8Array(32).fill(13);
 const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
 
 const VERIFIER_DID = "did:web:fidelidade.pt";
+const AGENT_DID = "did:web:humanos.tech:agent:fixture-agent";
 const orgDid = generateViaDID("org", { uuid: "fixture-org" });
 const userDid = generateViaDID("user", { uuid: "fixture-user" });
 const vmPlatform = `${VIA_PLATFORM_DID}#key-1`;
@@ -85,12 +86,24 @@ const REGEN = !!process.env.REGEN_FIXTURES;
       credentialStatus: buildCredentialStatusEntry({ statusListCredential: "https://status.humanos.tech/list/1", statusListIndex: 0 }),
       validFrom: "2026-01-01T00:00:00.000Z",
     });
+    // These artifacts were signed while v0.2 was current, and the builder is now v0.3 — so the
+    // v0.3-only marker and field come back off before the STAMP covers the body. Without this the
+    // generator silently rewrites a "v0.2" fixture into something no v0.2 issuer could have
+    // produced (`specVersion: "0.3"`, `enforcement: "rules"`), and a regen that was supposed to
+    // reproduce frozen bytes instead invalidates the contract they encode. The rig could not
+    // reproduce them from the moment VIA_SPEC_VERSION moved; it can again.
+    mandate.specVersion = "0.2";
+    delete (mandate.credentialSubject.mandate as { enforcement?: unknown }).enforcement;
     // the mandate carries a SINGLE content-bound securing proof — the Humanos STAMP
     mandate = stampMandate(mandate, { privateKey: SEED_PLATFORM, verificationMethod: vmPlatform, created: "2026-01-03T00:00:00.000Z" });
     write("v0.2/mandate.json", mandate);
 
     // consent events: standalone, content-bound VIAEvents chained by previousEvent (§5.4)
-    const issueEvent = signEvent(
+    /** Sign a v0.2-era event: the marker goes back to "0.2" before the proof covers it. */
+    const signV02 = (e: ReturnType<typeof buildEvent>, signer: Parameters<typeof signEvent>[1]) =>
+      signEvent({ ...e, specVersion: "0.2" }, signer);
+
+    const issueEvent = signV02(
       buildEvent({
         eventId: "urn:via:event:fixture-issue",
         subject: mandate.id,
@@ -105,7 +118,7 @@ const REGEN = !!process.env.REGEN_FIXTURES;
     );
     write("v0.2/event-issue.json", issueEvent);
 
-    const acceptEvent = signEvent(
+    const acceptEvent = signV02(
       buildEvent({
         eventId: "urn:via:event:fixture-accept",
         subject: mandate.id,
@@ -121,7 +134,7 @@ const REGEN = !!process.env.REGEN_FIXTURES;
     write("v0.2/event-accept.json", acceptEvent);
 
     // operational event: reference-bound VERIFICATION_APPROVED, signed by Humanos
-    const verificationEvent = signEvent(
+    const verificationEvent = signV02(
       buildEvent({
         eventId: "urn:via:event:fixture-verification",
         subject: mandate.id,
@@ -146,6 +159,163 @@ const REGEN = !!process.env.REGEN_FIXTURES;
     });
     write("v0.2/presentation.json", presentation);
 
+    // ---- v0.3: §20 — the mandate description, enforcement, initiator, and S13 rule applicability ----
+    // Two artifacts, because §20.3's two modes are the thing worth freezing: a POLICY whose CEL
+    // governs and whose description is issuer-derived, and a SEMANTIC mandate whose words ARE the
+    // grant. If a later change stops either verifying, the contract they encode is broken.
+    const actionV3 = buildActionVersion({
+      $id: "urn:via:action:fixture-slack-1",
+      version: "5",
+      userParams: {
+        allowed_tools: { type: "array", items: "string", required: true, description: "the tools the person allowed" },
+        allowed_channels: { type: "array", items: "string", required: true, description: "the channels the person allowed" },
+      },
+      executionParams: {
+        tool: { type: "string", required: true },
+        channel_id: { type: "string" },
+        list_id: { type: "string" },
+      },
+      rules: [
+        { name: "allowed_tools", description: "Only the tools the person allowed",
+          conditions: [{ left: "executionParams.tool", operator: "in", right: "userParams.allowed_tools" }] },
+        // S13 — the rule NAMES the tools it governs and the parameter a governed call must carry.
+        // The guard it replaces (`!has(executionParams.channel_id) || …`) was skipped by any call
+        // that omitted the value, so the person's allowlist bound only the calls that volunteered one.
+        { name: "allowed_channels", description: "A channel the person allowed",
+          appliesTo: ["slack_send_message", "slack_read_channel"], requires: ["channel_id"],
+          conditions: [{ left: "executionParams.channel_id", operator: "in", right: "userParams.allowed_channels" }] },
+      ],
+    });
+    write("v0.3/action.json", actionV3);
+
+    let policy = buildMandate({
+      credentialId: "urn:via:credential:fixture-v03-rules",
+      subjectOrg: orgDid,
+      grantor: userDid,
+      authorizedDIDs: [VERIFIER_DID],
+      action: { ...buildActionReference(actionV3, "https://api.humanos.tech/actions/fixture-slack-1"), version: 5 },
+      userParams: wrapUserParamsWithAction(actionV3, {
+        allowed_tools: ["slack_read_channel", "slack_send_message"],
+        allowed_channels: ["C0BVB1KBPG8"],
+      }),
+      // §20.2 — DERIVED from the action and the values the grantor fixed. Prose beside rules that
+      // govern may only be the issuer's, or it drifts from what actually runs.
+      description: {
+        text: "Read and post in one Slack channel (C0BVB1KBPG8), up to 20 times, until 22 Oct 2026.",
+        lang: "en",
+        author: "issuer",
+      },
+      initiator: { actor: AGENT_DID, role: "execution", at: "2026-09-22T09:59:00.000Z" },
+      maxExecutions: 20,
+      validFrom: "2026-09-22T10:00:00.000Z",
+      validUntil: "2026-10-22T10:00:00.000Z",
+    });
+    policy = stampMandate(policy, { privateKey: SEED_PLATFORM, verificationMethod: vmPlatform, created: "2026-09-22T10:00:00.000Z" });
+    write("v0.3/mandate-rules.json", policy);
+
+    let semantic = buildMandate({
+      credentialId: "urn:via:credential:fixture-v03-semantic",
+      subjectOrg: orgDid,
+      grantor: userDid,
+      authorizedDIDs: [VERIFIER_DID],
+      enforcement: "semantic",
+      // The grantor edited what the agent proposed, so the words are theirs (§20.2's adoption bar).
+      description: {
+        text: "Draft replies in my support inbox. Never send one without showing it to me first.",
+        lang: "en",
+        author: "grantor",
+        proposedBy: { actor: AGENT_DID, adopted: true },
+      },
+      stepUp: { triggers: ["verifier"], reasons: ["semantic_review"] },
+      initiator: { actor: AGENT_DID, role: "execution", at: "2026-09-22T09:59:00.000Z" },
+      validFrom: "2026-09-22T10:00:00.000Z",
+      validUntil: "2026-10-22T10:00:00.000Z",
+    });
+    semantic = stampMandate(semantic, { privateKey: SEED_PLATFORM, verificationMethod: vmPlatform, created: "2026-09-22T10:00:00.000Z" });
+    write("v0.3/mandate-semantic.json", semantic);
+
+    const issueV3 = signEvent(
+      buildEvent({
+        eventId: "urn:via:event:fixture-v03-issue",
+        subject: policy.id,
+        event: "ISSUE",
+        actor: orgDid,
+        issuer: orgDid,
+        credential: policy,
+        previousEvent: null,
+        validFrom: "2026-09-22T10:00:00.000Z",
+      }),
+      { privateKey: SEED_ORG, verificationMethod: vmOrg, created: "2026-09-22T10:00:00.000Z" },
+    );
+    write("v0.3/event-issue.json", issueV3);
+
+    const acceptV3 = signEvent(
+      buildEvent({
+        eventId: "urn:via:event:fixture-v03-accept",
+        subject: policy.id,
+        event: "ACCEPT",
+        actor: userDid,
+        issuer: userDid,
+        credential: policy,
+        previousEvent: computeSRI(canonicalizeRFC8785(issueV3)),
+        validFrom: "2026-09-22T10:01:00.000Z",
+      }),
+      { privateKey: SEED_USER, verificationMethod: vmUser, created: "2026-09-22T10:01:00.000Z" },
+    );
+    write("v0.3/event-accept.json", acceptV3);
+
+    // A decision that rested on a step-up a REVIEWER demanded (§9.9 / §20.6): the detail carries
+    // who asked, why, and which reader ran — the part a chain cannot be re-checked without.
+    const verificationV3 = signEvent(
+      buildEvent({
+        eventId: "urn:via:event:fixture-v03-verification",
+        subject: policy.id,
+        event: "VERIFICATION_APPROVED",
+        actor: VERIFIER_DID,
+        previousEvent: computeSRI(canonicalizeRFC8785(acceptV3)),
+        evaluations: [
+          { rule: "allowed_tools", result: "pass" },
+          { rule: "allowed_channels", result: "pass" },
+        ],
+        executionParams: { tool: "slack_send_message", channel_id: "C0BVB1KBPG8" },
+        stepUp: {
+          id: "urn:via:stepup:fixture-v03",
+          method: "otp",
+          termsDigest: "sha384-fixture",
+          tool: "slack_send_message",
+          trigger: "verifier",
+          reason: "semantic_review",
+          reviewer: { id: "reys", version: "2026-09-14" },
+        },
+        targetVerifier: "fidelidade.pt",
+        validFrom: "2026-09-22T10:05:00.000Z",
+      }),
+      { privateKey: SEED_PLATFORM, verificationMethod: vmPlatform, created: "2026-09-22T10:05:00.000Z" },
+    );
+    write("v0.3/event-verification.json", verificationV3);
+
+    write(
+      "v0.3/presentation-semantic.json",
+      buildPresentation({
+        credential: semantic,
+        holder: VIA_PLATFORM_DID,
+        privateKey: SEED_PLATFORM,
+        verificationMethod: vmPlatform,
+        created: "2026-09-22T10:02:00.000Z",
+      }),
+    );
+
+    write(
+      "v0.3/presentation.json",
+      buildPresentation({
+        credential: policy,
+        holder: VIA_PLATFORM_DID,
+        privateKey: SEED_PLATFORM,
+        verificationMethod: vmPlatform,
+        created: "2026-09-22T10:02:00.000Z",
+      }),
+    );
+
     
     // ---- legacy: a pre-0.2 artifact — no specVersion marker, doc-only signed VP ----
     const legacyMandate = buildMandate({
@@ -154,8 +324,14 @@ const REGEN = !!process.env.REGEN_FIXTURES;
       grantor: userDid,
       authorizedDIDs: [VERIFIER_DID],
       validFrom: "2026-01-01T00:00:00.000Z",
+      // The builder is v0.3 and refuses an action-less mandate with no words (§20.3), but this
+      // artifact predates §20 and the marker alike — so it is built to satisfy today's builder and
+      // then stripped back to what a pre-0.2 issuer actually produced.
+      description: { text: "predates §20", lang: "en", author: "grantor" },
     });
     delete legacyMandate.specVersion; // predates the marker
+    delete (legacyMandate.credentialSubject.mandate as { description?: unknown }).description;
+    delete (legacyMandate.credentialSubject.mandate as { enforcement?: unknown }).enforcement;
     const { proof: _drop, ...credNoProof } = legacyMandate;
     const proofOpts = {
       type: "DataIntegrityProof",

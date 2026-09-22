@@ -10,7 +10,15 @@ export interface BuildActionVersionInput {
   target?: ActionTarget;
   userParams?: Record<string, ParamDef>;
   executionParams?: Record<string, ParamDef>;
-  rules?: { name: string; description?: string; conditions: RuleCondition[] }[];
+  rules?: {
+    name: string;
+    description?: string;
+    conditions: RuleCondition[];
+    /** S13 — the tools this rule governs; absent ⇒ every call (see {@link ActionRule.appliesTo}). */
+    appliesTo?: string[];
+    /** S13 — parameters a governed call MUST carry, or it is denied `required_param_missing`. */
+    requires?: string[];
+  }[];
   mapper?: Record<string, string>;
 }
 
@@ -22,6 +30,10 @@ export function buildActionVersion(input: BuildActionVersionInput): ActionDetail
   const rules = (input.rules ?? []).map((r) => ({
     name: r.name,
     ...(r.description ? { description: r.description } : {}),
+    // S13 — applicability travels with the rule. Dropping it here would publish an action whose
+    // rules look unconditional and behave otherwise, which is the drift the fields exist to end.
+    ...(r.appliesTo?.length ? { appliesTo: r.appliesTo } : {}),
+    ...(r.requires?.length ? { requires: r.requires } : {}),
     conditions: r.conditions,
     expression: generateCelExpression(r.conditions, typeOf),
   }));

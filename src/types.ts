@@ -58,6 +58,58 @@ export interface ActionReference {
   id: string;
   digestSRI: string;
   location: string;
+  /**
+   * §20.5 — WHICH published version is pinned, readable without resolving the catalog.
+   * Informative: `digestSRI` is the pin, and a verifier MUST NOT rely on this.
+   */
+  version?: number;
+}
+
+/**
+ * §20.1 — the words the person was shown, as a signed field of the mandate.
+ *
+ * On every mandate, both kinds of §16.4. What varies is its JOB, which {@link Mandate.enforcement}
+ * names: on a `rules` mandate it is the human-readable version of what the pinned CEL allows; on a
+ * `semantic` or `none` mandate it IS the grant.
+ */
+export interface MandateDescription {
+  /** The words. Exactly one normative text per mandate (§20.1). */
+  text: string;
+  /** BCP 47. REQUIRED — a reader's interpretation depends on it, and one reader is a machine. */
+  lang: string;
+  /** §20.2 — who WROTE these words. REQUIRED: text that travels without its author is guesswork. */
+  author: DescriptionAuthor;
+  /** Who drafted them when that was not the author, and whether the grantor took them as shown. */
+  proposedBy?: { actor: string; adopted?: boolean };
+}
+
+/**
+ * §20.2. `issuer` — derived from what governs (the only author a `rules` mandate may carry).
+ * `grantor` — the person wrote or edited them. `agent` — drafted by the requester and accepted as
+ * shown, which under §20.2's narrowing rule may deny or escalate a call, never allow one.
+ */
+export type DescriptionAuthor = "issuer" | "agent" | "grantor";
+
+/** §20.3 — which machinery governs this mandate. */
+export type Enforcement = "rules" | "semantic" | "none";
+
+/** §17.4 — who may demand a fresh grantor co-sign for a call under this mandate. */
+export type StepUpTrigger = "action" | "mandate" | "verifier";
+
+/**
+ * §17.4 — the mandate's own step-up declaration. The ONLY way an action-less mandate can ask for a
+ * co-sign, and what permits a verifier-side escalation (§20.6) to raise `rechallenge`.
+ */
+export interface MandateStepUp {
+  triggers?: StepUpTrigger[];
+  reasons?: string[];
+}
+
+/** §20.4 — who asked for the mandate, when that was not the grantor (§16.14). */
+export interface MandateInitiator {
+  actor: string;
+  role?: "execution" | "grantor";
+  at?: string;
 }
 
 export interface Mandate {
@@ -69,6 +121,23 @@ export interface Mandate {
   context: { authorizedDIDs: string[]; authorizedAgents?: BoundKey[] };
   action?: ActionReference;
   userParams?: Record<string, WrappedUserParam>;
+  /**
+   * §20.1 — the words the person was shown. Optional on the TYPE because artifacts issued before
+   * §20 exist and must keep verifying (v0.2-new §13); §20.3's validity rules are enforced by
+   * `validateMandateDescription`, not by the type.
+   */
+  description?: MandateDescription;
+  /**
+   * §20.3 — which machinery governs. Absent on pre-§20 artifacts, where it is DERIVED
+   * (`enforcementOf`): an action means `rules`, no action means `none`. A verifier returns it on
+   * every decision so that `allow` stops meaning both "no rules ran" and "rules ran and matched
+   * nothing".
+   */
+  enforcement?: Enforcement;
+  /** §20.4 — who asked for this mandate (§16.14's agent-initiated request is the case that matters). */
+  initiator?: MandateInitiator;
+  /** §17.4 — the mandate's own step-up declaration. */
+  stepUp?: MandateStepUp;
   /**
    * v0.3 delegation — present on a CHILD mandate minted by attenuation from
    * `parent`. `tools` is the STAMPed narrowed subset (⊆ the parent's); `depth`
@@ -174,6 +243,18 @@ export interface ViaEvent {
     operator?: Record<string, unknown>;
     /** §17.4 — a step-up: the `STEP_UP_*` event's own detail, or on a `VERIFICATION_*` the co-sign it rested on. */
     stepUp?: Record<string, unknown>;
+    /**
+     * §20.3 — which machinery governed a `VERIFICATION_*` decision (`rules` | `semantic` | `none`).
+     * Recorded rather than inferred: an `allow` with no evaluations means both "no rules ran" and
+     * "rules ran and matched nothing", and an audit cannot tell them apart afterwards.
+     */
+    enforcement?: string;
+    /**
+     * §20.6 — the reviewer that took part in a decision, and its version. The same words read by a
+     * different version is a different verdict, so a chain that does not name the reader cannot be
+     * re-checked. `{ id, version, verdict }`.
+     */
+    review?: Record<string, unknown>;
   };
   proof?: DataIntegrityProof;
 }

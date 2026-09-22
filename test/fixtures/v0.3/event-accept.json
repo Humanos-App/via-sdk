@@ -1,0 +1,29 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/credentials/v2",
+    "https://via.humanos.tech/ns/v1"
+  ],
+  "id": "urn:via:event:fixture-v03-accept",
+  "type": [
+    "VerifiableCredential",
+    "VIAEvent"
+  ],
+  "specVersion": "0.3",
+  "issuer": "did:web:humanos.tech:user:fixture-user",
+  "validFrom": "2026-09-22T10:01:00.000Z",
+  "credentialSubject": {
+    "id": "urn:via:credential:fixture-v03-rules",
+    "event": "ACCEPT",
+    "actor": "did:web:humanos.tech:user:fixture-user",
+    "credentialDigest": "sha256-/C5KDJiaTCTkqY0mjotpxEDuh0DNEMZI71CmsfwM4yg=",
+    "previousEvent": "sha256-kq2qWGiWb76n5QhcjUOlHhY5/9FjZF94P9Nvc0Fnd9s="
+  },
+  "proof": {
+    "type": "DataIntegrityProof",
+    "cryptosuite": "eddsa-jcs-2022",
+    "created": "2026-09-22T10:01:00.000Z",
+    "verificationMethod": "did:web:humanos.tech:user:fixture-user#key-1",
+    "proofPurpose": "assertionMethod",
+    "proofValue": "z5uWsSK1NQZnFmALpvVQDFNgKryxUtd83jxAWk7A9XmZEBrek8rMLRUcKC1piJvZAiNV151HWBAdRWGuKajPFrAsd"
+  }
+}

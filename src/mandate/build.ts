@@ -10,10 +10,15 @@ import {
   VIA_SPEC_VERSION,
   type ActionReference,
   type BitstringStatusListEntry,
+  type Enforcement,
   type EvidenceEntry,
+  type MandateDescription,
+  type MandateInitiator,
+  type MandateStepUp,
   type SpecVersion,
   type ViaMandateCredential,
 } from "../types.js";
+import { validateMandateDescription } from "./description.js";
 import type { WrappedUserParam } from "../action/execution-params.js";
 import type { BoundKey } from "../agent/types.js";
 import type { GrantorBinding } from "../grantor/binding.js";
@@ -46,7 +51,21 @@ export interface BuildMandateInput {
   validUntil?: string;
   /** v0.3 delegation — marks a CHILD mandate (attenuated from `parent`). */
   delegation?: { parent: string; depth: number; tools: string[] };
+  /** §20.1 — the words the person was shown, with their language and their author. */
+  description?: MandateDescription;
+  /**
+   * §20.3 — which machinery governs. Defaults to `rules` when an action is pinned and `none`
+   * otherwise, which is what a pre-§20 mandate meant implicitly; pass `semantic` deliberately.
+   */
+  enforcement?: Enforcement;
+  /** §20.4 — who asked for this mandate, when that was not the grantor (§16.14). */
+  initiator?: MandateInitiator;
+  /** §17.4 — the mandate's own step-up declaration (`triggers`, `reasons`). */
+  stepUp?: MandateStepUp;
 }
+
+/** §19.4 — the registered name of semantic review, listed when `enforcement` is `semantic`. */
+export const EXT_SEMANTIC_REVIEW = "semanticReview";
 
 /** The registered name of the Bounded-Use extension (§19.5), as it appears in `mandate.extensions`. */
 export const EXT_MAX_EXECUTIONS = "maxExecutions";
@@ -120,11 +139,25 @@ function normalizeBoundKey(bk: BoundKey, i: number): BoundKey {
 
 export function buildMandate(input: BuildMandateInput): ViaMandateCredential {
   if (input.authorizedDIDs.length === 0) throw new Error("mandate requires at least one authorizedDID");
+  // §20.3's validity rules are enforced HERE rather than at verify: an invalid pairing of
+  // description and enforcement is a defective consent, and the moment to refuse it is before a
+  // person is asked to sign, not after the artifact exists.
+  const check = validateMandateDescription({
+    ...(input.description ? { description: input.description } : {}),
+    ...(input.enforcement ? { enforcement: input.enforcement } : {}),
+    ...(input.action ? { action: input.action } : {}),
+  } as never);
+  if (!check.ok) throw new Error(`mandate description invalid: ${check.reason}`);
   // Extensions (§19). Each extension in use contributes its term(s) and its name to the signed
   // presence manifest. Only Bounded-Use exists today; the accumulator is the seam for the next one.
   validateMaxExecutions(input.maxExecutions);
   const extensions: string[] = [];
   if (input.maxExecutions !== undefined) extensions.push(EXT_MAX_EXECUTIONS);
+  // §19.4 — semantic review is CRITICAL, not advisory: a verifier that ignored the term would
+  // allow every call under a mandate whose whole point is that something reads it first. Listing
+  // it in the signed manifest is what makes "this verifier does not implement §20.6" detectable.
+  const enforcement = input.enforcement ?? (input.action ? "rules" : "none");
+  if (enforcement === "semantic") extensions.push(EXT_SEMANTIC_REVIEW);
   const credential: ViaMandateCredential = {
     "@context": [...VIA_CONTEXTS],
     id: input.credentialId ?? `urn:via:credential:${randomUUID()}`,
@@ -145,6 +178,10 @@ export function buildMandate(input: BuildMandateInput): ViaMandateCredential {
         },
         ...(input.action ? { action: input.action } : {}),
         ...(input.userParams ? { userParams: input.userParams } : {}),
+        ...(input.description ? { description: input.description } : {}),
+        enforcement,
+        ...(input.initiator ? { initiator: input.initiator } : {}),
+        ...(input.stepUp ? { stepUp: input.stepUp } : {}),
         ...(input.delegation ? { delegation: input.delegation } : {}),
         ...(input.maxExecutions !== undefined ? { maxExecutions: input.maxExecutions } : {}),
         ...(extensions.length ? { extensions } : {}),

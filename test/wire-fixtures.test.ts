@@ -90,3 +90,90 @@ describe("frozen fixtures — v0.2", () => {
 
 });
 
+describe("frozen fixtures — v0.3 (§20: description, enforcement, and S13 applicability)", () => {
+  const policy = read<ViaMandateCredential>("v0.3/mandate-rules.json");
+  const semantic = read<ViaMandateCredential>("v0.3/mandate-semantic.json");
+  const presentation = read<VerifiablePresentation>("v0.3/presentation.json");
+  const action = read<ActionDetail>("v0.3/action.json");
+  const issueEvent = read<ViaEvent>("v0.3/event-issue.json");
+  const acceptEvent = read<ViaEvent>("v0.3/event-accept.json");
+  const verificationEvent = read<ViaEvent>("v0.3/event-verification.json");
+  const v03Now = new Date("2026-09-25T00:00:00.000Z");
+
+  const deps: VerifyDeps = {
+    verifier: { did: VERIFIER_DID },
+    resolvePublicKey,
+    loadCredentialRecord: async () => ({ status: "ACTIVE", validFrom: "2026-09-22T10:00:00.000Z" }),
+    loadActionVersion: async (id) => (id === action.$id ? action : null),
+    now: v03Now,
+  };
+  const m = (c: ViaMandateCredential) => c.credentialSubject.mandate;
+
+  it("a policy mandate carries derived words, the machinery that governs, and who asked", () => {
+    expect(m(policy).description).toMatchObject({ author: "issuer", lang: "en" });
+    expect(m(policy).enforcement).toBe("rules");
+    expect(m(policy).initiator?.actor).toContain(":agent:");
+    expect(m(policy).action?.version).toBe(5);
+  });
+
+  it("the words are content-bound: one edited character breaks the STAMP", async () => {
+    expect((await verifyStamp(policy, resolvePublicKey)).valid).toBe(true);
+    const tampered = structuredClone(policy);
+    tampered.credentialSubject.mandate.description!.text += " And post anywhere else too.";
+    expect((await verifyStamp(tampered, resolvePublicKey)).valid).toBe(false);
+  });
+
+  it("presentation: a governed call naming an allowed channel verifies → allow", async () => {
+    const r = await verify(
+      { presentation, executionParams: { tool: "slack_send_message", channel_id: "C0BVB1KBPG8" } },
+      deps,
+    );
+    expect(r).toMatchObject({ decision: "allow", enforcement: "rules" });
+  });
+
+  // S13, frozen: the guard this replaces (`!has(executionParams.channel_id) || …`) answered ALLOW
+  // here, which is how a person's channel allowlist bound only the calls that volunteered one.
+  it("presentation: a governed call that omits the parameter is DENIED, not skipped", async () => {
+    const r = await verify({ presentation, executionParams: { tool: "slack_send_message" } }, deps);
+    expect(r).toMatchObject({ decision: "deny", reason: "required_param_missing" });
+  });
+
+  it("presentation: a call outside the rule's tools records it as skipped and proceeds", async () => {
+    const r = await verify(
+      { presentation, executionParams: { tool: "slack_read_channel", channel_id: "C0BVB1KBPG8" } },
+      deps,
+    );
+    expect(r.decision).toBe("allow");
+    const other = await verify({ presentation, executionParams: { tool: "slack_read_channel" } }, deps);
+    expect(other.decision).toBe("deny"); // slack_read_channel IS governed by the channel rule
+  });
+
+  it("a semantic mandate declares the critical extension and its words are the grantor's", async () => {
+    expect((await verifyStamp(semantic, resolvePublicKey)).valid).toBe(true);
+    expect(m(semantic).enforcement).toBe("semantic");
+    expect(m(semantic).extensions).toContain("semanticReview");
+    expect(m(semantic).description).toMatchObject({ author: "grantor", proposedBy: { adopted: true } });
+    expect(m(semantic).stepUp).toMatchObject({ triggers: ["verifier"] });
+  });
+
+  // @invariant §20.6 — the custodial VP path has no reviewer to consult, and a mandate whose
+  // enforcement IS a reader must not be verified by not reading.
+  it("the VP path fails closed on a semantic mandate rather than allowing it", async () => {
+    const vp = read<VerifiablePresentation>("v0.3/presentation-semantic.json");
+    const r = await verify({ presentation: vp, executionParams: {} }, deps);
+    expect(r).toMatchObject({ decision: "deny", reason: "reviewer_unavailable" });
+  });
+
+  it("events verify, chain, and record who demanded the co-sign and which reader ran", async () => {
+    expect((await verifyEvent(issueEvent, resolvePublicKey, { credential: policy })).valid).toBe(true);
+    expect((await verifyEvent(acceptEvent, resolvePublicKey, { credential: policy })).valid).toBe(true);
+    expect((await verifyEvent(verificationEvent, resolvePublicKey)).valid).toBe(true);
+    expect((await walkEventChain([issueEvent, acceptEvent, verificationEvent])).ok).toBe(true);
+    expect(verificationEvent.credentialSubject.stepUp).toMatchObject({
+      trigger: "verifier",
+      reason: "semantic_review",
+      reviewer: { id: "reys", version: "2026-09-14" },
+    });
+  });
+});
+

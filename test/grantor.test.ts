@@ -65,6 +65,33 @@ describe("§17 grantor binding (M5)", () => {
     expect(() => enrollGrantor(key.publicJwk, "user:abc")).toThrow(/actor DID/);
   });
 
+  // §17.3 + §20.1 — the WORDS are part of what the passkey signs. A signature over the constraints
+  // alone would let the sentence beside them change without breaking anything, which is exactly the
+  // gap that makes "grantor-authored" a claim rather than a fact.
+  it("binds the description and the lifetime, and omits them when there are none", () => {
+    const base = { purpose: "mandate" as const, agentDid: "did:web:x:agent:1", constraints: [{ type: "amount_max", value: 100 }] };
+    const words = { text: "Move money between my own accounts.", lang: "en", author: "grantor" };
+    const plain = grantorTermsDigest(base);
+
+    expect(grantorTermsDigest({ ...base, description: words })).not.toBe(plain);
+    expect(grantorTermsDigest({ ...base, description: { ...words, text: "Move money anywhere." } })).not.toBe(
+      grantorTermsDigest({ ...base, description: words }),
+    );
+    expect(grantorTermsDigest({ ...base, ttlSeconds: 3600 })).not.toBe(plain);
+    // @invariant An absent field must not change the digest of a grant that never had one —
+    // JCS keeps an explicit null, so writing them unconditionally would move every existing digest.
+    expect(grantorTermsDigest({ ...base, description: undefined, ttlSeconds: undefined })).toBe(plain);
+  });
+
+  it("records the signed digest in the binding, and leaves it out when nothing signed one", () => {
+    const at = "2026-09-22T10:00:00.000Z";
+    expect(buildGrantorBinding("did:web:humanos.tech:user:jo", "jkt-1", at, "sha256-terms")).toMatchObject({
+      method: "webauthn",
+      termsDigest: "sha256-terms",
+    });
+    expect(buildGrantorBinding("did:web:humanos.tech:user:jo", "jkt-1", at)).not.toHaveProperty("termsDigest");
+  });
+
   it("termsDigest is a digestSRI, deterministic and purpose/scope-sensitive", () => {
     const m = grantorTermsDigest({ purpose: "mandate", agentDid: "did:web:x:agent:1", constraints: [{ type: "amount_max", value: 100 }] });
     const s = grantorTermsDigest({ purpose: "stepup", mandateId: "m1", amount: 250, currency: "USD", item: "gpu" });

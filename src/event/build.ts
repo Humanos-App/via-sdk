@@ -44,6 +44,10 @@ export interface BuildEventInput {
   accreditation?: Record<string, unknown>;
   /** §17.4 — step-up detail: `{ id, method, termsDigest, tool }` on `STEP_UP_*`; the reference on a `VERIFICATION_*`. */
   stepUp?: Record<string, unknown>;
+  /** §20.3 — which machinery governed this decision. */
+  enforcement?: string;
+  /** §20.6 — `{ id, version, verdict }` of the reviewer that took part. */
+  review?: Record<string, unknown>;
   /**
    * Content-bound: the credential to hash (e.g. a {@link ViaMandateCredential}), or a
    * precomputed digest. Any existing `proof` is stripped before hashing (spec v0.2-new §5.4).
@@ -90,7 +94,9 @@ export function buildEvent(input: BuildEventInput): ViaEvent {
       ...(input.executionParams ? { executionParams: input.executionParams } : {}),
       ...(input.targetVerifier ? { targetVerifier: input.targetVerifier } : {}),
       ...(input.agent ? { agent: input.agent } : {}),
-    ...(input.stepUp ? { stepUp: input.stepUp } : {}),
+      ...(input.stepUp ? { stepUp: input.stepUp } : {}),
+      ...(input.enforcement ? { enforcement: input.enforcement } : {}),
+      ...(input.review ? { review: input.review } : {}),
       ...(input.operator ? { operator: input.operator } : {}),
       ...(input.accreditation ? { accreditation: input.accreditation } : {}),
     },
@@ -274,6 +280,12 @@ export interface BuildChainedEventInput {
   operator?: Record<string, unknown>;
   /** §18 — `ACCREDITED` detail: the registrar's claim about THIS actor's identity. */
   accreditation?: Record<string, unknown>;
+  /** §2.2/§17.4 — step-up detail: `{ id, method, termsDigest, tool }` on `STEP_UP_*`; the reference on a `VERIFICATION_*`. */
+  stepUp?: Record<string, unknown>;
+  /** §20.3 — which machinery governed this decision. */
+  enforcement?: string;
+  /** §20.6 — `{ id, version, verdict }` of the reviewer that took part. */
+  review?: Record<string, unknown>;
   signer: EventSigner;
 }
 
@@ -306,6 +318,9 @@ export function buildChainedEvent(input: BuildChainedEventInput): ViaEvent {
     ...(input.agent ? { agent: input.agent } : {}),
     ...(input.operator ? { operator: input.operator } : {}),
     ...(input.accreditation ? { accreditation: input.accreditation } : {}),
+    ...(input.stepUp ? { stepUp: input.stepUp } : {}),
+    ...(input.enforcement ? { enforcement: input.enforcement } : {}),
+    ...(input.review ? { review: input.review } : {}),
   });
   return signEvent(unsigned, input.signer);
 }

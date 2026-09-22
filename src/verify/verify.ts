@@ -6,6 +6,8 @@ import type { ActionDetail } from "../action/types.js";
 import { evaluateRules, type RuleEvaluation } from "../cel/evaluate.js";
 import { domainMatches } from "../presentation/vp.js";
 import { detectSpecVersion, type DetectedSpecVersion } from "../version.js";
+import { enforcementOf } from "../mandate/description.js";
+import type { Enforcement } from "../types.js";
 import type { CredentialStatus, VerifiablePresentation } from "../types.js";
 
 export interface VerifyDeps {
@@ -43,6 +45,8 @@ export interface VerifyResult {
   evaluations: RuleEvaluation[];
   /** The credential's detected spec version (`"0.2"` or `"unknown"`). */
   specVersion?: DetectedSpecVersion;
+  /** §20.3 — which machinery governed. Derived for artifacts issued before the field existed. */
+  enforcement?: Enforcement;
 }
 
 const deny = (reason: string, credentialId?: string): VerifyResult => ({
@@ -111,8 +115,16 @@ async function runChecks(
     }
   }
 
-  // 5. no-action short-circuit
-  if (!mandate.action) return { decision: "allow", credentialId: urn, evaluations: [] };
+  // 5. no action → the words govern, or nothing does (§20.3). `allow` says which.
+  const enforcement = enforcementOf(mandate);
+  if (!mandate.action) {
+    // §20.6 — a `semantic` mandate is enforced by a READER, and this is the custodial
+    // presentation path (v0.2-new §7.1), which has no reviewer to consult: semantic mandates
+    // present agent-direct (§16.11). Failing closed is the only honest answer — allowing here
+    // would let the one mode whose enforcement is a reader be verified by not reading.
+    if (enforcement === "semantic") return { ...deny("reviewer_unavailable", urn), enforcement };
+    return { decision: "allow", credentialId: urn, evaluations: [], enforcement };
+  }
 
   // 6. load + pin-check the ActionVersion.
   //    The digest pin is only enforced when the credential actually carries one.
@@ -136,14 +148,24 @@ async function runChecks(
   }
 
   // 8. no rules → allow
-  if (!action.rules || action.rules.length === 0) return { decision: "allow", credentialId: urn, evaluations: [] };
+  if (!action.rules || action.rules.length === 0) return { decision: "allow", credentialId: urn, evaluations: [], enforcement };
 
   // 9. CEL
   const { decision, evaluations } = evaluateRules(action.rules, {
     userParams: unwrapUserParamValues(mandate.userParams),
     executionParams,
   });
-  return { decision, credentialId: urn, evaluations, ...(decision === "deny" ? { reason: "rule_failed" } : {}) };
+  // S13 — a governed call that omitted a required parameter is its own answer, not `rule_failed`:
+  // the rule did not fail, the call never carried what the rule constrains. Same mapping as the
+  // agent-direct path, because the same rule produced it.
+  const missing = evaluations.some((e) => e.reason?.startsWith("required_param_missing"));
+  return {
+    decision,
+    credentialId: urn,
+    evaluations,
+    enforcement,
+    ...(decision === "deny" ? { reason: missing ? "required_param_missing" : "rule_failed" } : {}),
+  };
 }
 
 export interface VerifyInput {

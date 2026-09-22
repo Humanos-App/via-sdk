@@ -12,7 +12,14 @@ import { unwrapUserParamValues, validateExecutionParams } from "../action/execut
 import { actionDigestSRI } from "../action/build.js";
 import type { ActionDetail } from "../action/types.js";
 import { boundKeyVerifiedAtMs, type AgentReasonCode, type Assurance, type Binding, type BoundKey, type Root } from "./types.js";
-import type { CredentialStatus, ViaMandateCredential } from "../types.js";
+import type {
+  CredentialStatus,
+  Enforcement,
+  MandateDescription,
+  StepUpTrigger,
+  ViaMandateCredential,
+} from "../types.js";
+import { enforcementOf, mayWidenAuthority } from "../mandate/description.js";
 
 /** The validated rung, surfaced into the CEL context as `agent.*` (§16.8). */
 export interface AgentEnv {
@@ -111,6 +118,15 @@ export interface AgentDirectDeps {
   validateNonce?: (nonce: string, mandateId: string) => string | Promise<string>;
   /** §17.4 — does this action/amount require a fresh grantor step-up? */
   requiresStepUp?: (action: string, params: Record<string, unknown>) => boolean | Promise<boolean>;
+  /**
+   * §20.6 — the semantic reviewer, called only for `enforcement: "semantic"`.
+   *
+   * WHICH reviewer is the verifier's own, like the challenge in §16.11: the mandate says one is
+   * required, not who. Absence is not silence — a `semantic` mandate presented to a verifier with
+   * no reviewer wired is `reviewer_unavailable`, a deny, because the alternative is allowing a
+   * call under a mandate whose whole point is that something reads it first.
+   */
+  review?: (input: SemanticReviewInput) => SemanticReviewVerdict | Promise<SemanticReviewVerdict>;
   /** Whether a fresh grantor step-up assertion accompanied this request (verified elsewhere, §17.4). */
   stepUpSatisfied?: boolean;
   now?: Date;
@@ -140,15 +156,50 @@ export interface AgentDirectDeps {
  */
 export type AccreditationLoad = Record<string, unknown> | undefined | { denied: true; reason: string };
 
+/** §20.6 — what a reviewer is asked. The words, their author, and the call. */
+export interface SemanticReviewInput {
+  description: MandateDescription;
+  action: string;
+  params: Record<string, unknown>;
+  mandateId: string;
+}
+
+/**
+ * §20.6 — what a reviewer answers.
+ *
+ * `unavailable` is a first-class verdict rather than a thrown error, because it decides something:
+ * it is the one answer that must never become `allow`.
+ */
+export interface SemanticReviewVerdict {
+  verdict: "entailed" | "not_entailed" | "escalate" | "unavailable";
+  reviewer?: { id: string; version?: string };
+  reason?: string;
+}
+
 export interface AgentDirectResult {
   decision: "allow" | "deny" | "rechallenge";
   credentialId?: string;
   reason?: string;
   evaluations: RuleEvaluation[];
   agent?: AgentEnv;
+  /**
+   * §20.3 — which machinery actually governed this decision. Present on EVERY result: without it
+   * an `allow` with no evaluations means both "no rules ran" and "rules ran and matched nothing".
+   */
+  enforcement?: Enforcement;
+  /** §17.4 — set on a `rechallenge`: who demanded the co-sign, and why. Recorded on the event (§9.9). */
+  stepUp?: { trigger: StepUpTrigger; reason: string };
+  /** §20.6 — the reviewer that took part, for the audit record (§9.9). */
+  reviewer?: { id: string; version?: string };
 }
 
-const deny = (reason: string, credentialId?: string): AgentDirectResult => ({ decision: "deny", reason, credentialId, evaluations: [] });
+const deny = (reason: string, credentialId?: string, enforcement?: Enforcement): AgentDirectResult => ({
+  decision: "deny",
+  reason,
+  credentialId,
+  evaluations: [],
+  ...(enforcement ? { enforcement } : {}),
+});
 
 /**
  * Full agent-direct verify (§16.11). The agent carries the mandate + a PoP; the RP
@@ -163,48 +214,78 @@ export async function verifyAgentDirect(
   const urn = mandate.id;
   const m = mandate.credentialSubject.mandate;
   const now = deps.now ?? new Date();
+  // §20.3 — what governs this mandate, carried on every result below. Derived for artifacts
+  // issued before §20; the field wins wherever it is present.
+  const enforcement = enforcementOf(m);
 
   // 2–3. status + validity (trusted record)
   const record = await deps.loadCredentialRecord(urn);
-  if (record.status !== "ACTIVE") return deny(`credential_${record.status.toLowerCase()}`, urn);
-  if (record.validFrom && new Date(record.validFrom) > now) return deny("not_yet_valid", urn);
-  if (record.validUntil && new Date(record.validUntil) < now) return deny("expired", urn);
+  if (record.status !== "ACTIVE") return deny(`credential_${record.status.toLowerCase()}`, urn, enforcement);
+  if (record.validFrom && new Date(record.validFrom) > now) return deny("not_yet_valid", urn, enforcement);
+  if (record.validUntil && new Date(record.validUntil) < now) return deny("expired", urn, enforcement);
 
   // 4. audience — the verifier must be authorized to use the mandate
   const authorizedDIDs = record.authorizedDIDs ?? m.context.authorizedDIDs;
-  if (!authorizedDIDs.includes(deps.verifier.did)) return deny("verifier_not_authorized", urn);
+  if (!authorizedDIDs.includes(deps.verifier.did)) return deny("verifier_not_authorized", urn, enforcement);
 
   // 5. agent binding is REQUIRED when the mandate carries authorizedAgents (§16.4)
   const boundKeys = m.context.authorizedAgents;
-  if (!boundKeys || boundKeys.length === 0) return deny("agent_not_bound", urn);
+  if (!boundKeys || boundKeys.length === 0) return deny("agent_not_bound", urn, enforcement);
   const pop = await verifyAgentBinding(
     { authorizedAgents: boundKeys, pop: req.pop, verifier: deps.verifier.did, mandateId: urn, action: req.action, params: req.params },
     { validateNonce: deps.validateNonce, now },
   );
-  if (!pop.ok || !pop.agent) return deny(pop.reason ?? "pop_invalid", urn);
+  if (!pop.ok || !pop.agent) return deny(pop.reason ?? "pop_invalid", urn, enforcement);
 
-  // 5b. step-up (§17.4) — valid, but the human must re-authorize this payment first (D7).
-  if (deps.requiresStepUp && (await deps.requiresStepUp(req.action, req.params)) && !deps.stepUpSatisfied) {
-    return { decision: "rechallenge", credentialId: urn, reason: "stepup_required", evaluations: [], agent: pop.agent };
+  // A step-up is decided AFTER authority (S7). It used to be raised here, before the params and
+  // the rules were looked at, so a call the rules would deny sent a person to their authenticator
+  // first — consent fatigue bought with a decision that was wrong anyway.
+  const stepUpAsked = deps.requiresStepUp ? await deps.requiresStepUp(req.action, req.params) : false;
+  const askStepUp = (trigger: StepUpTrigger, reason: string, evaluations: RuleEvaluation[] = []): AgentDirectResult => ({
+    decision: "rechallenge",
+    credentialId: urn,
+    reason,
+    evaluations,
+    agent: pop.agent,
+    enforcement,
+    stepUp: { trigger, reason },
+  });
+
+  // 6. no action → the words govern, or nothing does (§20.3). `allow` now SAYS which.
+  if (!m.action) {
+    if (enforcement === "semantic") {
+      const reviewed = await reviewSemantic(m.description, req, urn, deps);
+      if (reviewed.denied) return { ...deny(reviewed.reason, urn, enforcement), ...(reviewed.reviewer ? { reviewer: reviewed.reviewer } : {}) };
+      if (reviewed.escalate) {
+        return { ...askStepUp("verifier", "semantic_review"), ...(reviewed.reviewer ? { reviewer: reviewed.reviewer } : {}) };
+      }
+      if (stepUpAsked && !deps.stepUpSatisfied) return askStepUp("mandate", "stepup_required");
+      return {
+        decision: "allow", credentialId: urn, evaluations: [], agent: pop.agent, enforcement,
+        ...(reviewed.reviewer ? { reviewer: reviewed.reviewer } : {}),
+      };
+    }
+    if (stepUpAsked && !deps.stepUpSatisfied) return askStepUp("mandate", "stepup_required");
+    return { decision: "allow", credentialId: urn, evaluations: [], agent: pop.agent, enforcement };
   }
-
-  // 6. no action → allow (identity already proven)
-  if (!m.action) return { decision: "allow", credentialId: urn, evaluations: [], agent: pop.agent };
 
   // 6b. load + pin-check the ActionVersion
   const action = await deps.loadActionVersion(m.action.id);
-  if (!action) return deny("action_not_found", urn);
-  if (m.action.digestSRI && actionDigestSRI(action) !== m.action.digestSRI) return deny("action_invalid", urn);
+  if (!action) return deny("action_not_found", urn, enforcement);
+  if (m.action.digestSRI && actionDigestSRI(action) !== m.action.digestSRI) return deny("action_invalid", urn, enforcement);
 
   // 7. executionParams shape
   try {
     validateExecutionParams(action, req.params);
   } catch (e) {
-    return deny(`execution_params_invalid:${(e as Error).message}`, urn);
+    return deny(`execution_params_invalid:${(e as Error).message}`, urn, enforcement);
   }
 
   // 8. no rules → allow
-  if (!action.rules || action.rules.length === 0) return { decision: "allow", credentialId: urn, evaluations: [], agent: pop.agent };
+  if (!action.rules || action.rules.length === 0) {
+    if (stepUpAsked && !deps.stepUpSatisfied) return askStepUp("action", "stepup_required");
+    return { decision: "allow", credentialId: urn, evaluations: [], agent: pop.agent, enforcement };
+  }
 
   // 9. CEL — with the rung env as `agent.*` (this is where A7 is enforced).
   // v0.3: the env EXTENDS with actor-projection fields (bootstrapAnchor, status)
@@ -214,7 +295,7 @@ export async function verifyAgentDirect(
   // §18.5 — O1–O4 are ordered and the first failure denies. `accreditation_expired` and
   // `accreditation_revoked` are decisions, not data for a rule to weigh.
   const failure = loaded && "denied" in loaded ? (loaded as { denied: true; reason: string }) : null;
-  if (failure) return deny(failure.reason, urn);
+  if (failure) return deny(failure.reason, urn, enforcement);
   const accreditation = loaded;
   const { decision, evaluations } = evaluateRules(action.rules, {
     userParams: unwrapUserParamValues(m.userParams),
@@ -222,10 +303,47 @@ export async function verifyAgentDirect(
     agent: { ...pop.agent, ...(deps.agentEnvExtras ?? {}) },
     ...(accreditation ? { accreditation } : {}),
   });
-  if (decision === "allow") return { decision: "allow", credentialId: urn, evaluations, agent: pop.agent };
+  if (decision === "allow") {
+    // Authority passed — NOW a step-up is worth a person's attention (S7).
+    if (stepUpAsked && !deps.stepUpSatisfied) return askStepUp("action", "stepup_required", evaluations);
+    return { decision: "allow", credentialId: urn, evaluations, agent: pop.agent, enforcement };
+  }
 
   // map the first failing rule to a specific agent reason (A7) or the generic rule_failed
-  const firstFail = evaluations.find((e) => e.result !== "pass");
-  const reason = (firstFail && agentReasonForRule(firstFail.rule)) ?? "rule_failed";
-  return { decision: "deny", credentialId: urn, reason, evaluations, agent: pop.agent };
+  const firstFail = evaluations.find((e) => e.result === "fail" || e.result === "error");
+  // S13 — a governed call that omitted a required parameter is its own answer, not `rule_failed`:
+  // the rule did not fail, the call never carried what the rule constrains.
+  const missing = firstFail?.reason?.startsWith("required_param_missing") ? "required_param_missing" : null;
+  const reason = missing ?? (firstFail && agentReasonForRule(firstFail.rule)) ?? "rule_failed";
+  return { decision: "deny", credentialId: urn, reason, evaluations, agent: pop.agent, enforcement };
+}
+
+/**
+ * §20.6 — hand the words and the call to the reviewer, and turn its verdict into a decision.
+ *
+ * The three failure shapes are deliberately distinct. No reviewer wired, or one that cannot be
+ * reached, is `reviewer_unavailable` — never `allow`, because a mandate whose enforcement is a
+ * reader is unenforced without one. Words the REQUESTER wrote (§20.2) may narrow authority but
+ * never widen it, so an agent-authored description cannot produce an allow here: it is exactly the
+ * text a persuasive agent would craft.
+ */
+async function reviewSemantic(
+  description: MandateDescription | undefined,
+  req: { action: string; params: Record<string, unknown> },
+  urn: string,
+  deps: AgentDirectDeps,
+): Promise<{ denied?: false; escalate?: boolean; reviewer?: { id: string; version?: string } } | { denied: true; reason: string; reviewer?: { id: string; version?: string } }> {
+  if (!description) return { denied: true, reason: "description_required" };
+  if (!deps.review) return { denied: true, reason: "reviewer_unavailable" };
+  const verdict = await deps.review({ description, action: req.action, params: req.params, mandateId: urn });
+  const reviewer = verdict.reviewer;
+  if (verdict.verdict === "unavailable") return { denied: true, reason: "reviewer_unavailable", ...(reviewer ? { reviewer } : {}) };
+  if (verdict.verdict === "not_entailed") return { denied: true, reason: "semantic_denied", ...(reviewer ? { reviewer } : {}) };
+  if (verdict.verdict === "escalate") return { escalate: true, ...(reviewer ? { reviewer } : {}) };
+  if (!mayWidenAuthority(description)) {
+    // `entailed`, but on words the requester wrote: the reviewer may not widen on those, so the
+    // call is escalated to the person rather than allowed on the agent's own say-so.
+    return { escalate: true, ...(reviewer ? { reviewer } : {}) };
+  }
+  return { ...(reviewer ? { reviewer } : {}) };
 }

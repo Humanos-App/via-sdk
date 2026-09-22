@@ -21,7 +21,12 @@ export interface CelContext {
 
 export interface RuleEvaluation {
   rule: string;
-  result: "pass" | "fail" | "error";
+  /**
+   * `skip` (S13): the rule declares `appliesTo` and this call's tool is not in it, so the rule did
+   * not run. Recorded rather than omitted — "did not apply" and "passed" are different facts, and
+   * an audit that cannot tell them apart cannot answer what actually constrained a call.
+   */
+  result: "pass" | "fail" | "error" | "skip";
   reason?: string;
 }
 
@@ -166,12 +171,39 @@ export function evaluateRule(rule: Pick<ActionRule, "name" | "description" | "ex
   }
 }
 
-/** Evaluate all rules; `allow` only if every rule passes. */
+/**
+ * Does this rule govern this call (S13)? `appliesTo` names the tools it governs; absent, it governs
+ * everything.
+ */
+function governs(rule: Pick<ActionRule, "appliesTo">, ctx: CelContext): boolean {
+  if (!rule.appliesTo || rule.appliesTo.length === 0) return true;
+  const tool = ctx.executionParams?.tool;
+  return typeof tool === "string" && rule.appliesTo.includes(tool);
+}
+
+/**
+ * Evaluate all rules; `allow` only if every rule that GOVERNS this call passes.
+ *
+ * Two S13 behaviours sit here:
+ *
+ *   - a rule the call is outside of (`appliesTo`) is recorded `skip` and does not decide;
+ *   - a rule that governs the call and names `requires` DENIES when the call omits one of those
+ *     parameters, rather than letting the limit be skipped. The old shape expressed the same
+ *     intent as `!has(executionParams.p) || …`, which is the permissive direction: omit the
+ *     parameter and the person's allowlist never runs.
+ */
 export function evaluateRules(
-  rules: Pick<ActionRule, "name" | "description" | "expression">[],
+  rules: Pick<ActionRule, "name" | "description" | "expression" | "appliesTo" | "requires">[],
   ctx: CelContext,
 ): EvaluationResult {
-  const evaluations = rules.map((r) => evaluateRule(r, ctx));
-  const decision = evaluations.every((e) => e.result === "pass") ? "allow" : "deny";
+  const evaluations = rules.map((r): RuleEvaluation => {
+    if (!governs(r, ctx)) return { rule: r.name, result: "skip", reason: "tool not governed by this rule" };
+    const missing = (r.requires ?? []).find((param) => ctx.executionParams?.[param] === undefined);
+    if (missing !== undefined) {
+      return { rule: r.name, result: "fail", reason: `required_param_missing:${missing}` };
+    }
+    return evaluateRule(r, ctx);
+  });
+  const decision = evaluations.every((e) => e.result === "pass" || e.result === "skip") ? "allow" : "deny";
   return { decision, evaluations };
 }
