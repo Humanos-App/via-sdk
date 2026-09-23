@@ -205,6 +205,15 @@ export interface ViaActorSubject {
    */
   keySuccession?: Record<string, string>;
   /**
+   * When the PARTY came to exist on the platform — an organization's creation, a contact's —
+   * carried as content of `ACTOR_REGISTERED` (§3.1, §3.5). Equal to `genesisAt` for a natively
+   * registered actor, earlier for a backfilled one. The merge survivor rule ranks on this first
+   * (§3.6c): a backfill registers everyone on the day it runs, so `genesisAt` alone would make a
+   * 2024 party younger than one that signed up last month. Absent on chains written before genesis
+   * carried it; the rule then falls back to `genesisAt`.
+   */
+  existedSince?: string;
+  /**
    * When this actor came into existence — the `validFrom` of its `ACTOR_REGISTERED` (§3.5).
    *
    * Distinct from `verifiedAt`, which moves whenever evidence is re-checked. This never moves, and
@@ -455,6 +464,7 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
           },
         ],
         genesisAt: e.validFrom,
+        ...(typeof detail.existedSince === "string" ? { existedSince: detail.existedSince } : {}),
         assurance: detail.assurance as Assurance,
         binding: detail.binding as Binding,
         bootstrapAnchor: (detail.bootstrapAnchor as BootstrapAnchor) ?? "manual",
@@ -750,7 +760,8 @@ export function chooseSurvivor(
   a: ViaActorSubject,
   b: ViaActorSubject,
 ): { survivor: ViaActorSubject; absorbed: ViaActorSubject } {
-  const age = (s: ViaActorSubject) => s.genesisAt ?? "\uffff"; // missing sorts last
+  // §3.6c: the party's age (`existedSince`) first, then when its chain began; missing sorts last.
+  const age = (s: ViaActorSubject) => s.existedSince ?? s.genesisAt ?? "\uffff";
   const aAge = age(a);
   const bAge = age(b);
   if (aAge !== bAge) return aAge < bAge ? { survivor: a, absorbed: b } : { survivor: b, absorbed: a };

@@ -994,6 +994,21 @@ describe("§3.6c chooseSurvivor — the older actor survives", () => {
       expect(r.subject.genesisAt).toBeTruthy();
     }
   });
+
+  // §3.6c ranks age by `existedSince`, falling back to `genesisAt`. A backfill registers every
+  // actor at the moment it runs, so without this a 2024 organization registered in 2026 sorts
+  // younger than a person who signed up natively last month — the exact population §3.5 backfills.
+  it("genesis folds `existedSince` into the actor — the party's age, not its chain's", () => {
+    const r = foldActorChain([genesis({ existedSince: "2024-03-01T00:00:00.000Z" })]);
+    expect(r.ok && r.subject.existedSince).toBe("2024-03-01T00:00:00.000Z");
+  });
+
+  it("ranks by existedSince before genesisAt — a backfilled old party beats a newer native one", () => {
+    const backfilled = { ...(at("did:backfilled", "2026-09-23T00:00:00.000Z") as object), existedSince: "2024-03-01T00:00:00.000Z" } as never;
+    const native = at("did:native", "2026-08-01T00:00:00.000Z");
+    expect(chooseSurvivor(native, backfilled).survivor.id).toBe("did:backfilled");
+    expect(chooseSurvivor(backfilled, native).survivor.id).toBe("did:backfilled");
+  });
 });
 
 describe("§3.6c keySuccession — a mandate survives the merge, or fails closed", () => {
