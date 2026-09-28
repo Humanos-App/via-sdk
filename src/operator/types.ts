@@ -42,7 +42,8 @@ export const ACCREDITATION_METHODS: AccreditationMethod[] = ["dns-challenge", "k
 export type SubjectType = "individual" | "organization";
 
 /** `operates` = the ∧ link that lets an agent inherit its org's level; `vouches` = endorsement. */
-export type AffiliationRelation = "operates" | "vouches";
+/** §18: `operates` / `vouches`; `sandbox_of` — a production organization accountable for its sandbox (§3.6f). */
+export type AffiliationRelation = "operates" | "vouches" | "sandbox_of";
 
 /** §18 deny reasons (the O1–O5 gate). */
 export type AccreditationReasonCode =

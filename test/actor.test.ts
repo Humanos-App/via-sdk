@@ -422,6 +422,62 @@ describe("foldActorChain — pointer and evidence events", () => {
   });
 });
 
+// ── one detail field per event kind ─────────────────────────────────────────
+
+/** An event whose detail sits in a NAMED field (`operator`, `accreditation`), not in `agent`. */
+function evNamed(event: string, named: Record<string, unknown>, prev: ViaEvent, issuer = "did:web:humanos.tech"): ViaEvent {
+  const e = ev(event, {}, { prev });
+  const cs = e.credentialSubject as unknown as Record<string, unknown>;
+  delete cs.agent;
+  Object.assign(cs, named);
+  return { ...e, issuer } as ViaEvent;
+}
+
+describe("detail fields — each event kind reads the field the spec names", () => {
+  // §18: the org-signed AFFILIATION carries its claim in `credentialSubject.operator`.
+  it("AFFILIATION reads the org and relation from `operator`", () => {
+    const g = genesis();
+    const aff = evNamed("AFFILIATION", { operator: { org: "did:web:acme.example", relation: "operates" } }, g, "did:web:other.example");
+    const r = foldActorChain([g, aff]);
+    if (!r.ok) throw new Error(r.reason);
+    // The org the EVENT names, not whoever the envelope says issued it.
+    expect(r.subject.operator).toEqual({ org: "did:web:acme.example", relation: "operates", affiliationEvent: eventChainLink(aff) });
+  });
+
+  // Signed history cannot be rewritten: events written with the org in `agent` must keep folding.
+  it("an AFFILIATION written with its org in `agent` still folds", () => {
+    const g = genesis();
+    const aff = ev("AFFILIATION", { org: "did:web:acme.example", relation: "sandbox_of" }, { prev: g });
+    const r = foldActorChain([g, aff]);
+    expect(r.ok && r.subject.operator).toEqual({ org: "did:web:acme.example", relation: "sandbox_of", affiliationEvent: eventChainLink(aff) });
+  });
+
+  it("ACCREDITED reads the accreditation from its own `accreditation` field", () => {
+    const g = genesis({ actorType: "organization" });
+    const acc = evNamed("ACCREDITED", { accreditation: { level: "verified", method: "kyb-registry", registrar: "humanos" } }, g);
+    const r = foldActorChain([g, acc]);
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.subject.accreditation).toMatchObject({ level: "verified", method: "kyb-registry" });
+  });
+
+  // @invariant No silent default: an organization or person genesis missing its type would
+  // otherwise fold as an AGENT, with an agent's rules applied to a party that is not one.
+  it("a genesis without actorType does not fold", () => {
+    const g = genesis({ actorType: undefined });
+    const r = foldActorChain([g]);
+    expect(r).toMatchObject({ ok: false, reason: "genesis_actor_type_missing" });
+  });
+
+  // §3.4: "REGULATORY — a regulator's own claim about this actor … Actor-scoped, like AFFILIATION".
+  it("REGULATORY is actor-scoped and state-neutral on the chain", () => {
+    expect(EVENT_SCOPE.REGULATORY).toBe("actor");
+    const g = genesis({ actorType: "organization" });
+    const reg = ev("REGULATORY", { licence: "PT-INS-1234" }, { prev: g });
+    const r = foldActorChain([g, reg]);
+    expect(r.ok && r.subject.status).toBe("active");
+  });
+});
+
 // ── checkpointed fold ────────────────────────────────────────────────────────
 
 describe("foldActorChain — folding from a checkpoint", () => {

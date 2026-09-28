@@ -170,7 +170,8 @@ export async function verifyAffiliation(
   if (cs.event !== "AFFILIATION") return { valid: false, reason: "not an AFFILIATION event" };
   if (cs.id !== expected.subject) return { valid: false, reason: "affiliation subject mismatch" };
 
-  const op = (cs.operator ?? {}) as { org?: string; relation?: string; expiresAt?: string };
+  // §18 puts the claim in `operator`; affiliations written before that was honoured carry it in `agent`.
+  const op = (cs.operator ?? cs.agent ?? {}) as { org?: string; relation?: string; expiresAt?: string };
   if (!op.org) return { valid: false, reason: "affiliation names no org" };
   if (expected.org && op.org !== expected.org) return { valid: false, reason: "affiliation org mismatch" };
   if (expected.relation && op.relation !== expected.relation) return { valid: false, reason: "affiliation relation mismatch" };

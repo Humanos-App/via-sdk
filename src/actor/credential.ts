@@ -116,6 +116,8 @@ export async function verifyActorStamp(
   resolvePublicKey: ResolvePublicKey,
 ): Promise<{ valid: boolean; reason?: string }> {
   if (!credential.proof) return { valid: false, reason: "actor credential has no STAMP proof" };
+  // §3.1: `type` MUST be ["VerifiableCredential","VIAActor"] — a stamped artifact of another kind is not one.
+  if (!isActorCredential(credential)) return { valid: false, reason: "type_invalid" };
   try {
     const key = await resolvePublicKey(credential.proof.verificationMethod);
     return { valid: verifyDataIntegrityProof(credential as unknown as Record<string, unknown>, credential.proof, key) };

@@ -124,7 +124,7 @@ export interface ViaActorSubject {
   verifiedAt: string;
   root?: string;
   /** Pointer to the org-signed AFFILIATION event — never an inline claim. */
-  operator?: { org: string; affiliationEvent: string };
+  operator?: { org: string; relation?: string; affiliationEvent: string };
   /**
    * WHY this actor exists, when a PERSON is what let it through the door (v0.3 §3.1, §16.14).
    *
@@ -272,7 +272,7 @@ export const EVENT_SCOPE = {
   STEP_UP_APPROVED: "credential",
   STEP_UP_DECLINED: "credential",
   AGENT_REGISTERED: "credential",
-  REGULATORY: "credential",
+  REGULATORY: "actor", // §3.4: a regulator's claim about THIS actor — actor-scoped, like AFFILIATION
   // actor-scoped — about the actor itself
   ACTOR_REGISTERED: "actor",
   KEY_ADDED: "actor",
@@ -444,6 +444,9 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
     // ── genesis ──
     if (subject === null) {
       if (kind !== "ACTOR_REGISTERED") return fail("genesis_missing", i);
+      // No silent default: an organization or person genesis without its type would otherwise fold
+      // as an AGENT and be held to an agent's rules. Every writer states it.
+      if (typeof detail.actorType !== "string") return fail("genesis_actor_type_missing", i);
       subject = {
         id: cs.id,
         actorType: (detail.actorType as ActorType) ?? "agent",
@@ -589,12 +592,22 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
       case "FORK_EVIDENCE":
       case "DELEGATED":
       case "SNAPSHOT_ISSUED":
+      case "REGULATORY":
         // state-neutral: evidence/grant/audit events POINT (they live on the
         // chain); any state change arrives via the events they trigger
         break;
       case "AFFILIATION": {
-        // set the operator POINTER to this org-signed event — never inline
-        subject.operator = { org: String(detail.org ?? e.issuer), affiliationEvent: eventChainLink(e) };
+        // set the operator POINTER to this org-signed event — never inline. §18 names the claim's
+        // field, `credentialSubject.operator`; events written before that was honoured carry it in
+        // `agent`, and signed history is read as it was written.
+        const op = (cs.operator ?? {}) as { org?: unknown; relation?: unknown };
+        const org = op.org ?? detail.org ?? e.issuer;
+        const relation = op.relation ?? detail.relation;
+        subject.operator = {
+          org: String(org),
+          ...(typeof relation === "string" ? { relation } : {}),
+          affiliationEvent: eventChainLink(e),
+        };
         break;
       }
       // ── status transitions (v0.3 §4 table; illegal → reject) ──
@@ -630,7 +643,8 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         // §18 — a registrar's claim about THIS actor. Replaces wholesale, like ASSURANCE_UPDATED:
         // an accreditation is a single coherent statement (level earned BY a method FROM a
         // registrar), and merging fields across two of them would invent a claim nobody made.
-        const a = detail.accreditation as ViaActorSubject["accreditation"] | undefined;
+        // The claim's own field, `credentialSubject.accreditation`; `agent` for events written before.
+        const a = (cs.accreditation ?? detail.accreditation) as ViaActorSubject["accreditation"] | undefined;
         if (!a || typeof a.level !== "string" || !ACCREDITATION_LEVELS.has(a.level)) {
           return fail("accreditation_invalid", i);
         }

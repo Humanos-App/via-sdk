@@ -135,6 +135,8 @@ export async function verifyEvent(
   opts?: { credential?: BindableCredential },
 ): Promise<{ valid: boolean; reason?: string }> {
   if (!event.proof) return { valid: false, reason: "event has no proof" };
+  // What was signed, not only who signed it: a correctly signed artifact of another kind is not an event.
+  if (!Array.isArray(event.type) || !event.type.includes(TYPE_VIA_EVENT)) return { valid: false, reason: "type_invalid" };
   let sigValid: boolean;
   try {
     const key = await resolvePublicKey(event.proof.verificationMethod);
