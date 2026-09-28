@@ -406,6 +406,16 @@ export function actorSummaryFloor(
   return { assurance, binding, verifiedAt, ...(root ? { root } : {}) };
 }
 
+/**
+ * The version of what the fold DERIVES. Bump it whenever the fold starts producing a field, or a
+ * value, it did not before (2 = `existedSince` folded, `operator.relation` carried).
+ *
+ * A stored snapshot is only as current as the fold that wrote it. Seeding a fold from a snapshot
+ * written by an older version would silently omit whatever the newer fold adds, so a checkpointed
+ * read MUST seed only from a snapshot written by this version and replay the whole chain otherwise.
+ */
+export const ACTOR_FOLD_VERSION = 2;
+
 /** Apply the derived floor to the subject; a no-op when no usable key carries a rung. */
 function deriveSummary(subject: ViaActorSubject): void {
   const floor = actorSummaryFloor(subject.keys);
