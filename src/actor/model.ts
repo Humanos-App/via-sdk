@@ -593,6 +593,9 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         // LATEST WINS, and nothing else moves. The runtime axis says where the process runs now;
         // it never touches `assurance` (the key), `status` (the actor) or any key's state. Writing
         // it is a claim about the environment and only that.
+        // §9.4ter: the runtime axis describes an AGENT's key-holding process. An organization or a
+        // person has none to attest — the mirror of `accreditation_on_agent`.
+        if (subject.actorType !== "agent") return fail("runtime_on_non_agent", i);
         const r = detail.runtime as RuntimeAttestation | undefined;
         if (!r || typeof r.class !== "string") return fail("runtime_attestation_invalid", i);
         if (!RUNTIME_CLASSES.has(r.class)) return fail("runtime_attestation_invalid", i);

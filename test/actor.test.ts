@@ -468,6 +468,15 @@ describe("detail fields — each event kind reads the field the spec names", () 
     expect(r).toMatchObject({ ok: false, reason: "genesis_actor_type_missing" });
   });
 
+  // §9.4ter: the runtime axis says where an AGENT's key-holding process runs. An organization or a
+  // person has no such process to attest; accepting one would put a claim on their record that
+  // means nothing — the mirror of `accreditation_on_agent`.
+  it.each(["organization", "user"])("RUNTIME_ATTESTED on %s does not fold", (actorType) => {
+    const g = genesis({ actorType });
+    const rt = ev("RUNTIME_ATTESTED", { runtime: { class: "tee" } }, { prev: g });
+    expect(foldActorChain([g, rt])).toMatchObject({ ok: false, reason: "runtime_on_non_agent" });
+  });
+
   // §3.4: "REGULATORY — a regulator's own claim about this actor … Actor-scoped, like AFFILIATION".
   it("REGULATORY is actor-scoped and state-neutral on the chain", () => {
     expect(EVENT_SCOPE.REGULATORY).toBe("actor");
