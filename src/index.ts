@@ -396,7 +396,6 @@ export {
   ACCREDITATION_METHODS_BY_LEVEL,
   chooseSurvivor,
   ACTOR_FOLD_VERSION,
-  partyStatus,
   resolveSuccession,
   resolvePinnedKeysAcrossMerge,
   resolvePinnedKeys,

@@ -15,7 +15,6 @@ import { describe, it, expect } from "vitest";
 import {
   chooseSurvivor,
   resolvePinnedKeysAcrossMerge,
-  partyStatus,
   resolveSuccession,
   foldActorChain,
   projectAgentContext,
@@ -950,34 +949,6 @@ describe("§3.6 aliases and succession", () => {
   });
 });
 
-describe("§3.6 partyStatus — restrictions survive a merge", () => {
-  const subj = (id: string, status: "active" | "suspended" | "retired") =>
-    ({ id, actorType: "user", status, keys: [], assurance: "pop", binding: "self",
-       bootstrapAnchor: "manual", verifiedAt: "2026-01-01T00:00:00.000Z" }) as never;
-
-  it("CASE 2 — a suspension on the absorbed party binds the survivor", () => {
-    // The laundering case: get suspended, register again through another channel, have the two
-    // recognised as one person. The survivor's own chain says `active` and must not be believed.
-    expect(partyStatus(subj("did:survivor", "active"), [subj("did:absorbed", "suspended")])).toBe("suspended");
-  });
-
-  it("a retirement is more restrictive than a suspension", () => {
-    expect(partyStatus(subj("s", "suspended"), [subj("a", "retired")])).toBe("retired");
-  });
-
-  it("a clean merge leaves the survivor active", () => {
-    expect(partyStatus(subj("s", "active"), [subj("a", "active")])).toBe("active");
-  });
-
-  it("the survivor's OWN restriction is not erased by a clean absorbed party", () => {
-    expect(partyStatus(subj("s", "suspended"), [subj("a", "active")])).toBe("suspended");
-  });
-
-  it("no absorbed parties is just the survivor", () => {
-    expect(partyStatus(subj("s", "active"))).toBe("active");
-  });
-});
-
 describe("§3.6 resolveSuccession — follow the pointer, or fail closed", () => {
   const node = (id: string, succeededBy?: string) =>
     ({ id, actorType: "user", status: succeededBy ? "retired" : "active", keys: [], assurance: "pop",
@@ -1031,7 +1002,7 @@ describe("§3.6c chooseSurvivor — the older actor survives", () => {
 
   it("is INDEPENDENT of standing and of activity — the properties that move", () => {
     // The younger party is the verified, busy one. It still loses: standing travels by its own
-    // signature and restrictions by partyStatus, so neither needs to win the identifier.
+    // signature and restrictions by the merge's own SUSPENDED event (rule 7), so neither needs to win the identifier.
     const old = at("did:old", "2026-01-01T00:00:00.000Z");
     const strong = { ...(at("did:new", "2026-06-01T00:00:00.000Z") as object), assurance: "hardware", keys: [{}, {}] } as never;
     expect(chooseSurvivor(old, strong).survivor.id).toBe("did:old");

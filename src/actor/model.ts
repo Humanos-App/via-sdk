@@ -700,35 +700,6 @@ const KEY_EVENTS: ReadonlySet<string> = new Set(["KEY_ADDED", "KEY_ROTATED", "KE
 
 // ── Party resolution across a merge (v0.3 §3.6) ─────────────────────────────
 
-/** How restrictive a status is. Only the ORDER matters; the numbers are private to this file. */
-const STATUS_SEVERITY: Record<ActorStatus, number> = { active: 0, suspended: 1, retired: 2 };
-
-/**
- * The effective status of a PARTY whose identity spans a merge (§3.6, rules 6-8).
- *
- * A merge does not erase what an actor did under its previous name. If either the survivor or any
- * actor it absorbed is suspended or retired, the party is — **the most restrictive status wins**.
- *
- * WITHOUT THIS, MERGING IS A LAUNDERING PRIMITIVE: get suspended, register again through another
- * channel, have the two recognised as one person, and walk away clean. The survivor's own chain
- * says `active` and would be believed.
- *
- * Restrictions only. Standing does NOT combine here — two weakly-verified parties do not become
- * strongly verified (rule 8), and a grant reaches verifiers through the survivor's snapshot like
- * any other change rather than by a fast path (§6). This function answers "may this party act",
- * never "how well is it vouched for".
- *
- * `absorbed` is the folded subject of every actor the survivor aliases with `reason: "merge"`; the
- * caller loads them, because the fold is pure and does not do I/O.
- */
-export function partyStatus(survivor: ViaActorSubject, absorbed: ViaActorSubject[] = []): ActorStatus {
-  let worst = survivor.status;
-  for (const a of absorbed) {
-    if (STATUS_SEVERITY[a.status] > STATUS_SEVERITY[worst]) worst = a.status;
-  }
-  return worst;
-}
-
 /**
  * Resolve a pinned key id across a merge (§3.6c), then through the survivor's own succession (§7).
  *
