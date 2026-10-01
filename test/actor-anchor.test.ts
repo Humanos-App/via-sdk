@@ -8,9 +8,9 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  buildActorCredential,
   buildChainedEvent,
   foldActorChain,
+  foldActorRecord,
   generateEd25519Key,
   projectAgentContext,
   type ViaEvent,
@@ -24,7 +24,6 @@ const AT = "2026-09-12T10:00:00.000Z";
 
 const ANCHORED_BY = {
   actor: PERSON,
-  actorSnapshot: { sequence: 1 },
   method: "session" as const,
   host: "Cursor",
   at: "2026-09-12T09:59:58.720Z",
@@ -52,12 +51,11 @@ describe("bootstrapAnchor: person (v0.3 §3.1/§16.14)", () => {
     expect(folded.subject.anchoredBy).toEqual(ANCHORED_BY);
   });
 
-  it("publishes anchoredBy in the artifact, beside the token", () => {
-    const folded = foldActorChain([genesis({ bootstrapAnchor: "person", anchoredBy: ANCHORED_BY })]);
-    if (!folded.ok) throw new Error(folded.reason);
-    const c = buildActorCredential({ specVersion: "0.3", subject: folded.subject, chain: { genesisEvent: "sha256-a", headEvent: "sha256-a", sequence: 1 }, supersedes: null, validFrom: AT });
-    expect(c.credentialSubject.bootstrapAnchor).toBe("person");
-    expect(c.credentialSubject.anchoredBy).toMatchObject({ actor: PERSON, method: "session", host: "Cursor" });
+  it("carries anchoredBy on the record, beside the token", () => {
+    const r = foldActorRecord([genesis({ bootstrapAnchor: "person", anchoredBy: ANCHORED_BY })]);
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.record.bootstrapAnchor).toBe("person");
+    expect(r.record.anchoredBy).toMatchObject({ actor: PERSON, method: "session", host: "Cursor" });
   });
 
   it("an absent `event` is the grading, not an omission — a session leaves no signed fact", () => {

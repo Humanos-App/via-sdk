@@ -38,7 +38,8 @@ export interface ViaSignalBody {
   validUntil?: string;
   credentialSubject: Record<string, unknown> & {
     actor: string;
-    actorSnapshot?: { id: string; sequence: number };
+    /** The chain position the Signal was computed against (v0.3 Appendix A) — the record's `chain`. */
+    actorChain?: { headEvent: string; sequence: number };
     window?: { from: string; to: string; startEvent?: string; endEvent?: string };
     previousSignal?: string;
   };

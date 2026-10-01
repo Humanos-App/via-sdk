@@ -372,23 +372,6 @@ export {
 } from "./grantor/binding.js";
 export { verifyWebauthnAssertion, type WebauthnAssertionInput } from "./crypto/webauthn.js";
 
-// VIAActor — the artifact itself (v0.3 §3.1): the envelope and its STAMP around the fold's body.
-export {
-  buildActorCredential,
-  stampActorCredential,
-  issueActorCredential,
-  verifyActorStamp,
-  isActorCredential,
-  unwrapActorCredential,
-  actorSnapshotBody,
-  auditActorArtifact,
-  actorArtifactDigest,
-  TYPE_VIA_ACTOR,
-  type ViaActorCredential,
-  type ViaActorCredentialSubject,
-  type PublishedActorKey,
-} from "./actor/credential.js";
-
 // VIAActor — the actor axis (v0.3 §3–§5)
 export {
   foldActorChain,
@@ -399,9 +382,8 @@ export {
   resolveSuccession,
   resolvePinnedKeysAcrossMerge,
   resolvePinnedKeys,
-  issueSnapshot,
-  snapshotDigest,
-  auditActorSnapshot,
+  foldActorRecord,
+  auditActorRecord,
   projectAgentContext,
   ACTOR_EVENT_TYPES,
   // The authority for which subject class an event kind carries — a credential URN or an actor
@@ -409,7 +391,7 @@ export {
   // `subjectDid` off it), so it has to be reachable as a VALUE, not just a type.
   EVENT_SCOPE,
   type EventScope,
-  type SnapshotResult,
+  type ActorRecordResult,
   type ActorEventType,
   type ActorType,
   type ActorStatus,
@@ -418,7 +400,8 @@ export {
   type AttestationRef,
   type BootstrapAnchor,
   type ViaActorSubject,
-  type ActorSnapshot,
+  type ViaActorRecord,
+  type ActorChainPosition,
   type ActorFoldResult,
   type ActorAudit,
 } from "./actor/model.js";

@@ -2,17 +2,15 @@ import { describe, it, expect } from "vitest";
 import {
   buildChainedEvent,
   generateEd25519Key,
-  issueActorCredential,
   signEvent,
-  verifyActorStamp,
   verifyAffiliation,
   verifyEvent,
   type ViaEvent,
 } from "../src/index.js";
 
 /**
- * `type` is part of what a verifier checks, not decoration (v0.3 §3.1: a VIAActor's `type` MUST be
- * `["VerifiableCredential","VIAActor"]`; a VIAEvent's carries `VIAEvent`). A correctly signed
+ * `type` is part of what a verifier checks, not decoration (v0.3 §3.1: a VIAEvent's `type` carries
+ * `VIAEvent`; the signed VIAActor and its `type` check are v0.4's). A correctly signed
  * artifact of another kind must not pass as one of these — the signature alone says who signed,
  * not what was signed.
  */
@@ -43,20 +41,6 @@ describe("verifiers check `type`", () => {
     await expect(verifyEvent(mistyped, resolve)).resolves.toMatchObject({ valid: false, reason: "type_invalid" });
   });
 
-  it("verifyActorStamp refuses a stamped artifact that is not a VIAActor", async () => {
-    const snapshot = {
-      specVersion: "0.3",
-      subject: { id: "did:web:humanos.tech:agent:a1", actorType: "agent", status: "active", keys: [], assurance: "pop", binding: "self", bootstrapAnchor: "manual", verifiedAt: "2026-09-28T00:00:00.000Z" },
-      chain: { genesisEvent: "sha256-g", headEvent: "sha256-g", sequence: 1 },
-      supersedes: null,
-      validFrom: "2026-09-28T00:00:00.000Z",
-    };
-    const good = issueActorCredential(snapshot as never, { ...signer, created: "2026-09-28T00:00:00.000Z" });
-    await expect(verifyActorStamp(good, resolve)).resolves.toEqual({ valid: true });
-    const retyped = issueActorCredential(snapshot as never, { ...signer, created: "2026-09-28T00:00:00.000Z" });
-    (retyped as { type: string[] }).type = ["VerifiableCredential", "VIAEvent"];
-    await expect(verifyActorStamp(retyped, resolve)).resolves.toMatchObject({ valid: false, reason: "type_invalid" });
-  });
 });
 
 describe("verifyAffiliation reads the org where the spec puts it, and where history put it", () => {

@@ -13,7 +13,7 @@ const signal = {
   validUntil: "2099-09-11T04:30:00.000Z",
   credentialSubject: {
     actor: "did:web:humanos.tech:agent:RRJyvYvj0T-ZRBU-",
-    actorSnapshot: { id: "urn:via:snapshot:x", sequence: 3 },
+    actorChain: { headEvent: "sha256-head", sequence: 3 },
     window: { from: "2026-08-10T04:30:00.000Z", to: "2026-09-09T04:30:00.000Z", startEvent: "urn:via:event:a", endEvent: "urn:via:event:z" },
     score: 31,
     trust: 0.63,

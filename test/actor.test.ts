@@ -1,5 +1,5 @@
 /**
- * The actor chain (v0.3 §3.4/§4/§5/§7) — fold, key resolution, snapshots, audit.
+ * The actor chain (v0.3 §3.4/§4/§5/§7) — fold, key resolution, the record, audit.
  *
  * The fold is a state machine over a hash-linked chain, and its whole value is that it is
  * FAIL-CLOSED: a broken link, an illegal transition or an unknown event must reject rather than
@@ -20,12 +20,11 @@ import {
   projectAgentContext,
   type ViaActorSubject,
   resolvePinnedKeys,
-  snapshotDigest,
-  issueSnapshot,
-  auditActorSnapshot,
+  foldActorRecord,
+  auditActorRecord,
   ACTOR_EVENT_TYPES,
   EVENT_SCOPE,
-  type ActorSnapshot,
+  type ViaActorRecord,
 } from "../src/actor/model.js";
 import { EVENT_TYPES } from "../src/crypto/proof.js";
 import { eventChainLink } from "../src/event/build.js";
@@ -559,120 +558,100 @@ describe("resolvePinnedKeys", () => {
   });
 });
 
-// ── snapshots ────────────────────────────────────────────────────────────────
+// ── the record ───────────────────────────────────────────────────────────────
 
-describe("issueSnapshot / snapshotDigest", () => {
-  it("binds the chain's genesis, head and a sequence starting at 1", () => {
+describe("foldActorRecord", () => {
+  it("binds the chain's genesis, head, and how many events were folded", () => {
     const c = chain((p) => ev("KEY_ADDED", { keyId: "k2", jwk: JWK }, { prev: p }));
-    const s = issueSnapshot(c);
-    if (!s.ok) throw new Error(s.reason);
-    expect(s.snapshot.chain).toEqual({
+    const r = foldActorRecord(c);
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.record.chain).toEqual({
       genesisEvent: eventChainLink(c[0]!),
       headEvent: eventChainLink(c[1]!),
-      sequence: 1,
+      sequence: 2,
     });
-    expect(s.snapshot.supersedes).toBeNull();
-    // A snapshot is an artifact a verifier routes on, so it carries the marker (§13).
-    expect(s.snapshot.specVersion).toBe("0.3");
   });
 
-  it("supersedes the previous snapshot by digest, and increments the sequence", () => {
+  it("is the fold's state plus its chain position — nothing a signed copy would add", () => {
     const c = chain((p) => ev("KEY_ADDED", { keyId: "k2", jwk: JWK }, { prev: p }));
-    const first = issueSnapshot(c);
-    if (!first.ok) throw new Error(first.reason);
-    const second = issueSnapshot(c, { previous: first.snapshot });
-    if (!second.ok) throw new Error(second.reason);
-    expect(second.snapshot.chain.sequence).toBe(2);
-    expect(second.snapshot.supersedes).toBe(snapshotDigest(first.snapshot));
+    const r = foldActorRecord(c);
+    const f = foldActorChain(c);
+    if (!r.ok || !f.ok) throw new Error("fold");
+    const { chain: _position, ...state } = r.record;
+    expect(state).toEqual(f.subject);
+    for (const field of ["supersedes", "validFrom", "validUntil", "specVersion", "proof"]) {
+      expect(r.record).not.toHaveProperty(field);
+    }
   });
 
-  it("digest is stable across key order and changes with content", () => {
-    const c = chain((p) => ev("KEY_ADDED", { keyId: "k2", jwk: JWK }, { prev: p }));
-    const s = issueSnapshot(c);
-    if (!s.ok) throw new Error(s.reason);
-    // RFC-8785 sorts keys, so the same content in a different insertion order is the same bytes.
-    // (Rebuild rather than JSON.stringify's replacer array — that FILTERS keys, it does not reorder,
-    // and it silently strips nested properties.)
-    const reorder = (v: unknown): unknown =>
-      Array.isArray(v)
-        ? v.map(reorder)
-        : v && typeof v === "object"
-          ? Object.fromEntries(Object.entries(v as object).reverse().map(([k, x]) => [k, reorder(x)]))
-          : v;
-    const reordered = reorder(s.snapshot) as ActorSnapshot;
-    expect(Object.keys(reordered)).not.toEqual(Object.keys(s.snapshot)); // genuinely reordered
-    expect(snapshotDigest(reordered)).toBe(snapshotDigest(s.snapshot));
-    expect(snapshotDigest({ ...s.snapshot, validFrom: "2030-01-01T00:00:00.000Z" })).not.toBe(
-      snapshotDigest(s.snapshot),
-    );
-  });
-
-  it("propagates a fold failure instead of issuing a snapshot of nothing", () => {
-    expect(issueSnapshot([])).toEqual({ ok: false, reason: "empty_chain" });
+  it("propagates a fold failure instead of producing a record of nothing", () => {
+    expect(foldActorRecord([])).toMatchObject({ ok: false, reason: "empty_chain" });
   });
 });
 
 // ── audit ────────────────────────────────────────────────────────────────────
 
-describe("auditActorSnapshot", () => {
+describe("auditActorRecord", () => {
   const built = () => {
     const c = chain((p) => ev("KEY_ADDED", { keyId: "k2", jwk: JWK }, { prev: p }));
-    const s = issueSnapshot(c);
-    if (!s.ok) throw new Error(s.reason);
-    return { c, snapshot: s.snapshot };
+    const r = foldActorRecord(c);
+    if (!r.ok) throw new Error(r.reason);
+    return { c, record: r.record };
   };
 
-  it("accepts a snapshot that matches its chain", () => {
-    const { c, snapshot } = built();
-    expect(auditActorSnapshot(snapshot, c)).toEqual({ ok: true });
+  it("accepts a record that matches its chain", () => {
+    const { c, record } = built();
+    expect(auditActorRecord(record, c)).toEqual({ ok: true });
   });
 
-  it("a snapshot binds a PREFIX — later events supersede it without invalidating it", () => {
-    const { c, snapshot } = built();
+  it("a record names a PREFIX — later events make it stale without making it wrong", () => {
+    const { c, record } = built();
     const extended = [...c, ev("KEY_REVOKED", { keyId: "k1" }, { prev: c[c.length - 1] })];
-    expect(auditActorSnapshot(snapshot, extended)).toEqual({ ok: true });
+    expect(auditActorRecord(record, extended)).toEqual({ ok: true });
   });
 
-  it("rejects a snapshot bound to a different genesis", () => {
-    const { snapshot } = built();
+  it("rejects a record bound to a different genesis", () => {
+    const { record } = built();
     const other = chain((p) => ev("KEY_ADDED", { keyId: "kX", jwk: JWK }, { prev: p }));
-    expect(auditActorSnapshot(snapshot, other)).toMatchObject({ reason: "chain_binding_mismatch" });
-    expect(auditActorSnapshot(snapshot, [])).toMatchObject({ reason: "chain_binding_mismatch" });
+    expect(auditActorRecord(record, other)).toMatchObject({ reason: "chain_binding_mismatch" });
+    expect(auditActorRecord(record, [])).toMatchObject({ reason: "chain_binding_mismatch" });
   });
 
-  it("rejects a snapshot whose head is not in the chain", () => {
-    const { c, snapshot } = built();
-    expect(auditActorSnapshot({ ...snapshot, chain: { ...snapshot.chain, headEvent: "sha256-nope" } }, c))
+  it("rejects a record whose head is not in the chain, or whose sequence is not the head's position", () => {
+    const { c, record } = built();
+    expect(auditActorRecord({ ...record, chain: { ...record.chain, headEvent: "sha256-nope" } }, c))
+      .toMatchObject({ reason: "chain_binding_mismatch" });
+    expect(auditActorRecord({ ...record, chain: { ...record.chain, sequence: 7 } }, c))
       .toMatchObject({ reason: "chain_binding_mismatch" });
   });
 
-  it("rejects a tampered subject — the chain is authoritative", () => {
-    const { c, snapshot } = built();
-    const lying = { ...snapshot, subject: { ...snapshot.subject, assurance: "hardware" as never, status: "active" as never, id: "did:web:humanos.tech:agent:someone-else" } };
-    expect(auditActorSnapshot(lying, c)).toMatchObject({ reason: "snapshot_subject_mismatch" });
+  it("rejects a tampered state — the chain is authoritative", () => {
+    const { c, record } = built();
+    const lying = { ...record, assurance: "hardware" as never, id: "did:web:humanos.tech:agent:someone-else" };
+    expect(auditActorRecord(lying, c)).toMatchObject({ reason: "record_mismatch" });
 
-    // A snapshot issued before the fold learned a field is OUTDATED, not a lie: every value it
-    // carries still matches. The platform re-issues it; a verifier never authorizes from it anyway.
-    const older = structuredClone(snapshot);
-    delete (older.subject as unknown as Record<string, unknown>).genesisAt;
-    expect(auditActorSnapshot(older, c)).toMatchObject({ reason: "snapshot_outdated" });
+    // A record computed before the fold learned a field is OUTDATED, not a lie: every value it
+    // carries still matches. Recompute it; a verifier never authorizes from a stale one anyway.
+    const older = structuredClone(record);
+    delete (older as unknown as Record<string, unknown>).genesisAt;
+    expect(auditActorRecord(older, c)).toMatchObject({ reason: "record_outdated" });
     // Missing a field AND lying about another is a mismatch — the missing field does not launder it.
     const olderAndLying = structuredClone(older);
-    olderAndLying.subject.id = "did:web:humanos.tech:agent:someone-else";
-    expect(auditActorSnapshot(olderAndLying, c)).toMatchObject({ reason: "snapshot_subject_mismatch" });
+    olderAndLying.id = "did:web:humanos.tech:agent:someone-else";
+    expect(auditActorRecord(olderAndLying, c)).toMatchObject({ reason: "record_mismatch" });
   });
 
   it("surfaces a fold failure with its reason attached", () => {
-    const { snapshot } = built();
+    const { record } = built();
     // A chain whose genesis matches but which breaks further along.
     const g = genesis();
     const orphan = ev("KEY_ADDED", { keyId: "k2", jwk: JWK }, { prev: g });
     const broken = [g, orphan, ev("KEY_ADDED", { keyId: "k3", jwk: JWK }, { prev: g })];
-    const bound: ActorSnapshot = {
-      ...snapshot,
-      chain: { ...snapshot.chain, genesisEvent: eventChainLink(g), headEvent: eventChainLink(broken[2]!) },
+    const bound: ViaActorRecord = {
+      ...record,
+      chain: { genesisEvent: eventChainLink(g), headEvent: eventChainLink(broken[2]!), sequence: 3 },
     };
-    expect(auditActorSnapshot(bound, broken).reason).toMatch(/^fold_failed:/);
+    expect(auditActorRecord(bound, broken).reason).toMatch(/^fold_failed:/);
   });
 });
 

@@ -5,9 +5,11 @@
 // kind is one of the ACTOR TAXONOMY (v0.3 §3.4), and detail rides the §16.9 `agent`
 // field. The chain is LIFECYCLE-ONLY — per-action and per-boot facts stay off it.
 //
-// Model: the snapshot is a SIGNED CACHE of the chain fold ("what is true now");
-// the chain is AUTHORITATIVE ("how it got here"). If they disagree, the chain
-// wins; the audit primitive is exactly re-fold-and-diff (v0.3 §5).
+// Model: the VIAActor RECORD is the chain fold ("what is true now") plus the chain
+// position it was folded to; the chain is AUTHORITATIVE ("how it got here"). A stored
+// record is a cache: if it and the chain disagree, the chain wins; the audit primitive
+// is exactly re-fold-and-diff (v0.3 §5). A SIGNED copy of the record is not v0.3 — it
+// is parked in v0.4 (sdk-v04).
 //
 // The fold IS the state machine (v0.3 §4): the transition table below and the fold
 // rules are two views of the same transitions — a fold that accepts an illegal
@@ -25,11 +27,9 @@
 //  - DELEGATED on the PARENT chain is state-neutral (it records the grant);
 //    the CHILD's lineage pointer is set at its own ACTOR_REGISTERED genesis.
 import { canonicalizeRFC8785 } from "../crypto/canonicalize.js";
-import { computeSRI } from "../crypto/digest.js";
 import { eventChainLink } from "../event/build.js";
 import { EVENT_TYPES, type EventType } from "../crypto/proof.js";
-import type { ViaEvent, SpecVersion } from "../types.js";
-import { VIA_SPEC_VERSION } from "../types.js";
+import type { ViaEvent } from "../types.js";
 import type { Assurance, Binding, RuntimeAttestation } from "../agent/types.js";
 import { assuranceRank, isAssurance, isBinding } from "../agent/types.js";
 import type { Jwk } from "../crypto/p256.js";
@@ -110,7 +110,7 @@ export interface ActorKeyState {
   rotatedTo?: string;
 }
 
-/** The `credentialSubject` of a VIAActor snapshot (v0.3 §3.1). */
+/** An actor's folded state — the VIAActor record's fields (v0.3 §3.1), less its `chain` position. */
 export interface ViaActorSubject {
   /** The actor DID. */
   id: string;
@@ -140,7 +140,6 @@ export interface ViaActorSubject {
    */
   anchoredBy?: {
     actor: string;
-    actorSnapshot?: { sequence: number };
     method: "passkey" | "otp" | "session";
     event?: string;
     host?: string;
@@ -223,24 +222,21 @@ export interface ViaActorSubject {
   genesisAt?: string;
 }
 
-/** The snapshot body: subject + chain binding + supersession (v0.3 §3.1/§5). */
-export interface ActorSnapshot {
-  /**
-   * The spec version this snapshot conforms to (v0.2-new §13).
-   *
-   * A snapshot is an artifact a verifier consumes and whose digest is chained into the next one
-   * via `supersedes`, so it needs the same routing marker every other VIA artifact carries —
-   * otherwise a consumer has to infer the shape, which is what the marker exists to prevent.
-   */
-  specVersion: SpecVersion;
-  subject: ViaActorSubject;
-  chain: { genesisEvent: string; headEvent: string; sequence: number };
-  /** SRI of the prior snapshot, `null` at genesis. */
-  supersedes: string | null;
-  validFrom: string;
-  /** Staleness backstop for routine (bit-less) supersessions (v0.3 §8). */
-  validUntil?: string;
+/** Where on its chain a record was folded to (v0.3 §3.1 `chain`). */
+export interface ActorChainPosition {
+  /** The chain-link of the first event — the genesis. */
+  genesisEvent: string;
+  /** The chain-link of the LAST event folded. */
+  headEvent: string;
+  /** How many events were folded: the head's position, counting the genesis as 1. */
+  sequence: number;
 }
+
+/**
+ * The VIAActor record (v0.3 §3.1): the fold's state, and the chain position it is the fold of.
+ * Unsigned — what makes it checkable is the chain it names (`auditActorRecord`).
+ */
+export type ViaActorRecord = ViaActorSubject & { chain: ActorChainPosition };
 
 /**
  * Which subject an event kind is ABOUT — the one place scope is decided.
@@ -350,7 +346,7 @@ const detailOf = (e: ViaEvent): Record<string, unknown> =>
  * v0.3 §4 transition table is enforced: illegal transitions REJECT the fold.
  * Signatures are NOT verified here (that is `auditEventChain`'s job); the fold
  * checks linkage + transition semantics, so a full audit = signatures + fold +
- * snapshot diff.
+ * record diff (`auditActorRecord`).
  */
 /**
  * The rung to record ON A KEY, from the event that introduced it.
@@ -410,9 +406,10 @@ export function actorSummaryFloor(
  * The version of what the fold DERIVES. Bump it whenever the fold starts producing a field, or a
  * value, it did not before (2 = `existedSince` folded, `operator.relation` carried).
  *
- * A stored snapshot is only as current as the fold that wrote it. Seeding a fold from a snapshot
- * written by an older version would silently omit whatever the newer fold adds, so a checkpointed
- * read MUST seed only from a snapshot written by this version and replay the whole chain otherwise.
+ * A stored record (a checkpoint) is only as current as the fold that wrote it. Seeding a fold from
+ * one written by an older version would silently omit whatever the newer fold adds, so a
+ * checkpointed read MUST seed only from a record written by this version and replay the whole
+ * chain otherwise.
  */
 export const ACTOR_FOLD_VERSION = 2;
 
@@ -817,56 +814,27 @@ export function resolvePinnedKeys(subject: ViaActorSubject, pinnedKeyId: string)
   return usable;
 }
 
-// ── Snapshots (v0.3 §5) — signed cache + supersession linkage ────────────────
+// ── The record (v0.3 §3.1 / §5) — the fold, bound to the chain it is the fold of ──
 
-/** SRI of the canonicalized snapshot — the value `supersedes` links to. */
-export function snapshotDigest(snapshot: ActorSnapshot): string {
-  return computeSRI(canonicalizeRFC8785(snapshot as unknown as Record<string, unknown>));
-}
-
-export type SnapshotResult =
-  | { ok: true; snapshot: ActorSnapshot }
-  | { ok: false; reason: string };
+export type ActorRecordResult = { ok: true; record: ViaActorRecord } | { ok: false; reason: string; at?: number };
 
 /**
- * Fold the chain and bind the result into a snapshot: `chain.{genesisEvent,
- * headEvent, sequence}` + `supersedes` (SRI of the prior snapshot, null at
- * genesis). Higher `sequence` is an AUDIT tie-break — a stateless verifier
- * never compares it (v0.3 §8); freshness rides the snapshot revocation bit
- * and `validUntil`.
+ * Fold a WHOLE chain (genesis first) into its record: the folded state plus the chain position —
+ * the genesis and head links, and how many events were folded. Unsigned: v0.3 issues no signed
+ * copy of a record (that is v0.4's).
  */
-export function issueSnapshot(
-  events: ViaEvent[],
-  opts: {
-    previous?: ActorSnapshot | null;
-    /**
-     * The prior copy's digest, when it differs from this body's own hash — which it does once the
-     * body is published inside the §3.1 credential: `supersedes` names the ARTIFACT a consumer was
-     * handed, so the digest must be taken over that, not over the body it wraps
-     * (`actorArtifactDigest`). Omitted, the digest is computed from `previous` as a bare body, which
-     * is what pre-envelope chains carry.
-     */
-    previousDigest?: string;
-    validFrom?: string;
-    validUntil?: string;
-  } = {},
-): SnapshotResult {
+export function foldActorRecord(events: ViaEvent[]): ActorRecordResult {
   const folded = foldActorChain(events);
-  if (!folded.ok) return { ok: false, reason: folded.reason };
-  const previous = opts.previous ?? null;
+  if (!folded.ok) return folded;
   return {
     ok: true,
-    snapshot: {
-      specVersion: VIA_SPEC_VERSION as SpecVersion,
-      subject: folded.subject,
+    record: {
+      ...folded.subject,
       chain: {
         genesisEvent: eventChainLink(events[0]!),
         headEvent: eventChainLink(events[events.length - 1]!),
-        sequence: previous ? previous.chain.sequence + 1 : 1,
+        sequence: events.length,
       },
-      supersedes: opts.previousDigest ?? (previous ? snapshotDigest(previous) : null),
-      validFrom: opts.validFrom ?? new Date().toISOString(),
-      ...(opts.validUntil ? { validUntil: opts.validUntil } : {}),
     },
   };
 }
@@ -947,36 +915,36 @@ export function projectAgentContext(
 
 export interface ActorAudit {
   ok: boolean;
-  /** `fold_failed:<reason>` | `chain_binding_mismatch` | `snapshot_outdated` (older than the fold: every stored value matches, newer derived fields are absent — re-issue) | `snapshot_subject_mismatch` (a stored value disagrees with the chain) */
+  /** `fold_failed:<reason>` | `chain_binding_mismatch` (the record's `chain` is not a position on this chain) | `record_outdated` (older than the fold: every stored value matches, newer derived fields are absent — recompute) | `record_mismatch` (a stored value disagrees with the chain) */
   reason?: string;
 }
 
 /**
- * The audit primitive (v0.3 §5): RE-FOLD AND DIFF. A snapshot binds a PREFIX of
- * the chain — `chain[0..headEvent]` — so events appended after it (including the
- * `SNAPSHOT_ISSUED` that audits it) SUPERSEDE the snapshot without invalidating
- * it. Valid iff the bound head exists in the chain and
- * `fold(chain[0..headEvent]) == credentialSubject`. The chain is authoritative —
- * on any disagreement the snapshot is the invalid artifact.
+ * The audit primitive (v0.3 §5): RE-FOLD AND DIFF. A record names a PREFIX of the chain —
+ * `chain[0..headEvent]` — so events appended after it make it stale without making it wrong.
+ * Correct iff the named genesis and head are on the chain, `sequence` is the head's position, and
+ * `fold(chain[0..headEvent]) == record`. The chain is authoritative — on any disagreement the
+ * record is what is wrong.
  */
-export function auditActorSnapshot(snapshot: ActorSnapshot, events: ViaEvent[]): ActorAudit {
-  if (events.length === 0 || snapshot.chain.genesisEvent !== eventChainLink(events[0]!)) {
+export function auditActorRecord(record: ViaActorRecord, events: ViaEvent[]): ActorAudit {
+  const { chain, ...stored } = record;
+  if (events.length === 0 || chain.genesisEvent !== eventChainLink(events[0]!)) {
     return { ok: false, reason: "chain_binding_mismatch" };
   }
-  const head = events.findIndex((e) => eventChainLink(e) === snapshot.chain.headEvent);
-  if (head < 0) return { ok: false, reason: "chain_binding_mismatch" };
+  const head = events.findIndex((e) => eventChainLink(e) === chain.headEvent);
+  if (head < 0 || chain.sequence !== head + 1) return { ok: false, reason: "chain_binding_mismatch" };
   const folded = foldActorChain(events.slice(0, head + 1));
   if (!folded.ok) return { ok: false, reason: `fold_failed:${folded.reason}` };
   const fresh = folded.subject as unknown as Record<string, unknown>;
-  const stored = snapshot.subject as unknown as Record<string, unknown>;
-  if (canonicalizeRFC8785(fresh) === canonicalizeRFC8785(stored)) return { ok: true };
+  const kept = stored as unknown as Record<string, unknown>;
+  if (canonicalizeRFC8785(fresh) === canonicalizeRFC8785(kept)) return { ok: true };
   // The fold learns to derive new fields over time (`genesisAt`, `existedSince`, `runtime`…). A
-  // snapshot issued before such a field existed still says nothing FALSE — every value it carries
-  // matches — it is merely older than the fold. That is `snapshot_outdated`: re-issue it. A stored
+  // record computed before such a field existed still says nothing FALSE — every value it carries
+  // matches — it is merely older than the fold. That is `record_outdated`: recompute it. A stored
   // value that disagrees with the chain is the lie this audit exists to catch.
-  const differing = [...new Set([...Object.keys(fresh), ...Object.keys(stored)])].filter(
-    (k) => canonicalizeRFC8785({ v: fresh[k] }) !== canonicalizeRFC8785({ v: stored[k] }),
+  const differing = [...new Set([...Object.keys(fresh), ...Object.keys(kept)])].filter(
+    (k) => canonicalizeRFC8785({ v: fresh[k] }) !== canonicalizeRFC8785({ v: kept[k] }),
   );
-  const onlyMissing = differing.every((k) => stored[k] === undefined && fresh[k] !== undefined);
-  return { ok: false, reason: onlyMissing ? "snapshot_outdated" : "snapshot_subject_mismatch" };
+  const onlyMissing = differing.every((k) => kept[k] === undefined && fresh[k] !== undefined);
+  return { ok: false, reason: onlyMissing ? "record_outdated" : "record_mismatch" };
 }
