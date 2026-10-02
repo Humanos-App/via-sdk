@@ -888,14 +888,31 @@ describe("projectAgentContext (§9 / KYA A.3) — the agent.* CEL namespace", ()
     expect(evaluateRules(bound, ctx(k2)).decision).toBe("deny");
   });
 
-  it("a chain written before per-key rungs falls back to the actor summary", () => {
-    // Historical KEY_ADDED events carry no assurance. Inheriting the summary is what they meant;
-    // inventing a rung for them would be worse.
+  // @invariant §9.1bis rule 4: a key with no rung of its own is possession only — it never inherits
+  // the hardware grade of the actor or the key beside it.
+  it("a key added with no rung of its own is pop/self, never the actor's grade", () => {
     const c = chain((p) => ev("KEY_ADDED", { keyId: "k2", jwk: JWK }, { prev: p }));
     const folded = foldActorChain(c);
-    expect(folded.ok).toBe(true);
-    if (!folded.ok) return;
-    expect(folded.subject.keys[1]!.assurance).toBe("hardware");
+    if (!folded.ok) throw new Error(folded.reason);
+    expect(folded.subject.keys[1]).toMatchObject({ assurance: "pop", binding: "self" });
+    expect(folded.subject.keys[1]!.root).toBeUndefined();
+    expect(folded.subject.assurance).toBe("pop"); // the floor follows the weakest usable key
+  });
+
+  // @invariant §5: once an actor has an operator, only that operator writes a later AFFILIATION.
+  it("refuses an AFFILIATION from an organization other than the current operator", () => {
+    const g = genesis();
+    const first = { ...ev("AFFILIATION", {}, { prev: g }), issuer: "did:web:acme.example" } as ViaEvent;
+    (first.credentialSubject as Record<string, unknown>).operator = { org: "did:web:acme.example", relation: "operates" };
+    const hijack = { ...ev("AFFILIATION", {}, { prev: first }), issuer: "did:web:evil.example" } as ViaEvent;
+    (hijack.credentialSubject as Record<string, unknown>).operator = { org: "did:web:evil.example", relation: "operates" };
+    expect(foldActorChain([g, first, hijack])).toMatchObject({ ok: false, reason: "affiliation_invalid" });
+
+    const renewal = { ...ev("AFFILIATION", {}, { prev: first }), issuer: "did:web:acme.example" } as ViaEvent;
+    (renewal.credentialSubject as Record<string, unknown>).operator = { org: "did:web:acme.example", relation: "vouches" };
+    const r = foldActorChain([g, first, renewal]);
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.subject.operator).toMatchObject({ org: "did:web:acme.example", relation: "vouches" });
   });
 });
 

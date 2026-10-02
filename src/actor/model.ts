@@ -357,27 +357,24 @@ const detailOf = (e: ViaEvent): Record<string, unknown> =>
  * record diff (`auditActorRecord`).
  */
 /**
- * The rung to record ON A KEY, from the event that introduced it.
+ * The rung to record ON A KEY, from the event that introduced it (v0.3 §9.1bis rule 4).
  *
- * Falls back to the actor summary when the event carries none — chains written before per-key rungs
- * existed meant exactly that, and inventing a rung for them would be worse than inheriting one.
+ * A key that carries a rung carries the whole rung: a key graded `pop` without a root does not
+ * inherit a sibling's `aws-nitro` field by field. A key with NO rung of its own — an older writer
+ * graded only the actor — is `pop`/`self` with no root: possession is all that was proven when it
+ * entered the chain. It never copies the actor's grade, which would let a key added with no evidence
+ * count as the hardware key beside it.
  */
 function keyRung(
   detail: Record<string, unknown>,
-  fallback: { assurance?: unknown; binding?: unknown; root?: unknown },
   at: string,
 ): Pick<ActorKeyState, "assurance" | "binding" | "verifiedAt" | "root"> {
-  // A key with NO rung of its own falls back to the actor summary as a whole (v0.3 §9.1bis
-  // rule 4). A key that carries a rung carries the whole rung: a key graded `pop` without a root
-  // does not inherit a sibling's `aws-nitro` field by field.
   const own = detail.assurance !== undefined || detail.binding !== undefined;
-  const assurance = (own ? detail.assurance : fallback.assurance) as Assurance | undefined;
-  const binding = (own ? detail.binding : fallback.binding) as Binding | undefined;
-  const root = (own ? detail.root : fallback.root) as string | undefined;
+  if (!own) return { assurance: "pop", binding: "self", verifiedAt: (detail.verifiedAt as string) ?? at };
   return {
-    ...(assurance ? { assurance } : {}),
-    ...(binding ? { binding } : {}),
-    ...(root ? { root } : {}),
+    ...(detail.assurance ? { assurance: detail.assurance as Assurance } : {}),
+    ...(detail.binding ? { binding: detail.binding as Binding } : {}),
+    ...(detail.root ? { root: detail.root as string } : {}),
     verifiedAt: (detail.verifiedAt as string) ?? at,
   };
 }
@@ -414,14 +411,15 @@ export function actorSummaryFloor(
  * The version of what the fold DERIVES. Bump it whenever the fold starts producing a field, or a
  * value, it did not before (2 = `existedSince` folded, `operator.relation` carried; 3 = no rung on an
  * actor with no usable key carrying one, instead of its last; 4 = a second rotation of one key
- * refused, `key_already_rotated`; 5 = runtime per key, the actor's a shared-class summary).
+ * refused, `key_already_rotated`; 5 = runtime per key, the actor's a shared-class summary; 6 = a
+ * rungless key is pop/self, and a later AFFILIATION only from the current operator).
  *
  * A stored record (a checkpoint) is only as current as the fold that wrote it. Seeding a fold from
  * one written by an older version would silently omit whatever the newer fold adds, so a
  * checkpointed read MUST seed only from a record written by this version and replay the whole
  * chain otherwise.
  */
-export const ACTOR_FOLD_VERSION = 5;
+export const ACTOR_FOLD_VERSION = 6;
 
 /**
  * The actor's runtime SUMMARY (v0.3 §3.1) — for reporting, never authorization: the class every
@@ -505,7 +503,7 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
               : {}),
             // Genesis grades the actor and its first key in one act, so they start equal. They
             // diverge the moment a second key is added on different evidence.
-            ...keyRung(detail, detail as Record<string, unknown>, e.validFrom),
+            ...keyRung(detail, e.validFrom),
           },
         ],
         genesisAt: e.validFrom,
@@ -539,7 +537,7 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
           ...(detail.attestationKind
             ? { attestation: { event: prevLink, kind: String(detail.attestationKind) } }
             : {}),
-          ...keyRung(detail, subject, e.validFrom),
+          ...keyRung(detail, e.validFrom),
         });
         break;
       }
@@ -561,7 +559,7 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
           ...(detail.attestationKind
             ? { attestation: { event: prevLink, kind: String(detail.attestationKind) } }
             : {}),
-          ...keyRung(detail, subject, e.validFrom),
+          ...keyRung(detail, e.validFrom),
         });
         break;
       }
@@ -648,6 +646,11 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         const op = (cs.operator ?? {}) as { org?: unknown; relation?: unknown };
         const org = op.org ?? detail.org ?? e.issuer;
         const relation = op.relation ?? detail.relation;
+        // §5: once the actor has an operator, only that operator writes a later AFFILIATION — to renew
+        // or change the relation. Naming, or being signed by, another organization re-points nothing.
+        if (subject.operator && (String(org) !== subject.operator.org || e.issuer !== subject.operator.org)) {
+          return fail("affiliation_invalid", i);
+        }
         subject.operator = {
           org: String(org),
           ...(typeof relation === "string" ? { relation } : {}),

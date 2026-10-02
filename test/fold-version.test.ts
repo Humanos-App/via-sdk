@@ -108,6 +108,11 @@ const GOLDEN: Record<string, ViaEvent[]> = {
     ["ACTOR_REGISTERED", { agent: { actorType: "agent", keyId: "did:web:humanos.tech:agent:golden-revoked#key-1", jwk: JWK("kr"), assurance: "hardware", binding: "attested", root: "aws-nitro", bootstrapAnchor: "api_key", verifiedAt: "2026-01-01T00:00:00.000Z" } }],
     ["KEY_REVOKED", { agent: { keyId: "did:web:humanos.tech:agent:golden-revoked#key-1" } }],
   ]),
+  // A key added with no rung of its own: pop/self, never the actor's grade (§9.1bis rule 4).
+  runglessKey: chain("did:web:humanos.tech:agent:golden-rungless", HUMANOS, [
+    ["ACTOR_REGISTERED", { agent: { actorType: "agent", keyId: "did:web:humanos.tech:agent:golden-rungless#key-1", jwk: JWK("rk1"), assurance: "hardware", binding: "attested", root: "aws-nitro", bootstrapAnchor: "api_key", verifiedAt: "2026-01-01T00:00:00.000Z" } }],
+    ["KEY_ADDED", { agent: { keyId: "did:web:humanos.tech:agent:golden-rungless#key-2", jwk: JWK("rk2") } }],
+  ]),
   absorbedChannel: chain(CHANNEL, HUMANOS, [
     ["ACTOR_REGISTERED", { agent: { actorType: "user", keyId: `${CHANNEL}#key-1`, publicKeyMultibase: "z6MkChannel", assurance: "pop", binding: "custodial", bootstrapAnchor: "manual", existedSince: "2025-02-01T00:00:00.000Z" } }],
     ["RETIRED", { agent: { succeededBy: PERSON, keySuccession: { [`${CHANNEL}#key-1`]: `${PERSON}#key-3` } } }],

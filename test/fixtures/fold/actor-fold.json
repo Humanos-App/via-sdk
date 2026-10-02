@@ -1,5 +1,5 @@
 {
-  "version": 5,
+  "version": 6,
   "chains": {
     "organization": {
       "accreditation": {
@@ -236,6 +236,45 @@
         }
       ],
       "status": "active"
+    },
+    "runglessKey": {
+      "actorType": "agent",
+      "assurance": "pop",
+      "binding": "self",
+      "bootstrapAnchor": "api_key",
+      "genesisAt": "2026-01-01T00:00:00.000Z",
+      "id": "did:web:humanos.tech:agent:golden-rungless",
+      "keys": [
+        {
+          "assurance": "hardware",
+          "binding": "attested",
+          "id": "did:web:humanos.tech:agent:golden-rungless#key-1",
+          "jwk": {
+            "crv": "P-256",
+            "kty": "EC",
+            "x": "rk1",
+            "y": "rk1-y"
+          },
+          "root": "aws-nitro",
+          "status": "active",
+          "verifiedAt": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "assurance": "pop",
+          "binding": "self",
+          "id": "did:web:humanos.tech:agent:golden-rungless#key-2",
+          "jwk": {
+            "crv": "P-256",
+            "kty": "EC",
+            "x": "rk2",
+            "y": "rk2-y"
+          },
+          "status": "active",
+          "verifiedAt": "2026-01-02T00:00:00.000Z"
+        }
+      ],
+      "status": "active",
+      "verifiedAt": "2026-01-01T00:00:00.000Z"
     },
     "absorbedChannel": {
       "actorType": "user",
