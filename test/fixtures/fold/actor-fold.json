@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "chains": {
     "organization": {
       "accreditation": {
@@ -213,6 +213,29 @@
       ],
       "status": "active",
       "verifiedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "noUsableKey": {
+      "actorType": "agent",
+      "bootstrapAnchor": "api_key",
+      "genesisAt": "2026-01-01T00:00:00.000Z",
+      "id": "did:web:humanos.tech:agent:golden-revoked",
+      "keys": [
+        {
+          "assurance": "hardware",
+          "binding": "attested",
+          "id": "did:web:humanos.tech:agent:golden-revoked#key-1",
+          "jwk": {
+            "crv": "P-256",
+            "kty": "EC",
+            "x": "kr",
+            "y": "kr-y"
+          },
+          "root": "aws-nitro",
+          "status": "revoked",
+          "verifiedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ],
+      "status": "active"
     },
     "absorbedChannel": {
       "actorType": "user",

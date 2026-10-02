@@ -256,6 +256,38 @@ describe("foldActorChain — attestation and assurance", () => {
     expect(r.subject.verifiedAt).toBe("2026-10-01T00:00:00.000Z");
   });
 
+  // @invariant §9.1bis rule 5: the summary is the floor across USABLE keys. With none left there is
+  // no floor — the actor reports no rung, not the one its revoked key earned.
+  it("an actor whose every key is revoked has no rung — not its last", () => {
+    const c = chain((p) => ev("KEY_REVOKED", { keyId: "k1" }, { prev: p }));
+    const r = foldActorChain(c);
+    if (!r.ok) throw new Error(r.reason);
+    for (const f of ["assurance", "binding", "verifiedAt", "root"] as const) expect(r.subject[f]).toBeUndefined();
+    expect(r.subject.bootstrapAnchor).toBe("api_key"); // history, not the summary
+  });
+
+  it("a new key gives an actor with no usable key its rung back, from that key", () => {
+    const c = chain(
+      (p) => ev("KEY_REVOKED", { keyId: "k1" }, { prev: p }),
+      (p) => ev("KEY_ADDED", { keyId: "k2", jwk: JWK, assurance: "pop", binding: "self", verifiedAt: "2026-09-02T00:00:00.000Z" }, { prev: p }),
+    );
+    const r = foldActorChain(c);
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.subject).toMatchObject({ assurance: "pop", binding: "self", verifiedAt: "2026-09-02T00:00:00.000Z" });
+  });
+
+  // @invariant §9.1bis rule 6: a summary event without keyId, in a chain written before it was
+  // retired, is still checked but writes nothing — with no usable key it cannot give a rung back.
+  it("a summary event without keyId sets no rung on an actor with no usable key", () => {
+    const c = chain(
+      (p) => ev("KEY_REVOKED", { keyId: "k1" }, { prev: p }),
+      (p) => ev("ASSURANCE_UPDATED", { assurance: "hardware", binding: "attested" }, { prev: p }),
+    );
+    const r = foldActorChain(c);
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.subject.assurance).toBeUndefined();
+  });
+
   it("the summary is DERIVED — the floor across usable keys — and ASSURANCE_UPDATED without keyId only audits it (§9.1bis rules 5–6)", () => {
     const g = genesis({ root: "aws-nitro" }); // one key: hardware/attested, root aws-nitro
     // Asserting a summary the keys do not support is refused: there is one writer, the keys.

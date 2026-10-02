@@ -117,11 +117,13 @@ export interface ViaActorSubject {
   actorType: ActorType;
   status: ActorStatus;
   keys: ActorKeyState[];
-  // the assurance fields — flat, §16's names (v0.3 §3.1 / §9.1)
-  assurance: Assurance;
-  binding: Binding;
+  // the assurance fields — flat, §16's names (v0.3 §3.1 / §9.1). `assurance`, `binding`,
+  // `verifiedAt` and `root` are the SUMMARY: the floor across usable keys (§9.1bis rule 5), absent
+  // when no usable key carries a rung — an actor whose keys are all revoked has no rung, not its last.
+  assurance?: Assurance;
+  binding?: Binding;
   bootstrapAnchor: BootstrapAnchor;
-  verifiedAt: string;
+  verifiedAt?: string;
   root?: string;
   /** Pointer to the org-signed AFFILIATION event — never an inline claim. */
   operator?: { org: string; relation?: string; affiliationEvent: string };
@@ -404,19 +406,28 @@ export function actorSummaryFloor(
 
 /**
  * The version of what the fold DERIVES. Bump it whenever the fold starts producing a field, or a
- * value, it did not before (2 = `existedSince` folded, `operator.relation` carried).
+ * value, it did not before (2 = `existedSince` folded, `operator.relation` carried; 3 = no rung on an
+ * actor with no usable key carrying one, instead of its last).
  *
  * A stored record (a checkpoint) is only as current as the fold that wrote it. Seeding a fold from
  * one written by an older version would silently omit whatever the newer fold adds, so a
  * checkpointed read MUST seed only from a record written by this version and replay the whole
  * chain otherwise.
  */
-export const ACTOR_FOLD_VERSION = 2;
+export const ACTOR_FOLD_VERSION = 3;
 
-/** Apply the derived floor to the subject; a no-op when no usable key carries a rung. */
+/** Apply the derived floor to the subject; with no usable key carrying a rung, the subject has none. */
 function deriveSummary(subject: ViaActorSubject): void {
   const floor = actorSummaryFloor(subject.keys);
-  if (!floor) return;
+  if (!floor) {
+    // §9.1bis rule 5: no usable key carries a rung, so the actor has none. Keeping the last value
+    // would report a grade no signed fact supports any more — the key that earned it was revoked.
+    delete subject.assurance;
+    delete subject.binding;
+    delete subject.verifiedAt;
+    delete subject.root;
+    return;
+  }
   subject.assurance = floor.assurance;
   subject.binding = floor.binding;
   subject.verifiedAt = floor.verifiedAt;
@@ -567,23 +578,15 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
           deriveSummary(subject); // the floor follows the re-graded key (§9.1bis rule 5)
           break;
         }
-        // Without `keyId` (v0.3 §9.1bis rule 6): an AUDIT of the summary, not a second writer. The
-        // summary is the floor across usable keys, derived below after every key event; this event
-        // exists so a floor MOVE is a signed, visible fact. Its values must be that floor. The anchor
-        // is history, who let the actor in (§9.5): naming a different one is refused, not applied.
+        // Without `keyId` (v0.3 §9.1bis rule 6): a writer no longer emits it — the summary is derived
+        // from the keys, and a signed restatement of that derivation proves nothing. Chains written
+        // before carry it, and it is still checked: its values must be the floor (`summary_mismatch`),
+        // and the anchor is history, who let the actor in (§9.5) — naming another is refused. It
+        // changes nothing: with no usable key carrying a rung there is no floor, and no rung to set.
         if (detail.bootstrapAnchor !== undefined && detail.bootstrapAnchor !== subject.bootstrapAnchor) return fail("anchor_immutable", i);
         const floor = actorSummaryFloor(subject.keys);
-        if (floor) {
-          if (detail.assurance !== floor.assurance || detail.binding !== floor.binding) return fail("summary_mismatch", i);
-          deriveSummary(subject);
-          break;
-        }
-        // No usable key carries a rung (a chain written before per-key rungs): the assertion stands.
-        subject.assurance = detail.assurance as Assurance;
-        subject.binding = detail.binding as Binding;
-        subject.verifiedAt = (detail.verifiedAt as string) ?? e.validFrom;
-        if (detail.root) subject.root = String(detail.root);
-        else delete subject.root;
+        if (floor && (detail.assurance !== floor.assurance || detail.binding !== floor.binding)) return fail("summary_mismatch", i);
+        deriveSummary(subject);
         break;
       }
       case "RUNTIME_ATTESTED": {

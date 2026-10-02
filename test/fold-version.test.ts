@@ -103,6 +103,11 @@ const GOLDEN: Record<string, ViaEvent[]> = {
     ["KEY_ADDED", { agent: { keyId: `${PERSON}#key-3`, publicKeyMultibase: "z6MkChannel", assurance: "pop", binding: "custodial", carriedFrom: `${CHANNEL}#key-1` } }],
     ["ALIAS_ADDED", { agent: { alias: CHANNEL, aliasReason: "merge" } }],
   ]),
+  // Its only key revoked: no usable key carries a rung, so the actor has none (§9.1bis rule 5).
+  noUsableKey: chain("did:web:humanos.tech:agent:golden-revoked", HUMANOS, [
+    ["ACTOR_REGISTERED", { agent: { actorType: "agent", keyId: "did:web:humanos.tech:agent:golden-revoked#key-1", jwk: JWK("kr"), assurance: "hardware", binding: "attested", root: "aws-nitro", bootstrapAnchor: "api_key", verifiedAt: "2026-01-01T00:00:00.000Z" } }],
+    ["KEY_REVOKED", { agent: { keyId: "did:web:humanos.tech:agent:golden-revoked#key-1" } }],
+  ]),
   absorbedChannel: chain(CHANNEL, HUMANOS, [
     ["ACTOR_REGISTERED", { agent: { actorType: "user", keyId: `${CHANNEL}#key-1`, publicKeyMultibase: "z6MkChannel", assurance: "pop", binding: "custodial", bootstrapAnchor: "manual", existedSince: "2025-02-01T00:00:00.000Z" } }],
     ["RETIRED", { agent: { succeededBy: PERSON, keySuccession: { [`${CHANNEL}#key-1`]: `${PERSON}#key-3` } } }],
