@@ -161,6 +161,9 @@ describe("buildMandate (§20)", () => {
   it("declares semantic review in the signed manifest — it is critical, not advisory (§19.4)", () => {
     const m = buildMandate(mandateInput({ enforcement: "semantic" }) as never);
     expect(m.credentialSubject.mandate.extensions).toContain("semanticReview");
+    // §19.2: signed as CRITICAL on the mandate itself — a verifier that does not know the name could
+    // not tell otherwise.
+    expect(m.credentialSubject.mandate.criticalExtensions).toEqual(["semanticReview"]);
   });
 
   it("carries the initiator and the pinned version into the signed body", () => {

@@ -67,6 +67,18 @@ export interface BuildMandateInput {
 /** §19.4 — the registered name of semantic review, listed when `enforcement` is `semantic`. */
 export const EXT_SEMANTIC_REVIEW = "semanticReview";
 
+/**
+ * §19.2 — the first critical extension a verifier does not implement, or null. A verifier that meets
+ * one denies (`extension_unsupported`) before any rule or reviewer runs: ignoring it is exactly the
+ * failure a critical extension exists to prevent.
+ */
+export function unsupportedCriticalExtension(
+  mandate: { criticalExtensions?: string[] },
+  implemented: ReadonlySet<string>,
+): string | null {
+  return (mandate.criticalExtensions ?? []).find((name) => !implemented.has(name)) ?? null;
+}
+
 /** The registered name of the Bounded-Use extension (§19.5), as it appears in `mandate.extensions`. */
 export const EXT_MAX_EXECUTIONS = "maxExecutions";
 
@@ -157,7 +169,11 @@ export function buildMandate(input: BuildMandateInput): ViaMandateCredential {
   // allow every call under a mandate whose whole point is that something reads it first. Listing
   // it in the signed manifest is what makes "this verifier does not implement §20.6" detectable.
   const enforcement = input.enforcement ?? (input.action ? "rules" : "none");
-  if (enforcement === "semantic") extensions.push(EXT_SEMANTIC_REVIEW);
+  const criticalExtensions: string[] = [];
+  if (enforcement === "semantic") {
+    extensions.push(EXT_SEMANTIC_REVIEW);
+    criticalExtensions.push(EXT_SEMANTIC_REVIEW);
+  }
   const credential: ViaMandateCredential = {
     "@context": [...VIA_CONTEXTS],
     id: input.credentialId ?? `urn:via:credential:${randomUUID()}`,
@@ -185,6 +201,7 @@ export function buildMandate(input: BuildMandateInput): ViaMandateCredential {
         ...(input.delegation ? { delegation: input.delegation } : {}),
         ...(input.maxExecutions !== undefined ? { maxExecutions: input.maxExecutions } : {}),
         ...(extensions.length ? { extensions } : {}),
+        ...(criticalExtensions.length ? { criticalExtensions } : {}),
       },
     },
     ...(input.evidence ? { evidence: input.evidence } : {}),

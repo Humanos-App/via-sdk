@@ -154,6 +154,12 @@ export interface Mandate {
   maxExecutions?: number;
   /** §19.1 — presence manifest: the registered extensions this mandate uses, e.g. `["maxExecutions"]`. */
   extensions?: string[];
+  /**
+   * §19.2 — the extensions in use that a verifier MUST implement or deny (`extension_unsupported`).
+   * Signed, a subset of `extensions`: a verifier that does not know an extension cannot tell it is
+   * critical from its name, so the mandate says so.
+   */
+  criticalExtensions?: string[];
 }
 
 export interface BitstringStatusListCredential {

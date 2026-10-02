@@ -77,6 +77,18 @@ beforeAll(async () => {
   });
 });
 
+// @invariant §19.2: a critical extension the verifier does not implement is denied, never ignored —
+// the generic rule, so a future critical extension needs no new specVersion.
+it("denies a mandate that lists a critical extension this verifier does not implement", async () => {
+  const future = structuredClone(mandate);
+  const body = future.credentialSubject.mandate as { extensions?: string[]; criticalExtensions?: string[] };
+  body.extensions = ["futureCritical"];
+  body.criticalExtensions = ["futureCritical"];
+  const params = { amount: 10, action: "transfer" };
+  const r = await verifyAgentDirect(future, { pop: await pop(attested, "transfer", params), action: "transfer", params }, deps());
+  expect(r).toMatchObject({ decision: "deny", reason: "extension_unsupported" });
+});
+
 // @invariant §20.3: a mismatched enforcement is denied at verify too, before any rule or reviewer —
 // a mandate from an issuer that did not refuse it must not fail open here.
 // @invariant §8 step 1: the mandate is checked against its own STAMP before anything else — a body

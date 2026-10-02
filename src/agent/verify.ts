@@ -20,7 +20,7 @@ import type {
   ViaMandateCredential,
 } from "../types.js";
 import { enforcementFitsShape, enforcementOf, mayWidenAuthority } from "../mandate/description.js";
-import { verifyStamp, type ResolvePublicKey } from "../mandate/build.js";
+import { EXT_SEMANTIC_REVIEW, unsupportedCriticalExtension, verifyStamp, type ResolvePublicKey } from "../mandate/build.js";
 
 /** The validated rung, surfaced into the CEL context as `agent.*` (§16.8). */
 export interface AgentEnv {
@@ -215,6 +215,9 @@ const deny = (reason: string, credentialId?: string, enforcement?: Enforcement):
   ...(enforcement ? { enforcement } : {}),
 });
 
+/** §19.2 — the critical extensions this verifier implements. */
+const AGENT_DIRECT_EXTENSIONS: ReadonlySet<string> = new Set([EXT_SEMANTIC_REVIEW]);
+
 /**
  * Full agent-direct verify (§16.11). The agent presents `{ mandateId, action, params, pop }`; the
  * RP checks the mandate's STAMP (§8 step 1), authority (status/validity/audience),
@@ -242,6 +245,9 @@ export async function verifyAgentDirect(
   // §8 step 1: the mandate's own STAMP, first. A copy edited after issuance verifies nothing.
   const stamp = await verifyStamp(mandate, deps.resolvePublicKey);
   if (!stamp.valid) return deny("credential_stamp_invalid", urn, enforcement);
+  // §19.2: a critical extension this verifier does not implement is denied, never ignored. Agent-direct
+  // implements semantic review (with a reviewer wired — without one §20.6 denies on its own).
+  if (unsupportedCriticalExtension(m, AGENT_DIRECT_EXTENSIONS)) return deny("extension_unsupported", urn, enforcement);
   // §20.3: an enforcement that does not fit the mandate's shape fails open either way — refuse it.
   if (!enforcementFitsShape(m)) return deny("enforcement_invalid", urn, enforcement);
 

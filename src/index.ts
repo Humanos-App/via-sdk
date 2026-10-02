@@ -124,6 +124,8 @@ export {
   verifyMandateProofs,
   validateMaxExecutions,
   EXT_MAX_EXECUTIONS,
+  EXT_SEMANTIC_REVIEW,
+  unsupportedCriticalExtension,
   MAX_EXECUTIONS_REACHED,
   type BuildMandateInput,
   type BuildEvidenceInput,

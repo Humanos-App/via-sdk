@@ -7,6 +7,7 @@ import { evaluateRules, type RuleEvaluation } from "../cel/evaluate.js";
 import { domainMatches } from "../presentation/vp.js";
 import { detectSpecVersion, type DetectedSpecVersion } from "../version.js";
 import { enforcementFitsShape, enforcementOf } from "../mandate/description.js";
+import { unsupportedCriticalExtension } from "../mandate/build.js";
 import type { Enforcement } from "../types.js";
 import type { CredentialStatus, VerifiablePresentation } from "../types.js";
 
@@ -119,6 +120,9 @@ async function runChecks(
   //     proof-of-possession. A mandate bound to agents verifies only with one (agent-direct,
   //     §16.11), so here it fails closed rather than falling back to `authorizedDIDs` alone.
   if (mandate.context.authorizedAgents?.length) return deny("pop_invalid", urn);
+  // 4d. §19.2: this custodial path implements no critical extension — semantic review needs a reader
+  //     it does not have — so a mandate that requires one is denied, never evaluated without it.
+  if (unsupportedCriticalExtension(mandate, new Set())) return deny("extension_unsupported", urn);
 
   // 5. no action → the words govern, or nothing does (§20.3). `allow` says which.
   const enforcement = enforcementOf(mandate);
