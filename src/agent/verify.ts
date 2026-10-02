@@ -120,6 +120,13 @@ export interface AgentDirectDeps {
    * `authorizedAgents`, its `action`, its `userParams`) is `credential_stamp_invalid`, never verified.
    */
   resolvePublicKey: ResolvePublicKey;
+  /**
+   * §16.7 step 0 — the candidate key set the caller resolved from the mandate's `authorizedAgents`
+   * through each entry's CURRENT actor (merge followed, status gated, pinned key walked). Passed
+   * BESIDE the mandate, never written into it: the mandate must stay the body its STAMP signs.
+   * Absent, the entries are read as written (raw pins, or a caller with no actor access).
+   */
+  candidates?: BoundKey[];
   loadCredentialRecord: (urn: string) => CredentialRecordLike | Promise<CredentialRecordLike>;
   loadActionVersion: (actionId: string) => ActionDetail | null | Promise<ActionDetail | null>;
   validateNonce?: (nonce: string, mandateId: string) => string | Promise<string>;
@@ -215,12 +222,11 @@ const deny = (reason: string, credentialId?: string, enforcement?: Enforcement):
  * `allow | deny | rechallenge`.
  *
  * The caller's contract:
- * - `mandate` is the body the verifier LOADED by its id (§8 step 1) — never a copy the agent sent.
- *   Its STAMP is checked here either way, so an edited copy is refused.
+ * - `mandate` is the body the verifier LOADED by its id (§8 step 1), untouched — never a copy the
+ *   agent sent, and never edited by the caller. Its STAMP is checked here, so any edit is refused.
  * - Step 0 (§16.7) is the caller's: resolve every `authorizedAgents` entry through its CURRENT
  *   actor (§8 steps 2–4 — follow a merge, gate on status, walk the pinned key) and pass the
- *   resulting candidate set as the mandate's `authorizedAgents`. This function reads the entries as
- *   given; it does not resolve actors.
+ *   resulting set as `deps.candidates`. This function does not resolve actors.
  */
 export async function verifyAgentDirect(
   mandate: ViaMandateCredential,
@@ -250,7 +256,8 @@ export async function verifyAgentDirect(
   if (!authorizedDIDs.includes(deps.verifier.did)) return deny("verifier_not_authorized", urn, enforcement);
 
   // 5. agent binding is REQUIRED when the mandate carries authorizedAgents (§16.4)
-  const boundKeys = m.context.authorizedAgents;
+  // Bound or not is the SIGNED mandate's question; which keys may sign is step 0's answer.
+  const boundKeys = m.context.authorizedAgents?.length ? (deps.candidates ?? m.context.authorizedAgents) : m.context.authorizedAgents;
   if (!boundKeys || boundKeys.length === 0) return deny("agent_not_bound", urn, enforcement);
   const pop = await verifyAgentBinding(
     { authorizedAgents: boundKeys, pop: req.pop, verifier: deps.verifier.did, mandateId: urn, action: req.action, params: req.params },
