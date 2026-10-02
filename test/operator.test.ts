@@ -93,6 +93,25 @@ describe("§18 O1–O4 + the ∧ composition", () => {
     expect(r.reason).toBeUndefined();
   });
 
+  // @invariant v0.3 §18.5 O1: a valid signature says who signed, not that the signer is a registrar.
+  it("refuses an ACCREDITED the operator signed about itself — a correctly signed self-claim", async () => {
+    const selfClaim = buildAccreditation(
+      { subject: ACME, level: "verified", method: "kyb-registry", subjectType: "organization", registrar: "humanos", verifiedAt: "2026-01-01T00:00:00.000Z", registrarDid: ACME } as never,
+      { privateKey: acme.privateKey, verificationMethod: VM_ACME },
+    );
+    const r = await verifyAccreditation({ agentDid: AGENT, accreditation: selfClaim, affiliation: acmeLink() }, { resolvePublicKey, now });
+    expect(r).toMatchObject({ ok: false, reason: "accreditation_signature_invalid" });
+    expect(r.accreditation.level).toBe("unverified");
+  });
+
+  it("counts an ACCREDITED signed by the environment's own registrar DID", async () => {
+    const r = await verifyAccreditation(
+      { agentDid: AGENT, accreditation: acmeVerified(), affiliation: acmeLink() },
+      { resolvePublicKey, now, registrarDid: REGISTRAR },
+    );
+    expect(r.ok).toBe(true);
+  });
+
   // ── the inheritance spoof: presented-and-failed ⇒ ⚠️ ───────────────────────
   it("affiliation signed by someone OTHER than the named org → affiliation_invalid", async () => {
     const forged = buildAffiliation(
@@ -180,12 +199,12 @@ describe("§18 O1–O4 + the ∧ composition", () => {
     expect(r.reason).toBe("affiliation_invalid");
   });
 
-  it("credential about the agent itself needs no affiliation", async () => {
+  // @invariant v0.3 §18.4: an agent never holds standing of its own — it inherits its operator's.
+  it("refuses a credential about the agent itself, even registrar-signed", async () => {
     const direct = acmeVerified({ id: AGENT, subjectType: "individual", method: "kyc-doc" });
     const r = await verifyAccreditation({ agentDid: AGENT, accreditation: direct }, { resolvePublicKey, now });
-    expect(r.ok).toBe(true);
-    expect(r.accreditation).toMatchObject({ level: "verified", subjectType: "individual", method: "kyc-doc" });
-    expect(r.accreditation.org).toBeUndefined();
+    expect(r).toMatchObject({ ok: false, reason: "accreditation_on_agent" });
+    expect(r.accreditation.level).toBe("unverified");
   });
 });
 

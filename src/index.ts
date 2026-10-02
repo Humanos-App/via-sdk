@@ -145,6 +145,7 @@ export {
   validateDescription,
   validateMandateDescription,
   enforcementOf,
+  enforcementFitsShape,
   descriptionOf,
   adoptDescription,
   mayWidenAuthority,

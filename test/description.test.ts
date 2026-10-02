@@ -92,6 +92,15 @@ describe("the two validity rules (§20.3)", () => {
     expect(validateMandateDescription(m).ok).toBe(true);
   });
 
+  // @invariant §20.3: an enforcement that does not fit the shape fails open either way — refused.
+  it.each([
+    ["rules with no action — would allow every call", { enforcement: "rules", description: words({ author: "issuer" }) }],
+    ["semantic with an action — would never ask the reviewer", { action: ACTION, enforcement: "semantic", description: words() }],
+    ["none with an action", { action: ACTION, enforcement: "none", description: words() }],
+  ])("refuses an enforcement that does not fit the mandate's shape — %s", (_why, m) => {
+    expect(validateMandateDescription(m as unknown as Mandate)).toEqual({ ok: false, reason: "enforcement_invalid" });
+  });
+
   // A mandate issued before §20 existed carries no description and must keep verifying (v0.2-new §13).
   it("leaves a pre-§20 rules mandate alone", () => {
     expect(validateMandateDescription({ action: ACTION } as Mandate).ok).toBe(true);

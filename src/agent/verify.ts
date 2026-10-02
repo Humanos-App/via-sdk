@@ -19,7 +19,8 @@ import type {
   StepUpTrigger,
   ViaMandateCredential,
 } from "../types.js";
-import { enforcementOf, mayWidenAuthority } from "../mandate/description.js";
+import { enforcementFitsShape, enforcementOf, mayWidenAuthority } from "../mandate/description.js";
+import { verifyStamp, type ResolvePublicKey } from "../mandate/build.js";
 
 /** The validated rung, surfaced into the CEL context as `agent.*` (§16.8). */
 export interface AgentEnv {
@@ -113,6 +114,12 @@ export interface CredentialRecordLike {
 export interface AgentDirectDeps {
   /** The calling relying party's identity (the PoP `aud`). */
   verifier: { did: string };
+  /**
+   * v0.3 §8 step 1 — resolves the Humanos key the mandate's STAMP names. The mandate is checked
+   * against its own STAMP before anything else: a body edited after issuance (its
+   * `authorizedAgents`, its `action`, its `userParams`) is `credential_stamp_invalid`, never verified.
+   */
+  resolvePublicKey: ResolvePublicKey;
   loadCredentialRecord: (urn: string) => CredentialRecordLike | Promise<CredentialRecordLike>;
   loadActionVersion: (actionId: string) => ActionDetail | null | Promise<ActionDetail | null>;
   validateNonce?: (nonce: string, mandateId: string) => string | Promise<string>;
@@ -202,9 +209,18 @@ const deny = (reason: string, credentialId?: string, enforcement?: Enforcement):
 });
 
 /**
- * Full agent-direct verify (§16.11). The agent carries the mandate + a PoP; the RP
- * checks authority (status/validity/audience), identity+possession (A1–A8), and the
- * rung floor + action rules as CEL over `agent.*`. Returns `allow | deny | rechallenge`.
+ * Full agent-direct verify (§16.11). The agent presents `{ mandateId, action, params, pop }`; the
+ * RP checks the mandate's STAMP (§8 step 1), authority (status/validity/audience),
+ * identity+possession (A1–A8), and the rung floor + action rules as CEL over `agent.*`. Returns
+ * `allow | deny | rechallenge`.
+ *
+ * The caller's contract:
+ * - `mandate` is the body the verifier LOADED by its id (§8 step 1) — never a copy the agent sent.
+ *   Its STAMP is checked here either way, so an edited copy is refused.
+ * - Step 0 (§16.7) is the caller's: resolve every `authorizedAgents` entry through its CURRENT
+ *   actor (§8 steps 2–4 — follow a merge, gate on status, walk the pinned key) and pass the
+ *   resulting candidate set as the mandate's `authorizedAgents`. This function reads the entries as
+ *   given; it does not resolve actors.
  */
 export async function verifyAgentDirect(
   mandate: ViaMandateCredential,
@@ -217,6 +233,11 @@ export async function verifyAgentDirect(
   // §20.3 — what governs this mandate, carried on every result below. Derived for artifacts
   // issued before §20; the field wins wherever it is present.
   const enforcement = enforcementOf(m);
+  // §8 step 1: the mandate's own STAMP, first. A copy edited after issuance verifies nothing.
+  const stamp = await verifyStamp(mandate, deps.resolvePublicKey);
+  if (!stamp.valid) return deny("credential_stamp_invalid", urn, enforcement);
+  // §20.3: an enforcement that does not fit the mandate's shape fails open either way — refuse it.
+  if (!enforcementFitsShape(m)) return deny("enforcement_invalid", urn, enforcement);
 
   // 2–3. status + validity (trusted record)
   const record = await deps.loadCredentialRecord(urn);

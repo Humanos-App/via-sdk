@@ -26,7 +26,8 @@ export type DescriptionProblem =
   | "description_lang_missing"
   | "description_author_invalid"
   | "description_required"
-  | "description_author_not_issuer";
+  | "description_author_not_issuer"
+  | "enforcement_invalid";
 
 const AUTHORS = new Set(["issuer", "agent", "grantor"]);
 
@@ -54,6 +55,7 @@ export function validateDescription(d: MandateDescription | undefined): { ok: tr
 export function validateMandateDescription(
   mandate: Mandate,
 ): { ok: true } | { ok: false; reason: DescriptionProblem } {
+  if (!enforcementFitsShape(mandate)) return { ok: false, reason: "enforcement_invalid" };
   const enforcement = enforcementOf(mandate);
   const d = mandate.description;
   if (!d) {
@@ -79,6 +81,18 @@ export function validateMandateDescription(
  */
 export function enforcementOf(mandate: Mandate): Enforcement {
   return mandate.enforcement ?? (mandate.action ? "rules" : "none");
+}
+
+/**
+ * §20.3 — the enforcement must fit the mandate's shape: `rules` needs an `action` (the rules ARE the
+ * action's CEL); `semantic` and `none` have none (the words govern, or nothing does). A mismatch can
+ * only come from an explicit field — a derived one always fits — and it fails open either way:
+ * `rules` with no action would allow every call, `semantic` with one would never ask the reviewer.
+ * Refused at issuance and denied at verify (`enforcement_invalid`).
+ */
+export function enforcementFitsShape(mandate: Mandate): boolean {
+  const enforcement = enforcementOf(mandate);
+  return enforcement === "rules" ? Boolean(mandate.action) : !mandate.action;
 }
 
 /** The description of a mandate credential, if it carries one. */

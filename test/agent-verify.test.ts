@@ -6,7 +6,9 @@ import {
   buildPoP,
   actionHash,
   constraintsToRules,
-  verifyAgentDirect,
+  generateEd25519Key,
+  stampMandate,
+  verifyAgentDirect as verifyStamped,
   type P256KeyPair,
   type BoundKey,
   type Constraint,
@@ -14,6 +16,19 @@ import {
   type AgentDirectDeps,
 } from "../src/index.js";
 import type { ActionDetail } from "../src/action/types.js";
+
+/**
+ * The platform's STAMP over every mandate these tests present: `verifyAgentDirect` checks it first
+ * (§8 step 1), and each test here is about what comes after. A test that edits a mandate gets it
+ * re-stamped, as if the issuer had signed that body; the STAMP check itself is tested on its own.
+ */
+const PLATFORM = generateEd25519Key();
+const PLATFORM_VM = "did:web:humanos.tech#key-1";
+const stamp = (m: ViaMandateCredential): ViaMandateCredential => {
+  const { proof: _proof, ...body } = m as ViaMandateCredential & { proof?: unknown };
+  return stampMandate(body as ViaMandateCredential, { privateKey: PLATFORM.privateKey, verificationMethod: PLATFORM_VM });
+};
+const verifyAgentDirect: typeof verifyStamped = (m, req, d) => verifyStamped(stamp(m), req, d);
 
 const RP = "acme-bank.example";
 const now = new Date("2026-07-20T12:00:00.000Z");
@@ -62,8 +77,33 @@ beforeAll(async () => {
   });
 });
 
+// @invariant §20.3: a mismatched enforcement is denied at verify too, before any rule or reviewer —
+// a mandate from an issuer that did not refuse it must not fail open here.
+// @invariant §8 step 1: the mandate is checked against its own STAMP before anything else — a body
+// edited after issuance (here: a wider userParam) is refused, whatever else it would pass.
+it("refuses a mandate edited after its STAMP", async () => {
+  const signed = stamp(mandate);
+  const edited = structuredClone(signed);
+  (edited.credentialSubject.mandate as { validFrom?: string }).validFrom = "2025-01-01T00:00:00.000Z";
+  const params = { amount: 10, action: "transfer" };
+  const r = await verifyStamped(edited, { pop: await pop(attested, "transfer", params), action: "transfer", params }, deps());
+  expect(r).toMatchObject({ decision: "deny", reason: "credential_stamp_invalid" });
+});
+
+it("denies a mandate whose enforcement does not fit its shape", async () => {
+  const mismatched = structuredClone(mandate);
+  (mismatched.credentialSubject.mandate as { enforcement?: string }).enforcement = "semantic"; // it has an action
+  const params = { amount: 10, action: "transfer" };
+  const r = await verifyAgentDirect(mismatched, { pop: await pop(attested, "transfer", params), action: "transfer", params }, deps());
+  expect(r).toMatchObject({ decision: "deny", reason: "enforcement_invalid" });
+});
+
 const deps = (over: Partial<AgentDirectDeps> = {}): AgentDirectDeps => ({
   verifier: { did: `did:web:${RP}` },
+  resolvePublicKey: (vm) => {
+    if (vm !== PLATFORM_VM) throw new Error(`unknown key ${vm}`);
+    return PLATFORM.publicKey;
+  },
   loadCredentialRecord: async () => ({ status: "ACTIVE", validFrom: "2026-01-01T00:00:00.000Z" }),
   loadActionVersion: async (id) => (id === ACTION.$id ? ACTION : null),
   now,

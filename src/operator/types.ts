@@ -51,7 +51,8 @@ export type AccreditationReasonCode =
   | "affiliation_invalid"
   | "accreditation_revoked"
   | "accreditation_expired"
-  | "accreditation_insufficient";
+  | "accreditation_insufficient"
+  | "accreditation_on_agent";
 
 /** Why an operator's verification was pulled — underwriters need the *why*. */
 export type AccreditationRevocationReason = "struck_off" | "fraud" | "sanctions";

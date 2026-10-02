@@ -14,6 +14,7 @@
 //     verified Acme is — otherwise any agent could name Acme and inherit its green check.
 import { verifyEvent } from "../event/build.js";
 import { verifyAffiliation } from "./affiliation.js";
+import { VIA_PLATFORM_DID } from "../did/web.js";
 import type { ViaEvent, BitstringStatusListEntry } from "../types.js";
 import type {
   AccreditationClaims,
@@ -41,6 +42,12 @@ export interface AccreditationVerifyInput {
 
 export interface AccreditationVerifyDeps {
   resolvePublicKey: (vmId: string) => Uint8Array | Promise<Uint8Array>;
+  /**
+   * **O1** — the registrar: the Humanos platform DID whose signature makes an `ACCREDITED` count
+   * (v0.3 §18.5: Humanos is the only registrar until v0.4 defines external ones). Defaults to
+   * `did:web:humanos.tech`; an environment with its own platform DID (dev, stage) passes that.
+   */
+  registrarDid?: string;
   /**
    * **O3** — resolve the PUBLISHED status list entry (offline; no live registrar call,
    * preserving the agent-direct property §16.11). Omit to skip revocation checking.
@@ -97,11 +104,22 @@ export async function verifyAccreditation(input: AccreditationVerifyInput, deps:
   if (!sig.valid) {
     return { ok: false, accreditation: { ...UNVERIFIED }, reason: "accreditation_signature_invalid", detail: sig.reason };
   }
+  // A valid signature says WHO signed, not that the signer is a registrar: an organization signing
+  // "verified" about itself is a correctly signed lie. O1 binds the signer to the registrar.
+  const registrar = deps.registrarDid ?? VIA_PLATFORM_DID;
+  const signer = ev.proof?.verificationMethod?.split("#")[0];
+  if (signer !== registrar) {
+    return { ok: false, accreditation: { ...UNVERIFIED }, reason: "accreditation_signature_invalid", detail: `signed by ${signer ?? "nobody"}, not the registrar ${registrar}` };
+  }
+  // §18.4: an agent never holds standing of its own — it inherits its operator's. An `ACCREDITED`
+  // about the agent itself is refused, never projected (the fold refuses it on an agent chain too).
+  if (cs.id === input.agentDid) {
+    return { ok: false, accreditation: { ...UNVERIFIED }, reason: "accreditation_on_agent" };
+  }
 
-  // O2 — the ∧ link. Skipped only when the credential is about THIS agent directly
-  // (the registrar verified the agent's own operator identity, no org in between).
+  // O2 — the ∧ link: the operator the credential names, linked to this agent by its AFFILIATION.
   let org: string | undefined;
-  if (cs.id !== input.agentDid) {
+  {
     if (!input.affiliation) {
       // Nothing linking this agent to the verified operator ⇒ floor, don't fail.
       return { ok: true, accreditation: { ...UNVERIFIED } };

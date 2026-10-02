@@ -6,7 +6,7 @@ import type { ActionDetail } from "../action/types.js";
 import { evaluateRules, type RuleEvaluation } from "../cel/evaluate.js";
 import { domainMatches } from "../presentation/vp.js";
 import { detectSpecVersion, type DetectedSpecVersion } from "../version.js";
-import { enforcementOf } from "../mandate/description.js";
+import { enforcementFitsShape, enforcementOf } from "../mandate/description.js";
 import type { Enforcement } from "../types.js";
 import type { CredentialStatus, VerifiablePresentation } from "../types.js";
 
@@ -115,8 +115,14 @@ async function runChecks(
     }
   }
 
+  // 4c. agent binding (§16.10): this is the custodial presentation path — it carries no
+  //     proof-of-possession. A mandate bound to agents verifies only with one (agent-direct,
+  //     §16.11), so here it fails closed rather than falling back to `authorizedDIDs` alone.
+  if (mandate.context.authorizedAgents?.length) return deny("pop_invalid", urn);
+
   // 5. no action → the words govern, or nothing does (§20.3). `allow` says which.
   const enforcement = enforcementOf(mandate);
+  if (!enforcementFitsShape(mandate)) return { ...deny("enforcement_invalid", urn), enforcement };
   if (!mandate.action) {
     // §20.6 — a `semantic` mandate is enforced by a READER, and this is the custodial
     // presentation path (v0.2-new §7.1), which has no reviewer to consult: semantic mandates

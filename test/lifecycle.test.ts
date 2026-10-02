@@ -189,6 +189,26 @@ describe("verify flow (§8)", () => {
     expect(r.decision).toBe("deny");
     expect(r.reason).toBe("credential_revoked");
   });
+  // @invariant §16.10: the VP path carries no proof-of-possession, so a mandate bound to agents fails
+  // closed here — never verified on `authorizedDIDs` alone.
+  it("refuses a mandate bound to agents on the VP path, which carries no PoP", async () => {
+    const bound = stampMandate(
+      buildMandate({
+        subjectOrg: orgDid,
+        grantor: userDid,
+        authorizedDIDs: [verifierDid],
+        authorizedAgents: [{ did: "did:web:humanos.tech:agent:a1", cnf: { jwk: { kty: "EC", crv: "P-256", x: "x", y: "y" } }, assurance: "pop", binding: "self", verifiedAt: "2026-01-01T00:00:00.000Z" } as never],
+        action: buildActionReference(action, "https://api.humanos.tech/actions/pay-1"),
+        userParams: wrapUserParamsWithAction(action, { maxAmount: 500, categories: ["books"] }),
+        validFrom: "2026-01-01T00:00:00.000Z",
+      }),
+      { privateKey: platform.privateKey, verificationMethod: vm(VIA_PLATFORM_DID) },
+    );
+    const boundVp = buildPresentation({ credential: bound, holder: VIA_PLATFORM_DID, privateKey: platform.privateKey, verificationMethod: vm(VIA_PLATFORM_DID) });
+    const r = await verify({ presentation: boundVp, executionParams: { amount: 1, category: "books" } }, deps());
+    expect(r).toMatchObject({ decision: "deny", reason: "pop_invalid" });
+  });
+
   it("rejects a VP not signed by Humanos", async () => {
     const forged = buildPresentation({
       credential: mandate,
