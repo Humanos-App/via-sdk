@@ -108,6 +108,12 @@ export interface ActorKeyState {
    * rotation successor(s) — rotation-tolerant; only `revoked` kills usability.
    */
   rotatedTo?: string;
+  /**
+   * The runtime attested for THIS key's process (v0.3 §9.4ter) — the latest `RUNTIME_ATTESTED`
+   * naming the key. Absent is `none`: an attestation is over the process holding one key, so a
+   * sibling never inherits it.
+   */
+  runtime?: RuntimeAttestation;
 }
 
 /** An actor's folded state — the VIAActor record's fields (v0.3 §3.1), less its `chain` position. */
@@ -407,14 +413,32 @@ export function actorSummaryFloor(
 /**
  * The version of what the fold DERIVES. Bump it whenever the fold starts producing a field, or a
  * value, it did not before (2 = `existedSince` folded, `operator.relation` carried; 3 = no rung on an
- * actor with no usable key carrying one, instead of its last).
+ * actor with no usable key carrying one, instead of its last; 4 = a second rotation of one key
+ * refused, `key_already_rotated`; 5 = runtime per key, the actor's a shared-class summary).
  *
  * A stored record (a checkpoint) is only as current as the fold that wrote it. Seeding a fold from
  * one written by an older version would silently omit whatever the newer fold adds, so a
  * checkpointed read MUST seed only from a record written by this version and replay the whole
  * chain otherwise.
  */
-export const ACTOR_FOLD_VERSION = 3;
+export const ACTOR_FOLD_VERSION = 5;
+
+/**
+ * The actor's runtime SUMMARY (v0.3 §3.1) — for reporting, never authorization: the class every
+ * usable key shares, dated by the oldest of their attestations; absent when they do not share one or
+ * any usable key has none. Categorical, like `root`: no class is ranked above another here.
+ */
+function deriveRuntimeSummary(subject: ViaActorSubject): void {
+  const usable = subject.keys.filter((k) => k.status !== "revoked");
+  const classes = new Set(usable.map((k) => k.runtime?.class ?? "none"));
+  const [only] = [...classes];
+  if (usable.length === 0 || classes.size !== 1 || only === "none") {
+    delete subject.runtime;
+    return;
+  }
+  const at = usable.map((k) => k.runtime!.at).sort()[0]!;
+  subject.runtime = { class: only as RuntimeAttestation["class"], at };
+}
 
 /** Apply the derived floor to the subject; with no usable key carrying a rung, the subject has none. */
 function deriveSummary(subject: ViaActorSubject): void {
@@ -525,6 +549,8 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         const pred = key(detail.predecessorId);
         if (!pred) return fail("unknown_key", i);
         if (pred.status === "revoked") return fail("key_already_revoked", i);
+        // §5: a key is rotated once — overwriting `rotatedTo` would strand the first successor.
+        if (pred.rotatedTo) return fail("key_already_rotated", i);
         if (key(detail.keyId)) return fail("duplicate_key", i);
         pred.status = "rotated";
         pred.rotatedTo = String(detail.keyId); // succession pointer — D7 follows it
@@ -599,7 +625,13 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         const r = detail.runtime as RuntimeAttestation | undefined;
         if (!r || typeof r.class !== "string") return fail("runtime_attestation_invalid", i);
         if (!RUNTIME_CLASSES.has(r.class)) return fail("runtime_attestation_invalid", i);
-        subject.runtime = { ...r, at: r.at ?? e.validFrom };
+        // §5: the key it names; with no `keyId` (written before keys carried a runtime) the genesis
+        // key — §9.4ter (d) requires the attestation to be over the registering key.
+        const attested = detail.keyId ? key(detail.keyId) : subject.keys[0];
+        if (!attested) return fail("unknown_key", i);
+        if (attested.status === "revoked") return fail("key_already_revoked", i);
+        attested.runtime = { ...r, at: r.at ?? e.validFrom };
+        deriveRuntimeSummary(subject);
         break;
       }
       case "FORK_EVIDENCE":
@@ -689,7 +721,10 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
     }
     // The summary follows the keys (v0.3 §9.1bis rule 5). Derived here, after the event, so a
     // revoked weak key raises the floor and an added weak key lowers it without anyone asserting.
-    if (KEY_EVENTS.has(kind)) deriveSummary(subject);
+    if (KEY_EVENTS.has(kind)) {
+      deriveSummary(subject);
+      deriveRuntimeSummary(subject);
+    }
   }
 
   return subject ? { ok: true, subject } : fail("empty_chain");
@@ -876,7 +911,7 @@ export function projectAgentContext(
    * A key with no rung of its own falls back to the summary — chains written before per-key rungs
    * existed meant exactly that.
    */
-  presentingKey?: Pick<ActorKeyState, "assurance" | "binding" | "verifiedAt" | "root">,
+  presentingKey?: Pick<ActorKeyState, "assurance" | "binding" | "verifiedAt" | "root" | "runtime">,
 ): Record<string, unknown> {
   const assurance = presentingKey?.assurance ?? subject.assurance;
   const binding = presentingKey?.binding ?? subject.binding;
@@ -909,10 +944,15 @@ export function projectAgentContext(
     // as the literal string "none": a rule must be able to say "I require an attested environment"
     // and have that FAIL for an actor that has never presented one, which an undefined field
     // would not do reliably in CEL.
-    runtime: subject.runtime?.class ?? "none",
+    // KEY-SCOPED when authorizing (§9.3): the presenting key's own runtime, with NO fallback — a
+    // key no attestation names is `none`, whatever its siblings run in. Without a presenting key
+    // (reporting) the actor's summary.
+    runtime: (presentingKey ? presentingKey.runtime : subject.runtime)?.class ?? "none",
     // When the class was established, so a mandate can bound freshness itself. Not compared here:
     // a projection that silently expired a claim would hide which rule rejected the request.
-    ...(subject.runtime?.at ? { runtimeAt: subject.runtime.at } : {}),
+    ...((presentingKey ? presentingKey.runtime : subject.runtime)?.at
+      ? { runtimeAt: (presentingKey ? presentingKey.runtime : subject.runtime)!.at }
+      : {}),
   };
 }
 

@@ -324,7 +324,10 @@ export async function verifyAgentDirect(
   // `accreditation_revoked` are decisions, not data for a rule to weigh.
   const failure = loaded && "denied" in loaded ? (loaded as { denied: true; reason: string }) : null;
   if (failure) return deny(failure.reason, urn, enforcement);
-  const accreditation = loaded;
+  // §18.6 — an operator with no ACCREDITED is the unverified tier, not an absent object: a rule like
+  // `amount <= 1000 || accreditationRank(...) >= …` must still allow the small call. Only a verifier
+  // with no loader at all (accreditation not implemented) leaves it out — and the rule then denies.
+  const accreditation = loaded ?? (wantsAccreditation && deps.loadAccreditation ? { level: "unverified" } : undefined);
   const { decision, evaluations } = evaluateRules(action.rules, {
     userParams: unwrapUserParamValues(m.userParams),
     executionParams: req.params,

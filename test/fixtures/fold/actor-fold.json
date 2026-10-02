@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 5,
   "chains": {
     "organization": {
       "accreditation": {
@@ -58,6 +58,12 @@
           },
           "root": "aws-nitro",
           "rotatedTo": "did:web:humanos.tech:agent:golden-1#key-3",
+          "runtime": {
+            "at": "2026-01-07T00:00:00.000Z",
+            "class": "tee",
+            "measurementId": "m-golden",
+            "mechanism": "nitro"
+          },
           "status": "rotated",
           "verifiedAt": "2026-01-01T00:00:00.000Z"
         },
@@ -100,12 +106,6 @@
         "affiliationEvent": "sha256-KIOLhiXPLXG25ZPjAo2nd3iEHaE4Z+fdKoNDc1jAOMU=",
         "org": "did:web:golden.example",
         "relation": "operates"
-      },
-      "runtime": {
-        "at": "2026-01-07T00:00:00.000Z",
-        "class": "tee",
-        "measurementId": "m-golden",
-        "mechanism": "nitro"
       },
       "status": "active",
       "verifiedAt": "2026-01-01T00:00:00.000Z"

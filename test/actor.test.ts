@@ -256,6 +256,50 @@ describe("foldActorChain — attestation and assurance", () => {
     expect(r.subject.verifiedAt).toBe("2026-10-01T00:00:00.000Z");
   });
 
+  // @invariant §9.3/§9.4ter: runtime is per key. A software key added beside an enclave key does not
+  // inherit `tee` — the hole §9.1bis closed for the rung, closed here for the runtime.
+  it("a key added beside an attested one does not inherit its runtime", () => {
+    const TEE = { class: "tee", mechanism: "nitro" };
+    const c = chain(
+      (p) => ev("RUNTIME_ATTESTED", { keyId: "k1", runtime: TEE }, { prev: p, at: "2026-09-02T00:00:00.000Z" }),
+      (p) => ev("KEY_ADDED", { keyId: "k2", jwk: JWK, assurance: "pop", binding: "self" }, { prev: p }),
+    );
+    const r = foldActorChain(c);
+    if (!r.ok) throw new Error(r.reason);
+    const [k1, k2] = r.subject.keys;
+    expect(projectAgentContext(r.subject, k1).runtime).toBe("tee");
+    expect(projectAgentContext(r.subject, k2).runtime).toBe("none");
+    expect(r.subject.runtime).toBeUndefined(); // the keys do not share a class: no summary
+  });
+
+  it("a RUNTIME_ATTESTED with no keyId attests the genesis key", () => {
+    const c = chain((p) => ev("RUNTIME_ATTESTED", { runtime: { class: "tee" } }, { prev: p }));
+    const r = foldActorChain(c);
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.subject.keys[0]!.runtime?.class).toBe("tee");
+    expect(r.subject.runtime?.class).toBe("tee"); // its only key: the summary is that class
+  });
+
+  it("refuses a RUNTIME_ATTESTED naming a key the actor never had", () => {
+    const c = chain((p) => ev("RUNTIME_ATTESTED", { keyId: "k9", runtime: { class: "tee" } }, { prev: p }));
+    expect(foldActorChain(c)).toMatchObject({ ok: false, reason: "unknown_key" });
+  });
+
+  // @invariant §5: a key is rotated once. A second rotation of the same predecessor would overwrite
+  // `rotatedTo` and strand the first successor — still active — outside the walk.
+  it("refuses a second rotation of the same key — rotate the head of the chain", () => {
+    const c = chain(
+      (p) => ev("KEY_ROTATED", { predecessorId: "k1", keyId: "k2", jwk: JWK }, { prev: p }),
+      (p) => ev("KEY_ROTATED", { predecessorId: "k1", keyId: "k3", jwk: JWK }, { prev: p }),
+    );
+    expect(foldActorChain(c)).toMatchObject({ ok: false, reason: "key_already_rotated", at: 2 });
+    const head = chain(
+      (p) => ev("KEY_ROTATED", { predecessorId: "k1", keyId: "k2", jwk: JWK }, { prev: p }),
+      (p) => ev("KEY_ROTATED", { predecessorId: "k2", keyId: "k3", jwk: JWK }, { prev: p }),
+    );
+    expect(foldActorChain(head).ok).toBe(true);
+  });
+
   // @invariant §9.1bis rule 5: the summary is the floor across USABLE keys. With none left there is
   // no floor — the actor reports no rung, not the one its revoked key earned.
   it("an actor whose every key is revoked has no rung — not its last", () => {

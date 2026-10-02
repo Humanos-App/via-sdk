@@ -382,3 +382,41 @@ describe("§16.4 binding entry — the wire shape and the two verifiedAt encodin
   });
 });
 
+
+// §18.6 — an operator with no ACCREDITED is the unverified tier: projected, not left out.
+describe("accreditation.* when the operator has none (§18.6)", () => {
+  const SMALL_OR_VERIFIED: ActionDetail = {
+    ...ACTION,
+    $id: "urn:via:action:transfer-acc",
+    rules: [{ name: "small_or_verified", description: "small, or a verified operator", expression: 'executionParams.amount <= 1000 || accreditationRank(accreditation.level) >= accreditationRank("verified")' }],
+  } as unknown as ActionDetail;
+  let accMandate: ViaMandateCredential;
+  beforeAll(() => {
+    accMandate = buildMandate({
+      subjectOrg: "did:web:humanos.tech:org:acme",
+      grantor: "did:web:humanos.tech:user:op",
+      authorizedDIDs: [`did:web:${RP}`],
+      authorizedAgents: [boundKey(attested.publicJwk, { assurance: "hardware", binding: "attested", root: "aws-nitro" })],
+      action: { id: SMALL_OR_VERIFIED.$id, digestSRI: "", location: "https://api.humanos.tech/actions/transfer-acc" },
+      validFrom: "2026-01-01T00:00:00.000Z",
+    });
+  });
+  const call = async (amount: number, over: Partial<AgentDirectDeps>) => {
+    const params = { amount, action: "transfer" };
+    const signed = await buildPoP(
+      { cnf: { jkt: jwkThumbprint(attested.publicJwk) }, aud: `did:web:${RP}`, nonce: "n-1", iat: 1, action_hash: actionHash(accMandate.id, "transfer", params) },
+      attested.privateJwk,
+    );
+    return verifyAgentDirect(accMandate, { pop: signed, action: "transfer", params }, deps({ loadActionVersion: async () => SMALL_OR_VERIFIED, ...over }));
+  };
+
+  it("projects unverified, so the small call is allowed and the large one denied", async () => {
+    expect(await call(50, { loadAccreditation: () => undefined })).toMatchObject({ decision: "allow" });
+    expect(await call(5000, { loadAccreditation: () => undefined })).toMatchObject({ decision: "deny" });
+  });
+
+  // @invariant §16.10: a verifier that does not implement accreditation denies a rule that reads it.
+  it("denies a rule that reads accreditation when the verifier has no loader at all", async () => {
+    expect(await call(50, {})).toMatchObject({ decision: "deny" });
+  });
+});
