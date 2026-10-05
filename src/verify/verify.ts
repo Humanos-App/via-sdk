@@ -7,7 +7,7 @@ import { evaluateRules, type RuleEvaluation } from "../cel/evaluate.js";
 import { domainMatches } from "../presentation/vp.js";
 import { detectSpecVersion, type DetectedSpecVersion } from "../version.js";
 import { enforcementFitsShape, enforcementOf } from "../mandate/description.js";
-import { unsupportedCriticalExtension } from "../mandate/build.js";
+import { MAX_EXECUTIONS_REACHED, unsupportedCriticalExtension } from "../mandate/build.js";
 import type { Enforcement } from "../types.js";
 import type { CredentialStatus, VerifiablePresentation } from "../types.js";
 
@@ -26,6 +26,12 @@ export interface VerifyDeps {
 
 export interface CredentialRecord {
   status: CredentialStatus;
+  /**
+   * §19.5 — the issuer's record says the grant is SPENT: its `maxExecutions` bound was used up. An
+   * inactive record with this set denies `max_executions_reached`, not `credential_inactive` — used
+   * exactly as agreed is not withdrawn. Only the issuer knows; a status bit alone cannot say why.
+   */
+  exhausted?: boolean;
   validFrom?: string;
   validUntil?: string;
   /**
@@ -85,7 +91,7 @@ async function runChecks(
 
   // 2. status (trusted record)
   const record = await deps.loadCredentialRecord(urn);
-  if (record.status !== "ACTIVE") return deny(`credential_${record.status.toLowerCase()}`, urn);
+  if (record.status !== "ACTIVE") return deny(record.exhausted ? MAX_EXECUTIONS_REACHED : `credential_${record.status.toLowerCase()}`, urn);
 
   // 3. validity window
   const now = deps.now ?? new Date();

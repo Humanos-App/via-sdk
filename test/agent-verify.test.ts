@@ -265,6 +265,16 @@ describe("verifyAgentDirect — A1–A8 + agent.* CEL (M4)", () => {
     expect(r.decision).toBe("deny");
     expect(r.reason).toBe("credential_revoked");
   });
+
+  it("a spent Bounded-Use grant denies max_executions_reached on the agent path too (§19.5)", async () => {
+    const params = { amount: 10, action: "transfer" };
+    const r = await verifyAgentDirect(
+      mandate,
+      { pop: await pop(attested, "transfer", params), action: "transfer", params },
+      deps({ loadCredentialRecord: async () => ({ status: "REVOKED", exhausted: true }) }),
+    );
+    expect(r).toMatchObject({ decision: "deny", reason: "max_executions_reached" });
+  });
 });
 
 describe("§20 — enforcement, semantic review, and when a person is asked (S7)", () => {

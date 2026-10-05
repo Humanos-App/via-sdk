@@ -191,6 +191,15 @@ describe("verify flow (§8)", () => {
     expect(r.decision).toBe("deny");
     expect(r.reason).toBe("credential_revoked");
   });
+  // @invariant §19.5: a spent grant was used exactly as agreed, not withdrawn — the issuer's record
+  // says so, and the deny says so too.
+  it("denies a spent Bounded-Use grant as max_executions_reached, not as revoked", async () => {
+    const r = await verify(
+      { presentation: vp, executionParams: { amount: 1, category: "books" } },
+      { ...deps(), loadCredentialRecord: async () => ({ status: "REVOKED" as const, exhausted: true }) },
+    );
+    expect(r).toMatchObject({ decision: "deny", reason: "max_executions_reached" });
+  });
   // @invariant §16.10: the VP path carries no proof-of-possession, so a mandate bound to agents fails
   // closed here — never verified on `authorizedDIDs` alone.
   it("refuses a mandate bound to agents on the VP path, which carries no PoP", async () => {

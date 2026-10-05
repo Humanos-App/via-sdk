@@ -20,7 +20,7 @@ import type {
   ViaMandateCredential,
 } from "../types.js";
 import { enforcementFitsShape, enforcementOf, mayWidenAuthority } from "../mandate/description.js";
-import { EXT_SEMANTIC_REVIEW, unsupportedCriticalExtension, verifyStamp, type ResolvePublicKey } from "../mandate/build.js";
+import { EXT_SEMANTIC_REVIEW, MAX_EXECUTIONS_REACHED, unsupportedCriticalExtension, verifyStamp, type ResolvePublicKey } from "../mandate/build.js";
 
 /** The validated rung, surfaced into the CEL context as `agent.*` (§16.8). */
 export interface AgentEnv {
@@ -124,6 +124,12 @@ function withSignedWindow(candidates: BoundKey[], signed: BoundKey[]): BoundKey[
 
 export interface CredentialRecordLike {
   status: CredentialStatus;
+  /**
+   * §19.5 — the issuer's record says the grant is SPENT: its `maxExecutions` bound was used up. An
+   * inactive record with this set denies `max_executions_reached`, not `credential_inactive` — used
+   * exactly as agreed is not withdrawn. Only the issuer knows; a status bit alone cannot say why.
+   */
+  exhausted?: boolean;
   validFrom?: string;
   validUntil?: string;
   authorizedDIDs?: string[];
@@ -275,7 +281,9 @@ export async function verifyAgentDirect(
 
   // 2–3. status + validity (trusted record)
   const record = await deps.loadCredentialRecord(urn);
-  if (record.status !== "ACTIVE") return deny(`credential_${record.status.toLowerCase()}`, urn, enforcement);
+  if (record.status !== "ACTIVE") {
+    return deny(record.exhausted ? MAX_EXECUTIONS_REACHED : `credential_${record.status.toLowerCase()}`, urn, enforcement);
+  }
   if (record.validFrom && new Date(record.validFrom) > now) return deny("not_yet_valid", urn, enforcement);
   if (record.validUntil && new Date(record.validUntil) < now) return deny("expired", urn, enforcement);
 
