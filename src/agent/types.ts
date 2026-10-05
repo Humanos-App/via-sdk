@@ -131,7 +131,7 @@ export interface BoundKey {
   binding: Binding;
   root?: Root;
   custodyRef?: CustodyRef | null;
-  /** Seconds; attested re-attest window (attested rungs only). */
+  /** Seconds; the mandate's re-attest window (§16.4, A8), set by its author at issuance — never by registration. */
   maxAttestationStaleness?: number;
   /**
    * When registration locked the rung (principle P-B). ON THE WIRE this is an ISO-8601 string —

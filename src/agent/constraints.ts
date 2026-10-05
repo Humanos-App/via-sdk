@@ -14,7 +14,6 @@ export type Constraint =
   | { type: "assurance_floor"; min: Assurance; whenAction?: string[]; whenAmountAbove?: number }
   | { type: "binding_required"; binding: Binding; whenAmountAbove?: number }
   | { type: "root_allow"; roots: Root[] }
-  | { type: "max_attestation_staleness"; seconds: number }
   // §18 accreditation — the IDENTITY axis (ordinal floor + categorical match).
   | { type: "accreditation_required"; min: AccreditationLevel; whenAction?: string[]; whenAmountAbove?: number }
   | { type: "accreditation_method_in"; methods: AccreditationMethod[] };
@@ -49,10 +48,6 @@ export function constraintToRule(c: Constraint, i = 0): ActionRule {
     }
     case "root_allow":
       return rule(`root_allow_${i}`, `agent.root in ${celList(c.roots)}`, "root not accepted");
-    case "max_attestation_staleness":
-      // Needs the 🔮 `now` context item; enforced procedurally as A8 (v0.3 §16.7) until
-      // then, against the key's `maxAttestationStaleness` (v0.3 §16.4).
-      return rule(`max_attestation_staleness_${i}`, "true", "attestation staleness (procedural, A8)");
     case "accreditation_required": {
       // ORDINAL floor on the identity ladder — the §18 analogue of assurance_floor.
       const base = `accreditationRank(accreditation.level) >= accreditationRank(${JSON.stringify(c.min)})`;

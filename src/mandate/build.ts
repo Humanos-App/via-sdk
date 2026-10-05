@@ -36,6 +36,12 @@ export interface BuildMandateInput {
   authorizedDIDs: string[];
   /** §16 — the bound agent key(s) (from registration). Present ⇒ verify requires a PoP. */
   authorizedAgents?: BoundKey[];
+  /**
+   * §16.4 — the re-attest window, in seconds, written onto every `authorizedAgents` entry (A8). The
+   * mandate's author sets it; absent ⇒ no window. An entry that already carries a stricter one keeps
+   * its own.
+   */
+  maxAttestationStaleness?: number;
   action?: ActionReference;
   userParams?: Record<string, WrappedUserParam>;
   /**
@@ -143,13 +149,18 @@ export function buildEvidence(input: BuildEvidenceInput): EvidenceEntry {
  * the registrar saw (`custodyRef`, `evidence`, `runtime`); spreading it would sign KMS details
  * and grading evidence into a mandate every relying party reads.
  */
-function normalizeBoundKey(bk: BoundKey, i: number): BoundKey {
+function normalizeBoundKey(bk: BoundKey, i: number, window?: number): BoundKey {
   if (!bk.did) throw new Error(`authorizedAgents[${i}] requires did (§16.4)`);
   if (bk.keyId && !bk.keyId.startsWith(`${bk.did}#`)) {
     throw new Error(`authorizedAgents[${i}]: keyId (${bk.keyId}) is not a key of did (${bk.did})`);
   }
   const ms = typeof bk.verifiedAt === "number" ? bk.verifiedAt : Date.parse(bk.verifiedAt);
   if (!Number.isFinite(ms)) throw new Error(`authorizedAgents[${i}]: verifiedAt is not an instant`);
+  const windows = [bk.maxAttestationStaleness, window].filter((w): w is number => w !== undefined);
+  for (const w of windows) {
+    if (!Number.isSafeInteger(w) || w <= 0) throw new Error(`authorizedAgents[${i}]: maxAttestationStaleness must be a positive whole number of seconds`);
+  }
+  const maxAttestationStaleness = windows.length ? Math.min(...windows) : undefined;
   if (bk.attestationDigestSRI !== undefined && !bk.attestationDigestSRI.startsWith("sha256-")) {
     throw new Error(`authorizedAgents[${i}]: attestationDigestSRI is not an SRI string (sha256-…)`);
   }
@@ -161,7 +172,7 @@ function normalizeBoundKey(bk: BoundKey, i: number): BoundKey {
     binding: bk.binding,
     ...(bk.root ? { root: bk.root } : {}),
     verifiedAt: new Date(ms).toISOString(),
-    ...(bk.maxAttestationStaleness !== undefined ? { maxAttestationStaleness: bk.maxAttestationStaleness } : {}),
+    ...(maxAttestationStaleness !== undefined ? { maxAttestationStaleness } : {}),
     ...(bk.attestationDigestSRI !== undefined ? { attestationDigestSRI: bk.attestationDigestSRI } : {}),
   };
 }
@@ -207,7 +218,9 @@ export function buildMandate(input: BuildMandateInput): ViaMandateCredential {
         scope: input.scope ?? DEFAULT_SCOPE,
         context: {
           authorizedDIDs: input.authorizedDIDs,
-          ...(input.authorizedAgents ? { authorizedAgents: input.authorizedAgents.map(normalizeBoundKey) } : {}),
+          ...(input.authorizedAgents
+            ? { authorizedAgents: input.authorizedAgents.map((bk, i) => normalizeBoundKey(bk, i, input.maxAttestationStaleness)) }
+            : {}),
         },
         ...(input.action ? { action: input.action } : {}),
         ...(input.userParams ? { userParams: input.userParams } : {}),

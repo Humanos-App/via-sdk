@@ -216,7 +216,6 @@ export async function validateCoseAttestation(
       binding: "attested",
       root: "aws-nitro",
       verifiedAt: Date.now(),
-      maxAttestationStaleness: 86400,
       evidence: { rootFingerprint: graded.rootFingerprint },
       ...(runtime
         ? {

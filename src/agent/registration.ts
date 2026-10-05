@@ -261,7 +261,6 @@ export async function registerAgentKey(
     binding: result.binding,
     root: result.root,
     custodyRef: result.custodyRef ?? null,
-    maxAttestationStaleness: result.maxAttestationStaleness,
     verifiedAt: result.verifiedAt,
   };
   // Model C: pin the raw attestation quote's digest into the (to-be-signed) key so a

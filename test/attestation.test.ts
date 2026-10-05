@@ -94,7 +94,8 @@ describe("validateCoseAttestation (§16.5 · attested / Nitro)", () => {
       expect(res.assurance).toBe("hardware");
       expect(res.binding).toBe("attested");
       expect(res.root).toBe("aws-nitro");
-      expect(res.maxAttestationStaleness).toBe(86400);
+      // The re-attest window is the mandate author's (§16.4); registration sets none.
+      expect(res.maxAttestationStaleness).toBeUndefined();
       expect(jwkThumbprint(res.cnf.jwk)).toBe(jwkThumbprint(key.publicJwk));
     }
   });

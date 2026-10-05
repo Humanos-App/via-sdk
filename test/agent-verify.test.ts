@@ -428,6 +428,23 @@ describe("§16.4 binding entry — the wire shape and the two verifiedAt encodin
     expect(() => buildMandate({ ...base, authorizedAgents: [unprefixed] })).toThrow(/not an SRI string/);
   });
 
+  it("buildMandate writes the author's re-attest window onto every entry; a stricter one on the entry stays", () => {
+    const base = {
+      subjectOrg: "did:web:humanos.tech:org:acme", grantor: "g", authorizedDIDs: ["did:web:rp"],
+      validFrom: "2026-01-01T00:00:00.000Z",
+      description: { text: "Act for Acme within this scope.", lang: "en", author: "grantor" as const },
+    };
+    const plain = boundKey(attested.publicJwk, { assurance: "hardware", binding: "attested" });
+    const strict = { ...boundKey(custodial.publicJwk, { assurance: "hardware", binding: "custodial" }), maxAttestationStaleness: 60 };
+    const entries = buildMandate({ ...base, authorizedAgents: [plain, strict], maxAttestationStaleness: 3600 })
+      .credentialSubject.mandate.context.authorizedAgents!;
+    expect(entries.map((e) => e.maxAttestationStaleness)).toEqual([3600, 60]);
+    // Absent ⇒ no window (§16.4).
+    const none = buildMandate({ ...base, authorizedAgents: [plain] }).credentialSubject.mandate.context.authorizedAgents!;
+    expect(none[0]).not.toHaveProperty("maxAttestationStaleness");
+    expect(() => buildMandate({ ...base, authorizedAgents: [plain], maxAttestationStaleness: 0 })).toThrow(/positive whole number/);
+  });
+
   it("a v0.2-signed entry (epoch-ms verifiedAt) still verifies, and A8 compares in ms either way", async () => {
     // Bypass buildMandate on purpose: this is an artifact signed while v0.2 was current.
     const legacy = structuredClone(mandate) as ViaMandateCredential;
