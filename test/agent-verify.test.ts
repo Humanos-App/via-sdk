@@ -14,6 +14,7 @@ import {
   type Constraint,
   type ViaMandateCredential,
   type AgentDirectDeps,
+  type MandateStepUp,
 } from "../src/index.js";
 import type { ActionDetail } from "../src/action/types.js";
 
@@ -282,7 +283,7 @@ describe("§20 — enforcement, semantic review, and when a person is asked (S7)
   const words = { text: "Move money between my own accounts, nothing outbound.", lang: "en", author: "grantor" as const };
 
   /** The same mandate shape, minus the action: the words are the grant (§20.3). */
-  const semantic = () =>
+  const semantic = (stepUp: MandateStepUp | null = { triggers: ["verifier"], reasons: ["semantic_review"] }) =>
     buildMandate({
       subjectOrg: "did:web:humanos.tech:org:acme",
       grantor: "did:web:humanos.tech:user:op",
@@ -291,7 +292,7 @@ describe("§20 — enforcement, semantic review, and when a person is asked (S7)
       validFrom: "2026-01-01T00:00:00.000Z",
       enforcement: "semantic",
       description: words,
-      stepUp: { triggers: ["verifier"], reasons: ["semantic_review"] },
+      ...(stepUp ? { stepUp } : {}),
     });
 
   const present = async (m: ViaMandateCredential, over: Partial<AgentDirectDeps> = {}) => {
@@ -364,9 +365,47 @@ describe("§20 — enforcement, semantic review, and when a person is asked (S7)
       validFrom: "2026-01-01T00:00:00.000Z",
       enforcement: "semantic",
       description: { ...words, author: "agent", proposedBy: { actor: AGENT_DID, adopted: true } },
+      stepUp: { triggers: ["verifier"] },
     });
     const r = await present(m, { review: () => ({ verdict: "entailed" }) });
     expect(r.decision).toBe("rechallenge");
+  });
+
+  // @invariant §17.4: a verifier may take a call to the person only where the mandate says so —
+  // `verifier` in `triggers`, and the reason in `reasons` when listed. Otherwise the call the
+  // reviewer could not settle is a deny: nobody agreed to be interrupted.
+  it("denies an escalation the mandate does not permit", async () => {
+    const escalate = { review: () => ({ verdict: "escalate" as const }) };
+    expect(await present(semantic(null), escalate)).toMatchObject({ decision: "deny", reason: "semantic_review" });
+    expect(await present(semantic({ triggers: ["mandate"] }), escalate)).toMatchObject({ decision: "deny", reason: "semantic_review" });
+    expect(await present(semantic({ triggers: ["verifier"], reasons: ["risk_anomaly"] }), escalate)).toMatchObject({
+      decision: "deny",
+      reason: "semantic_review",
+    });
+    // `verifier` with no `reasons` list permits any verifier reason.
+    expect(await present(semantic({ triggers: ["verifier"] }), escalate)).toMatchObject({ decision: "rechallenge" });
+  });
+
+  // A satisfied step-up proceeds to allow (§17.4). The escalation used to be re-raised whatever came
+  // with the call, so the person approved and the agent was asked again, forever.
+  it("allows an escalated call once the person's step-up accompanies it", async () => {
+    const r = await present(semantic(), { review: () => ({ verdict: "escalate" }), stepUpSatisfied: true });
+    expect(r).toMatchObject({ decision: "allow", enforcement: "semantic" });
+  });
+
+  // @invariant §17.4: `mandate` in `triggers` is "ask me every time" — every call, with or without
+  // an action, waits for the person; a satisfied step-up lets that one call through.
+  it("asks the person on every call when the mandate lists `mandate`", async () => {
+    const entailed = { review: () => ({ verdict: "entailed" as const }) };
+    const every = semantic({ triggers: ["mandate"] });
+    expect(await present(every, entailed)).toMatchObject({ decision: "rechallenge", stepUp: { trigger: "mandate" } });
+    expect(await present(every, { ...entailed, stepUpSatisfied: true })).toMatchObject({ decision: "allow" });
+
+    const ruled = structuredClone(mandate);
+    (ruled.credentialSubject.mandate as { stepUp?: MandateStepUp }).stepUp = { triggers: ["mandate"] };
+    const small = { amount: 10, action: "transfer" };
+    const r = await verifyAgentDirect(ruled, { pop: await pop(attested, "transfer", small), action: "transfer", params: small }, deps());
+    expect(r).toMatchObject({ decision: "rechallenge", stepUp: { trigger: "mandate", reason: "stepup_required" } });
   });
 
   // S7: the step-up used to be raised BEFORE the rules ran, so a call the rules would deny sent a

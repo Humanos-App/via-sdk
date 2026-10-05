@@ -191,6 +191,27 @@ describe("verify flow (§8)", () => {
     expect(r.decision).toBe("deny");
     expect(r.reason).toBe("credential_revoked");
   });
+  // @invariant §17.4: the VP path has no step-up ceremony, so a mandate that asks the person on
+  // every call is refused here rather than allowed without the co-sign.
+  it("refuses a mandate that asks the person on every call", async () => {
+    const everyCall = stampMandate(
+      buildMandate({
+        subjectOrg: orgDid,
+        grantor: userDid,
+        authorizedDIDs: [verifierDid],
+        action: buildActionReference(action, "https://api.humanos.tech/actions/pay-1"),
+        userParams: wrapUserParamsWithAction(action, { maxAmount: 500, categories: ["books"] }),
+        validFrom: "2026-01-01T00:00:00.000Z",
+        description: { text: "Act within the pinned action.", lang: "en", author: "issuer" },
+        enforcement: "rules",
+        stepUp: { triggers: ["mandate"] },
+      }),
+      { privateKey: platform.privateKey, verificationMethod: vm(VIA_PLATFORM_DID) },
+    );
+    const asks = buildPresentation({ credential: everyCall, holder: VIA_PLATFORM_DID, privateKey: platform.privateKey, verificationMethod: vm(VIA_PLATFORM_DID) });
+    const r = await verify({ presentation: asks, executionParams: { amount: 1, category: "books" } }, deps());
+    expect(r).toMatchObject({ decision: "deny", reason: "stepup_required" });
+  });
   // @invariant §19.5: a spent grant was used exactly as agreed, not withdrawn — the issuer's record
   // says so, and the deny says so too.
   it("denies a spent Bounded-Use grant as max_executions_reached, not as revoked", async () => {

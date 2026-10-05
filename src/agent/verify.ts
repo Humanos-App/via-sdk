@@ -16,6 +16,7 @@ import type {
   CredentialStatus,
   Enforcement,
   MandateDescription,
+  MandateStepUp,
   StepUpTrigger,
   ViaMandateCredential,
 } from "../types.js";
@@ -305,7 +306,10 @@ export async function verifyAgentDirect(
   // A step-up is decided AFTER authority (S7). It used to be raised here, before the params and
   // the rules were looked at, so a call the rules would deny sent a person to their authenticator
   // first — consent fatigue bought with a decision that was wrong anyway.
-  const stepUpAsked = deps.requiresStepUp ? await deps.requiresStepUp(req.action, req.params) : false;
+  // Two sources ask before a call settles (§17.4): the pinned action (`action`, the caller's
+  // `requiresStepUp`) and the mandate itself (`mandate` in `mandate.stepUp.triggers` — every call).
+  const actionAsks = deps.requiresStepUp ? await deps.requiresStepUp(req.action, req.params) : false;
+  const mandateAsks = m.stepUp?.triggers?.includes("mandate") ?? false;
   const askStepUp = (trigger: StepUpTrigger, reason: string, evaluations: RuleEvaluation[] = []): AgentDirectResult => ({
     decision: "rechallenge",
     credentialId: urn,
@@ -318,20 +322,24 @@ export async function verifyAgentDirect(
 
   // 6. no action → the words govern, or nothing does (§20.3). `allow` now SAYS which.
   if (!m.action) {
+    let reviewer: { id: string; version?: string } | undefined;
     if (enforcement === "semantic") {
       const reviewed = await reviewSemantic(m.description, req, urn, deps);
-      if (reviewed.denied) return { ...deny(reviewed.reason, urn, enforcement), ...(reviewed.reviewer ? { reviewer: reviewed.reviewer } : {}) };
-      if (reviewed.escalate) {
-        return { ...askStepUp("verifier", "semantic_review"), ...(reviewed.reviewer ? { reviewer: reviewed.reviewer } : {}) };
+      reviewer = reviewed.reviewer;
+      const named = reviewer ? { reviewer } : {};
+      if (reviewed.denied) return { ...deny(reviewed.reason, urn, enforcement), ...named };
+      // §17.4: the reviewer may take a call to the person only where the mandate permits it —
+      // `verifier` in `triggers`, and the reason in `reasons` when that list is present. Otherwise
+      // the call it could not settle is a deny: nobody agreed to be asked.
+      if (reviewed.escalate && !deps.stepUpSatisfied) {
+        if (!verifierMayEscalate(m.stepUp, "semantic_review")) return { ...deny("semantic_review", urn, enforcement), ...named };
+        return { ...askStepUp("verifier", "semantic_review"), ...named };
       }
-      if (stepUpAsked && !deps.stepUpSatisfied) return askStepUp("mandate", "stepup_required");
-      return {
-        decision: "allow", credentialId: urn, evaluations: [], agent: pop.agent, enforcement,
-        ...(reviewed.reviewer ? { reviewer: reviewed.reviewer } : {}),
-      };
     }
-    if (stepUpAsked && !deps.stepUpSatisfied) return askStepUp("mandate", "stepup_required");
-    return { decision: "allow", credentialId: urn, evaluations: [], agent: pop.agent, enforcement };
+    if ((mandateAsks || actionAsks) && !deps.stepUpSatisfied) {
+      return { ...askStepUp("mandate", "stepup_required"), ...(reviewer ? { reviewer } : {}) };
+    }
+    return { decision: "allow", credentialId: urn, evaluations: [], agent: pop.agent, enforcement, ...(reviewer ? { reviewer } : {}) };
   }
 
   // 6b. load + pin-check the ActionVersion
@@ -348,7 +356,7 @@ export async function verifyAgentDirect(
 
   // 8. no rules → allow
   if (!action.rules || action.rules.length === 0) {
-    if (stepUpAsked && !deps.stepUpSatisfied) return askStepUp("action", "stepup_required");
+    if ((mandateAsks || actionAsks) && !deps.stepUpSatisfied) return askStepUp(mandateAsks ? "mandate" : "action", "stepup_required");
     return { decision: "allow", credentialId: urn, evaluations: [], agent: pop.agent, enforcement };
   }
 
@@ -373,7 +381,9 @@ export async function verifyAgentDirect(
   });
   if (decision === "allow") {
     // Authority passed — NOW a step-up is worth a person's attention (S7).
-    if (stepUpAsked && !deps.stepUpSatisfied) return askStepUp("action", "stepup_required", evaluations);
+    if ((mandateAsks || actionAsks) && !deps.stepUpSatisfied) {
+      return askStepUp(mandateAsks ? "mandate" : "action", "stepup_required", evaluations);
+    }
     return { decision: "allow", credentialId: urn, evaluations, agent: pop.agent, enforcement };
   }
 
@@ -384,6 +394,15 @@ export async function verifyAgentDirect(
   const missing = firstFail?.reason?.startsWith("required_param_missing") ? "required_param_missing" : null;
   const reason = missing ?? (firstFail && agentReasonForRule(firstFail.rule)) ?? "rule_failed";
   return { decision: "deny", credentialId: urn, reason, evaluations, agent: pop.agent, enforcement };
+}
+
+/**
+ * §17.4 — may a verifier-side escalation reach the person? Only when the mandate lists `verifier` in
+ * `stepUp.triggers`, and — when it also lists `reasons` — only for a reason named there.
+ */
+export function verifierMayEscalate(stepUp: MandateStepUp | undefined, reason: string): boolean {
+  if (!stepUp?.triggers?.includes("verifier")) return false;
+  return stepUp.reasons === undefined || stepUp.reasons.includes(reason);
 }
 
 /**

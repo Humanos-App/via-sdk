@@ -129,6 +129,10 @@ async function runChecks(
   // 4d. §19.2: this custodial path implements no critical extension — semantic review needs a reader
   //     it does not have — so a mandate that requires one is denied, never evaluated without it.
   if (unsupportedCriticalExtension(mandate, new Set())) return deny("extension_unsupported", urn);
+  // 4e. §17.4: a mandate that asks the person on every call (`mandate` in `stepUp.triggers`) cannot be
+  //     satisfied here — this path has no step-up ceremony and no `rechallenge` — so it is refused,
+  //     never allowed without the co-sign it requires.
+  if (mandate.stepUp?.triggers?.includes("mandate")) return deny("stepup_required", urn);
 
   // 5. no action → the words govern, or nothing does (§20.3). `allow` says which.
   const enforcement = enforcementOf(mandate);
