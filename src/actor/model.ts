@@ -31,7 +31,7 @@ import { eventChainLink } from "../event/build.js";
 import { EVENT_TYPES, type EventType } from "../crypto/proof.js";
 import type { ViaEvent } from "../types.js";
 import type { Assurance, Binding, RuntimeAttestation } from "../agent/types.js";
-import { assuranceRank, isAssurance, isBinding } from "../agent/types.js";
+import { BINDINGS, assuranceRank, isAssurance, isBinding } from "../agent/types.js";
 import type { Jwk } from "../crypto/p256.js";
 
 // ── Types (v0.3 §3.1 — assurance fields FLAT, §16 tokens verbatim) ───────────
@@ -412,14 +412,23 @@ export function actorSummaryFloor(
  * value, it did not before (2 = `existedSince` folded, `operator.relation` carried; 3 = no rung on an
  * actor with no usable key carrying one, instead of its last; 4 = a second rotation of one key
  * refused, `key_already_rotated`; 5 = runtime per key, the actor's a shared-class summary; 6 = a
- * rungless key is pop/self, and a later AFFILIATION only from the current operator).
+ * rungless key is pop/self, and a later AFFILIATION only from the current operator; 7 = a renewal
+ * states the key's whole rung, root included, and a keyed regrade never raises, `regrade_raises`).
  *
  * A stored record (a checkpoint) is only as current as the fold that wrote it. Seeding a fold from
  * one written by an older version would silently omit whatever the newer fold adds, so a
  * checkpointed read MUST seed only from a record written by this version and replay the whole
  * chain otherwise.
  */
-export const ACTOR_FOLD_VERSION = 6;
+export const ACTOR_FOLD_VERSION = 7;
+
+/** §5 — a keyed `ASSURANCE_UPDATED` lowers or keeps every rung field; it never raises one or names a new root. */
+function regradeLowers(k: ActorKeyState, detail: Record<string, unknown>): boolean {
+  if (detail.assurance !== undefined && k.assurance && assuranceRank(detail.assurance as Assurance) > assuranceRank(k.assurance)) return false;
+  if (detail.binding !== undefined && k.binding && BINDINGS.indexOf(detail.binding as Binding) > BINDINGS.indexOf(k.binding)) return false;
+  if (detail.root && String(detail.root) !== k.root) return false;
+  return true;
+}
 
 /**
  * The actor's runtime SUMMARY (v0.3 §3.1) — for reporting, never authorization: the class every
@@ -573,15 +582,24 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
       case "ATTESTATION_RENEWED": {
         const k = key(detail.keyId);
         if (!k) return fail("unknown_key", i);
-        // pointer to THIS renewal event — computed by the fold (self-link pattern)
-        k.attestation = { event: prevLink, kind: String(detail.attestationKind ?? "attestation-eat") };
+        // pointer to THIS renewal event — computed by the fold (self-link pattern). The kind is what the
+        // renewal presented; one that names none presented no quote, and must not claim one.
+        k.attestation = { event: prevLink, kind: String(detail.attestationKind ?? "none") };
         const at = (detail.verifiedAt as string) ?? e.validFrom;
         // PER-KEY, and that is the whole point. This used to move only `subject.verifiedAt`, so
         // renewing one key refreshed the freshness claim for EVERY key — a mandate pinned to a key
         // last attested a year ago passed a 30-day bound because a sibling was renewed yesterday.
         k.verifiedAt = at;
+        // A renewal RE-GRADES the key from the evidence it just presented (§9.1bis rule 2), which the
+        // writer MUST have checked proves THIS key (§5.2). It states the whole rung: a root it does not
+        // name is gone — weaker evidence must not keep the anchor the stronger one earned.
         if (detail.assurance) k.assurance = detail.assurance as Assurance;
         if (detail.binding) k.binding = detail.binding as Binding;
+        if (detail.assurance || detail.binding) {
+          if (detail.root) k.root = String(detail.root);
+          else delete k.root;
+          deriveSummary(subject);
+        }
         // The actor summary still moves: it answers "when was this actor last verified at all",
         // which a renewal genuinely advances. Authorization reads the KEY.
         subject.verifiedAt = at;
@@ -594,6 +612,9 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         if (detail.keyId) {
           const k = key(detail.keyId);
           if (!k) return fail("unknown_key", i);
+          // DOWN only, on every field (§5): a rung is earned by evidence, and this event carries
+          // none. Lower or equal assurance and binding; the root kept or dropped, never named anew.
+          if (!regradeLowers(k, detail)) return fail("regrade_raises", i);
           if (detail.assurance) k.assurance = detail.assurance as Assurance;
           if (detail.binding) k.binding = detail.binding as Binding;
           if (detail.root) k.root = String(detail.root);

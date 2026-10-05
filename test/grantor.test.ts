@@ -5,6 +5,7 @@ import {
   enrollGrantor,
   grantorBindingMethod,
   grantorTermsDigest,
+  mandateBodyTermsDigest,
   verifyGrantorAssertion,
   buildGrantorBinding,
   buildOtpGrantorBinding,
@@ -202,5 +203,45 @@ describe("§17.4 — a step-up over a tool call co-signs the agent's own action_
     const b = grantorTermsDigest({ purpose: "stepup", mandateId: "urn:via:credential:m", amount: 120, currency: "EUR", item: "hotel" });
     expect(a).toBe(b);
     expect(a).toMatch(/^sha256-/);
+  });
+});
+
+// @invariant §17.3: the passkey signs the WHOLE mandate as issued — every agent, every term, its id —
+// minus only what the approval fills in. A second agent, another verifier, a different bound, or the
+// same terms on another mandate each change the digest.
+describe("mandateBodyTermsDigest (§17.3)", () => {
+  const body = () => ({
+    id: "urn:via:credential:m1",
+    validFrom: "2026-10-01T00:00:00.000Z",
+    validUntil: "2026-11-01T00:00:00.000Z",
+    credentialSubject: {
+      id: "did:web:humanos.tech:org:acme",
+      mandate: {
+        grantor: "",
+        scope: "agent.tool-call",
+        context: { authorizedDIDs: ["did:web:rp"], authorizedAgents: [{ did: "did:web:humanos.tech:agent:a" }] },
+        description: { text: "Book loads.", lang: "en", author: "issuer" },
+        enforcement: "rules",
+        maxExecutions: 3,
+      } as Record<string, unknown>,
+    },
+  });
+  it("changes with every term, and ignores what the approval fills in", () => {
+    const base = mandateBodyTermsDigest(body());
+    const more = body();
+    (more.credentialSubject.mandate.context as { authorizedAgents: unknown[] }).authorizedAgents.push({ did: "did:web:humanos.tech:agent:b" });
+    expect(mandateBodyTermsDigest(more)).not.toBe(base);
+    const rp = body();
+    (rp.credentialSubject.mandate.context as { authorizedDIDs: string[] }).authorizedDIDs.push("did:web:other");
+    expect(mandateBodyTermsDigest(rp)).not.toBe(base);
+    const bound = body();
+    bound.credentialSubject.mandate.maxExecutions = 30;
+    expect(mandateBodyTermsDigest(bound)).not.toBe(base);
+    expect(mandateBodyTermsDigest({ ...body(), id: "urn:via:credential:m2" })).not.toBe(base);
+    expect(mandateBodyTermsDigest({ ...body(), validFrom: "2026-10-02T00:00:00.000Z" })).not.toBe(base);
+    const approved = body();
+    approved.credentialSubject.mandate.grantor = "did:web:humanos.tech:person:p";
+    approved.credentialSubject.mandate.grantorBinding = { method: "webauthn" };
+    expect(mandateBodyTermsDigest(approved)).toBe(base);
   });
 });

@@ -131,6 +131,34 @@ export function grantorTermsDigest(t: GrantorTerms): string {
 }
 
 /**
+ * §17.3 — the `termsDigest` a grantor's passkey signs when it APPROVES A MANDATE: over the mandate
+ * as it will be issued — every bound agent, the action pinned and its digest, the values fixed,
+ * the words shown, `enforcement`, `stepUp`, `maxExecutions`, the verifiers in `authorizedDIDs`, and
+ * the validity window — with only what the approval itself fills in left out (`grantor`,
+ * `grantorBinding`). Over the WHOLE body rather than a list of fields, so a term added to the
+ * mandate later is covered without anyone remembering to add it here; and naming the mandate's id,
+ * so one approval cannot be replayed onto another mandate with equal terms.
+ *
+ * Supersedes the field-list `{ purpose: "mandate", agentDid, constraints, … }` digest, which named one
+ * agent and omitted the rest — a person approved agent A, and agent B bound beside it got the same
+ * authority.
+ */
+export function mandateBodyTermsDigest(credential: {
+  id: string;
+  validFrom?: string;
+  validUntil?: string;
+  credentialSubject: { id: string; mandate: Record<string, unknown> };
+}): string {
+  const { grantor: _g, grantorBinding: _b, ...terms } = credential.credentialSubject.mandate;
+  return actionHash(`grant:${credential.id}`, "grant", {
+    subject: credential.credentialSubject.id,
+    mandate: terms,
+    ...(credential.validFrom ? { validFrom: credential.validFrom } : {}),
+    ...(credential.validUntil ? { validUntil: credential.validUntil } : {}),
+  });
+}
+
+/**
  * Verify a grantor's passkey assertion against the expected challenge, at the ISSUER's
  * own origin (§17.1). A tampered `termsDigest` is `action_hash_mismatch` — the same check
  * as §16.7's, so the same code. Anything else that fails the assertion (wrong key, wrong

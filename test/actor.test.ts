@@ -256,6 +256,23 @@ describe("foldActorChain — attestation and assurance", () => {
     expect(r.subject.verifiedAt).toBe("2026-10-01T00:00:00.000Z");
   });
 
+  // @invariant §9.1bis rule 2: a renewal re-grades the key from the evidence it presented, the whole
+  // rung — weaker evidence drops the root the stronger one earned, and a renewal with no quote does
+  // not claim one.
+  it("a weaker renewal drops the root and records no quote", () => {
+    const g = genesis({ root: "aws-nitro" });
+    const before = foldActorChain([g]);
+    if (!before.ok) throw new Error(before.reason);
+    const keyId = before.subject.keys[0]!.id;
+    const weak = ev("ATTESTATION_RENEWED", { keyId, assurance: "pop", binding: "self", verifiedAt: "2026-10-01T00:00:00.000Z" }, { prev: g });
+    const r = foldActorChain([g, weak]);
+    if (!r.ok) throw new Error(r.reason);
+    const k = r.subject.keys[0]!;
+    expect(k).toMatchObject({ assurance: "pop", binding: "self" });
+    expect(k.root).toBeUndefined();
+    expect(k.attestation?.kind).toBe("none");
+  });
+
   // @invariant §9.3/§9.4ter: runtime is per key. A software key added beside an enclave key does not
   // inherit `tee` — the hole §9.1bis closed for the rung, closed here for the runtime.
   it("a key added beside an attested one does not inherit its runtime", () => {
@@ -403,6 +420,23 @@ describe("foldActorChain — attestation and assurance", () => {
     // A keyId the actor never had fails the fold, like every other key-addressed event.
     const bad = ev("ASSURANCE_UPDATED", { keyId: "did:web:x#key-9", assurance: "pop" }, { prev: g });
     expect(foldActorChain([g, bad])).toMatchObject({ ok: false, reason: expect.stringContaining("unknown_key") });
+  });
+
+  // @invariant §5: a keyed regrade carries no evidence, so it lowers or keeps every rung field and
+  // never names a root — "downgrade-only" on assurance alone let it raise the binding and set a root.
+  it("refuses a keyed ASSURANCE_UPDATED that raises any rung field", () => {
+    const g = genesis({ assurance: "pop", binding: "self" });
+    const before = foldActorChain([g]);
+    if (!before.ok) throw new Error(before.reason);
+    const keyId = before.subject.keys[0]!.id;
+    for (const raise of [
+      { assurance: "hardware", binding: "self" },
+      { assurance: "pop", binding: "attested" },
+      { assurance: "pop", binding: "self", root: "aws-nitro" },
+    ]) {
+      const up = ev("ASSURANCE_UPDATED", { keyId, ...raise }, { prev: g });
+      expect(foldActorChain([g, up])).toMatchObject({ ok: false, reason: expect.stringContaining("regrade_raises") });
+    }
   });
 });
 

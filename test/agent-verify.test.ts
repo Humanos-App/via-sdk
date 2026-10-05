@@ -141,6 +141,18 @@ it("accepts a step-0 candidate the mandate never named, held to the signed entry
   expect(r).toMatchObject({ decision: "deny", reason: "attestation_stale" });
 });
 
+// @invariant §16.6: the action presented and the params' discriminator are one name. A call named
+// one tool whose params say another would pass the rules for the real tool and dodge its step-up.
+it("denies a call whose params name a different tool than the one presented", async () => {
+  const params = { amount: 10, action: "transfer" };
+  const r = await verifyAgentDirect(
+    mandate,
+    { pop: await pop(attested, "Transfer", params), action: "Transfer", params },
+    deps({ requiresStepUp: (a) => a === "transfer" }),
+  );
+  expect(r).toMatchObject({ decision: "deny", reason: "action_mismatch" });
+});
+
 it("denies a mandate whose enforcement does not fit its shape", async () => {
   const mismatched = structuredClone(mandate);
   (mismatched.credentialSubject.mandate as { enforcement?: string }).enforcement = "semantic"; // it has an action

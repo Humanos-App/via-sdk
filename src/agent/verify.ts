@@ -302,6 +302,11 @@ export async function verifyAgentDirect(
     { validateNonce: deps.validateNonce, now },
   );
   if (!pop.ok || !pop.agent) return deny(pop.reason ?? "pop_invalid", urn, enforcement);
+  // §16.6: the call names its action once. When the params carry a discriminator (`tool`, or
+  // `action`), it MUST be the action presented — otherwise the step-up decision reads one name and
+  // the rules another, and a call named `Wire_Transfer` with `params.tool: "wire_transfer"` passes
+  // the rules for the real tool while dodging the step-up that tool requires.
+  if (discriminatorMismatch(req.action, req.params)) return deny("action_mismatch", urn, enforcement);
 
   // A step-up is decided AFTER authority (S7). It used to be raised here, before the params and
   // the rules were looked at, so a call the rules would deny sent a person to their authenticator
@@ -394,6 +399,14 @@ export async function verifyAgentDirect(
   const missing = firstFail?.reason?.startsWith("required_param_missing") ? "required_param_missing" : null;
   const reason = missing ?? (firstFail && agentReasonForRule(firstFail.rule)) ?? "rule_failed";
   return { decision: "deny", credentialId: urn, reason, evaluations, agent: pop.agent, enforcement };
+}
+
+/** §16.6 — the params name a tool other than the action presented. */
+export function discriminatorMismatch(action: string, params: Record<string, unknown>): boolean {
+  for (const name of ["tool", "action"] as const) {
+    if (name in params && params[name] !== action) return true;
+  }
+  return false;
 }
 
 /**
