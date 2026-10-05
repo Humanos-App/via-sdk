@@ -85,6 +85,7 @@ const REGEN = !!process.env.REGEN_FIXTURES;
       userParams: wrapUserParamsWithAction(action, { maxAmount: 2500 }),
       credentialStatus: buildCredentialStatusEntry({ statusListCredential: "https://status.humanos.tech/list/1", statusListIndex: 0 }),
       validFrom: "2026-01-01T00:00:00.000Z",
+      description: { text: "Act within the pinned action.", lang: "en", author: "issuer" }, enforcement: "rules",
     });
     // These artifacts were signed while v0.2 was current, and the builder is now v0.3 — so the
     // v0.3-only marker and field come back off before the STAMP covers the body. Without this the
@@ -94,6 +95,7 @@ const REGEN = !!process.env.REGEN_FIXTURES;
     // reproduce them from the moment VIA_SPEC_VERSION moved; it can again.
     mandate.specVersion = "0.2";
     delete (mandate.credentialSubject.mandate as { enforcement?: unknown }).enforcement;
+    delete (mandate.credentialSubject.mandate as { description?: unknown }).description;
     // the mandate carries a SINGLE content-bound securing proof — the Humanos STAMP
     mandate = stampMandate(mandate, { privateKey: SEED_PLATFORM, verificationMethod: vmPlatform, created: "2026-01-03T00:00:00.000Z" });
     write("v0.2/mandate.json", mandate);
@@ -209,6 +211,7 @@ const REGEN = !!process.env.REGEN_FIXTURES;
       maxExecutions: 20,
       validFrom: "2026-09-22T10:00:00.000Z",
       validUntil: "2026-10-22T10:00:00.000Z",
+      enforcement: "rules",
     });
     policy = stampMandate(policy, { privateKey: SEED_PLATFORM, verificationMethod: vmPlatform, created: "2026-09-22T10:00:00.000Z" });
     write("v0.3/mandate-rules.json", policy);
@@ -328,6 +331,7 @@ const REGEN = !!process.env.REGEN_FIXTURES;
       // artifact predates §20 and the marker alike — so it is built to satisfy today's builder and
       // then stripped back to what a pre-0.2 issuer actually produced.
       description: { text: "predates §20", lang: "en", author: "grantor" },
+      enforcement: "none",
     });
     delete legacyMandate.specVersion; // predates the marker
     delete (legacyMandate.credentialSubject.mandate as { description?: unknown }).description;

@@ -57,13 +57,14 @@ export interface BuildMandateInput {
   validUntil?: string;
   /** v0.3 delegation — marks a CHILD mandate (attenuated from `parent`). */
   delegation?: { parent: string; depth: number; tools: string[] };
-  /** §20.1 — the words the person was shown, with their language and their author. */
-  description?: MandateDescription;
+  /** §20.1 — the words the person was shown, with their language and their author. REQUIRED. */
+  description: MandateDescription;
   /**
-   * §20.3 — which machinery governs. Defaults to `rules` when an action is pinned and `none`
-   * otherwise, which is what a pre-§20 mandate meant implicitly; pass `semantic` deliberately.
+   * §20.3 — which machinery governs. REQUIRED: a v0.3 issuer states it rather than leaving it to be
+   * inferred from whether an action is pinned. Inference is a verifier's fallback for mandates
+   * issued before §20, and it reads a forgotten field as `none` — a mandate nothing checks.
    */
-  enforcement?: Enforcement;
+  enforcement: Enforcement;
   /** §20.4 — who asked for this mandate, when that was not the grantor (§16.14). */
   initiator?: MandateInitiator;
   /** §17.4 — the mandate's own step-up declaration (`triggers`, `reasons`). */
@@ -179,6 +180,10 @@ function normalizeBoundKey(bk: BoundKey, i: number, window?: number): BoundKey {
 
 export function buildMandate(input: BuildMandateInput): ViaMandateCredential {
   if (input.authorizedDIDs.length === 0) throw new Error("mandate requires at least one authorizedDID");
+  // §20.1 / §20.3 — both are the issuer's to write on every new mandate; the types say so, and this
+  // says so to a caller the types do not reach.
+  if (!input.description) throw new Error("mandate requires a description (§20.1)");
+  if (!input.enforcement) throw new Error("mandate requires an enforcement (§20.3)");
   // §20.3's validity rules are enforced HERE rather than at verify: an invalid pairing of
   // description and enforcement is a defective consent, and the moment to refuse it is before a
   // person is asked to sign, not after the artifact exists.
@@ -196,7 +201,7 @@ export function buildMandate(input: BuildMandateInput): ViaMandateCredential {
   // §19.4 — semantic review is CRITICAL, not advisory: a verifier that ignored the term would
   // allow every call under a mandate whose whole point is that something reads it first. Listing
   // it in the signed manifest is what makes "this verifier does not implement §20.6" detectable.
-  const enforcement = input.enforcement ?? (input.action ? "rules" : "none");
+  const enforcement = input.enforcement;
   const criticalExtensions: string[] = [];
   if (enforcement === "semantic") {
     extensions.push(EXT_SEMANTIC_REVIEW);
@@ -224,7 +229,7 @@ export function buildMandate(input: BuildMandateInput): ViaMandateCredential {
         },
         ...(input.action ? { action: input.action } : {}),
         ...(input.userParams ? { userParams: input.userParams } : {}),
-        ...(input.description ? { description: input.description } : {}),
+        description: input.description,
         enforcement,
         ...(input.initiator ? { initiator: input.initiator } : {}),
         ...(input.stepUp ? { stepUp: input.stepUp } : {}),

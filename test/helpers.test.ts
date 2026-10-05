@@ -32,6 +32,7 @@ describe("resolveVerificationKey", () => {
       authorizedDIDs: ["did:web:v.example"],
       validFrom: "2026-01-01T00:00:00.000Z",
       description: { text: "Act for this org within this scope.", lang: "en", author: "grantor" },
+      enforcement: "none",
     });
     m = stampMandate(m, { privateKey: k.privateKey, verificationMethod: `${did}#key-1` });
     const r = await verifyStamp(m, (vmId) => resolveVerificationKey(doc, vmId, "assertionMethod"));

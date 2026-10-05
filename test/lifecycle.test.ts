@@ -80,6 +80,8 @@ beforeAll(() => {
     action: buildActionReference(action, "https://api.humanos.tech/actions/pay-1"),
     userParams: wrapUserParamsWithAction(action, { maxAmount: 500, categories: ["books", "food"] }),
     validFrom: "2026-01-01T00:00:00.000Z",
+    description: { text: "Act within the pinned action.", lang: "en", author: "issuer" },
+    enforcement: "rules",
   });
   // Securing model (spec §5): the mandate carries ONE content-bound STAMP; the
   // ISSUE/ACCEPT consents are standalone content-bound VIAEvents in the chain.
@@ -201,6 +203,8 @@ describe("verify flow (§8)", () => {
         action: buildActionReference(action, "https://api.humanos.tech/actions/pay-1"),
         userParams: wrapUserParamsWithAction(action, { maxAmount: 500, categories: ["books"] }),
         validFrom: "2026-01-01T00:00:00.000Z",
+        description: { text: "Act within the pinned action.", lang: "en", author: "issuer" },
+        enforcement: "rules",
       }),
       { privateKey: platform.privateKey, verificationMethod: vm(VIA_PLATFORM_DID) },
     );

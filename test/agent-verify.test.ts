@@ -74,6 +74,7 @@ beforeAll(async () => {
     ],
     action: { id: ACTION.$id, digestSRI: "", location: "https://api.humanos.tech/actions/transfer-1" },
     validFrom: "2026-01-01T00:00:00.000Z",
+    description: { text: "Act within the pinned action.", lang: "en", author: "issuer" }, enforcement: "rules",
   });
 });
 
@@ -397,6 +398,7 @@ describe("§16.4 binding entry — the wire shape and the two verifiedAt encodin
       subjectOrg: "did:web:humanos.tech:org:acme", grantor: "g", authorizedDIDs: ["did:web:rp"],
       validFrom: "2026-01-01T00:00:00.000Z",
       description: { text: "Act for Acme within this scope.", lang: "en", author: "grantor" as const },
+      enforcement: "none" as const,
     };
     const noDid = { cnf: { jwk: attested.publicJwk }, assurance: "pop", binding: "self", verifiedAt: 1 } as unknown as BoundKey;
     expect(() => buildMandate({ ...base, authorizedAgents: [noDid] })).toThrow(/requires did/);
@@ -409,6 +411,7 @@ describe("§16.4 binding entry — the wire shape and the two verifiedAt encodin
       subjectOrg: "did:web:humanos.tech:org:acme", grantor: "g", authorizedDIDs: ["did:web:rp"],
       validFrom: "2026-01-01T00:00:00.000Z",
       description: { text: "Act for Acme within this scope.", lang: "en", author: "grantor" as const },
+      enforcement: "none" as const,
     };
     // A registration result handed straight in, as a caller is likely to.
     const registered = {
@@ -433,6 +436,7 @@ describe("§16.4 binding entry — the wire shape and the two verifiedAt encodin
       subjectOrg: "did:web:humanos.tech:org:acme", grantor: "g", authorizedDIDs: ["did:web:rp"],
       validFrom: "2026-01-01T00:00:00.000Z",
       description: { text: "Act for Acme within this scope.", lang: "en", author: "grantor" as const },
+      enforcement: "none" as const,
     };
     const plain = boundKey(attested.publicJwk, { assurance: "hardware", binding: "attested" });
     const strict = { ...boundKey(custodial.publicJwk, { assurance: "hardware", binding: "custodial" }), maxAttestationStaleness: 60 };
@@ -489,6 +493,7 @@ describe("accreditation.* when the operator has none (§18.6)", () => {
       authorizedAgents: [boundKey(attested.publicJwk, { assurance: "hardware", binding: "attested", root: "aws-nitro" })],
       action: { id: SMALL_OR_VERIFIED.$id, digestSRI: "", location: "https://api.humanos.tech/actions/transfer-acc" },
       validFrom: "2026-01-01T00:00:00.000Z",
+      description: { text: "Act within the pinned action.", lang: "en", author: "issuer" }, enforcement: "rules",
     });
   });
   const call = async (amount: number, over: Partial<AgentDirectDeps>) => {

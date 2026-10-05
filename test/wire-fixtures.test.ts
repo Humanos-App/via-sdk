@@ -156,12 +156,13 @@ describe("frozen fixtures — v0.3 (§20: description, enforcement, and S13 appl
     expect(m(semantic).stepUp).toMatchObject({ triggers: ["verifier"] });
   });
 
-  // @invariant §20.6 — the custodial VP path has no reviewer to consult, and a mandate whose
-  // enforcement IS a reader must not be verified by not reading.
+  // @invariant §20.6 / §19.2 — the custodial VP path has no reviewer to consult, and a mandate whose
+  // enforcement IS a reader must not be verified by not reading. The mandate signs `semanticReview` as
+  // critical, so the refusal is the generic one, before any reviewer would be looked for.
   it("the VP path fails closed on a semantic mandate rather than allowing it", async () => {
     const vp = read<VerifiablePresentation>("v0.3/presentation-semantic.json");
     const r = await verify({ presentation: vp, executionParams: {} }, deps);
-    expect(r).toMatchObject({ decision: "deny", reason: "reviewer_unavailable" });
+    expect(r).toMatchObject({ decision: "deny", reason: "extension_unsupported" });
   });
 
   it("events verify, chain, and record who demanded the co-sign and which reader ran", async () => {

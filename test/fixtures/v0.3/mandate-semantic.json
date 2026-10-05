@@ -47,6 +47,9 @@
       },
       "extensions": [
         "semanticReview"
+      ],
+      "criticalExtensions": [
+        "semanticReview"
       ]
     }
   },
@@ -57,6 +60,6 @@
     "verificationMethod": "did:web:humanos.tech#key-1",
     "proofPurpose": "assertionMethod",
     "event": "STAMP",
-    "proofValue": "z38ENcJjkcuRN5Cwzjx72GNYdc59C1eegKyqATbMNGrhmcwzrNuMGsrHi622u9YMN8DimyLE62nqNPV6BQFGpMtLR"
+    "proofValue": "z12aDS3SHwacSK9nNMJkzE42bjE7YKjDrTBHsSSkAoTPP4zhSwXcttJRFvUc4qa4EumuWNPXvraBXMizrG2JtjYx"
   }
 }

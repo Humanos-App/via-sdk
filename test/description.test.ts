@@ -40,6 +40,7 @@ const mandateInput = (over: Record<string, unknown> = {}) => ({
   authorizedDIDs: ["did:web:verifier.example"],
   validFrom: "2026-09-22T00:00:00.000Z",
   description: words(),
+  enforcement: over.action ? "rules" : "none",
   ...over,
 });
 
@@ -144,13 +145,17 @@ describe("buildMandate (§20)", () => {
     platform = generateEd25519Key();
   });
 
-  it("refuses at issuance rather than producing an invalid artifact", () => {
-    expect(() => buildMandate(mandateInput({ description: undefined }) as never)).toThrow(
-      /description_required/,
-    );
+  // @invariant §20.1 / §20.3: a v0.3 issuer writes both on every mandate — a `rules` one included —
+  // and never leaves enforcement to be inferred, which would read a forgotten field as `none`.
+  it("refuses a new mandate without a description or an enforcement, whatever its kind", () => {
+    expect(() => buildMandate(mandateInput({ description: undefined }) as never)).toThrow(/requires a description/);
+    expect(() =>
+      buildMandate(mandateInput({ action: ACTION, description: undefined }) as never),
+    ).toThrow(/requires a description/);
+    expect(() => buildMandate(mandateInput({ enforcement: undefined }) as never)).toThrow(/requires an enforcement/);
   });
 
-  it("writes enforcement on every mandate, derived when the caller says nothing", () => {
+  it("writes the enforcement the issuer stated", () => {
     expect(buildMandate(mandateInput() as never).credentialSubject.mandate.enforcement).toBe("none");
     const policy = buildMandate(
       mandateInput({ action: ACTION, description: words({ author: "issuer" }) }) as never,

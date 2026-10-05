@@ -44,6 +44,8 @@ beforeAll(async () => {
     action: buildActionReference(action, "https://api.humanos.tech/actions/a1"),
     userParams: wrapUserParamsWithAction(action, { maxAmount: 500, secretNote: "do-not-reveal" }),
     validFrom: "2026-01-01T00:00:00.000Z",
+    description: { text: "Act within the pinned action.", lang: "en", author: "issuer" },
+    enforcement: "rules",
   });
 
   sdJwt = await buildSdJwtMandate({
