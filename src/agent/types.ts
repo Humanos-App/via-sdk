@@ -143,7 +143,8 @@ export interface BoundKey {
   /**
    * Model C: digest of the raw attestation quote, pinned into the signed mandate,
    * so a relying party can re-validate confinement to public roots itself instead of
-   * trusting the registrar's signed rung. Set for attested keys only. `b64u(sha256(docB64 bytes))`.
+   * trusting the registrar's signed rung. Set for attested keys only. An SRI string (§16.4):
+   * `sha256-` + standard base64 of SHA-256 over the decoded quote bytes.
    */
   attestationDigestSRI?: string;
   /**

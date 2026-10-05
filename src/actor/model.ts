@@ -911,15 +911,15 @@ export function projectAgentContext(
    * this request". Omit it only for reporting, where the actor summary is the honest answer to a
    * different question ("what is this agent, overall").
    *
-   * A key with no rung of its own falls back to the summary — chains written before per-key rungs
-   * existed meant exactly that.
+   * A supplied key never borrows the summary (§9.1bis rule 4): one with no rung of its own is
+   * `pop` / `self`. The fold already writes that rung; the default here covers a caller's own key.
    */
   presentingKey?: Pick<ActorKeyState, "assurance" | "binding" | "verifiedAt" | "root" | "runtime">,
 ): Record<string, unknown> {
-  const assurance = presentingKey?.assurance ?? subject.assurance;
-  const binding = presentingKey?.binding ?? subject.binding;
-  const verifiedAt = presentingKey?.verifiedAt ?? subject.verifiedAt;
-  const root = presentingKey?.root ?? subject.root;
+  const assurance = presentingKey ? (presentingKey.assurance ?? "pop") : subject.assurance;
+  const binding = presentingKey ? (presentingKey.binding ?? "self") : subject.binding;
+  const verifiedAt = presentingKey ? presentingKey.verifiedAt : subject.verifiedAt;
+  const root = presentingKey ? presentingKey.root : subject.root;
   return {
     // The actor's own DID. §16.1 splits IDENTIFIER from AUTHENTICATOR: the DID is who the agent
     // IS, the key is what proves it — an actor holds several keys over its life and stays the same

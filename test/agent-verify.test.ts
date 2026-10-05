@@ -102,6 +102,43 @@ it("refuses a mandate edited after its STAMP", async () => {
   expect(r).toMatchObject({ decision: "deny", reason: "credential_stamp_invalid" });
 });
 
+// @invariant §9.1bis rule 1: the rung a rule reads is the presenting key's — an actor projection
+// handed in beside it cannot replace it with a summary, or a weaker one.
+it("keeps the presenting key's rung when the caller's actor projection carries another", async () => {
+  const params = { amount: 30000, action: "transfer" };
+  const r = await verifyAgentDirect(
+    mandate,
+    { pop: await pop(attested, "transfer", params), action: "transfer", params },
+    deps({ agentEnvExtras: { assurance: "pop", binding: "self", status: "active" } }),
+  );
+  expect(r).toMatchObject({ decision: "allow", agent: { assurance: "hardware", binding: "attested" } });
+});
+
+// @invariant §16.7 step 0 + A8: the keys step 0 resolved beside the mandate are what may sign, and
+// the signed entry's re-attest window still holds them — a candidate list built from the actor
+// carries no window of its own, and must not be a way around A8.
+it("accepts a step-0 candidate the mandate never named, held to the signed entry's window", async () => {
+  const windowed = structuredClone(mandate);
+  for (const e of windowed.credentialSubject.mandate.context.authorizedAgents!) e.maxAttestationStaleness = 60;
+  const params = { amount: 10, action: "transfer" };
+  // The rotated successor: not in the mandate, resolved through the actor by the caller.
+  const successor = { ...boundKey(impostor.publicJwk, { assurance: "hardware", binding: "attested", root: "aws-nitro" }) };
+  const fresh = await verifyAgentDirect(
+    windowed,
+    { pop: await pop(impostor, "transfer", params), action: "transfer", params },
+    deps({ candidates: [successor] }),
+  );
+  expect(fresh).toMatchObject({ decision: "allow" });
+
+  const stale = { ...successor, verifiedAt: now.getTime() - 120_000 }; // 2 min old, 1 min window
+  const r = await verifyAgentDirect(
+    windowed,
+    { pop: await pop(impostor, "transfer", params), action: "transfer", params },
+    deps({ candidates: [stale] }),
+  );
+  expect(r).toMatchObject({ decision: "deny", reason: "attestation_stale" });
+});
+
 it("denies a mandate whose enforcement does not fit its shape", async () => {
   const mismatched = structuredClone(mandate);
   (mismatched.credentialSubject.mandate as { enforcement?: string }).enforcement = "semantic"; // it has an action
@@ -365,6 +402,30 @@ describe("§16.4 binding entry — the wire shape and the two verifiedAt encodin
     expect(() => buildMandate({ ...base, authorizedAgents: [noDid] })).toThrow(/requires did/);
     const mismatch: BoundKey = { ...boundKey(attested.publicJwk, { assurance: "pop", binding: "self" }), keyId: "did:web:humanos.tech:agent:other#key-1" };
     expect(() => buildMandate({ ...base, authorizedAgents: [mismatch] })).toThrow(/not a key of did/);
+  });
+
+  it("buildMandate signs only the §16.4 fields — not the registrar's custody, evidence or runtime", () => {
+    const base = {
+      subjectOrg: "did:web:humanos.tech:org:acme", grantor: "g", authorizedDIDs: ["did:web:rp"],
+      validFrom: "2026-01-01T00:00:00.000Z",
+      description: { text: "Act for Acme within this scope.", lang: "en", author: "grantor" as const },
+    };
+    // A registration result handed straight in, as a caller is likely to.
+    const registered = {
+      ...boundKey(attested.publicJwk, { assurance: "hardware", binding: "attested" }),
+      root: "aws-nitro",
+      custodyRef: { provider: "aws-kms", keyArn: "arn:aws:kms:eu-west-1:1:key/abc" },
+      evidence: { rootFingerprint: "ab" },
+      runtime: { class: "tee", at: "2026-01-01T00:00:00.000Z" },
+      maxAttestationStaleness: 600,
+      attestationDigestSRI: "sha256-AAAA",
+    } as unknown as BoundKey;
+    const [entry] = buildMandate({ ...base, authorizedAgents: [registered] }).credentialSubject.mandate.context.authorizedAgents!;
+    expect(Object.keys(entry!).sort()).toEqual(
+      ["assurance", "attestationDigestSRI", "binding", "cnf", "did", "maxAttestationStaleness", "root", "verifiedAt"],
+    );
+    const unprefixed = { ...registered, attestationDigestSRI: "AAAA" } as BoundKey;
+    expect(() => buildMandate({ ...base, authorizedAgents: [unprefixed] })).toThrow(/not an SRI string/);
   });
 
   it("a v0.2-signed entry (epoch-ms verifiedAt) still verifies, and A8 compares in ms either way", async () => {

@@ -138,6 +138,10 @@ export function buildEvidence(input: BuildEvidenceInput): EvidenceEntry {
  * is written as ISO-8601 — a caller passing the epoch-ms a registration result carries gets it
  * converted here, so no v0.3-signed artifact carries the v0.2 encoding. `keyId`, when present,
  * must be a key of `did` (`<did>#key-N`) — the pin names a key, the entry names the actor.
+ *
+ * Only the §16.4 fields are signed. A registration result is a `BoundKey` too, and carries what
+ * the registrar saw (`custodyRef`, `evidence`, `runtime`); spreading it would sign KMS details
+ * and grading evidence into a mandate every relying party reads.
  */
 function normalizeBoundKey(bk: BoundKey, i: number): BoundKey {
   if (!bk.did) throw new Error(`authorizedAgents[${i}] requires did (§16.4)`);
@@ -146,7 +150,20 @@ function normalizeBoundKey(bk: BoundKey, i: number): BoundKey {
   }
   const ms = typeof bk.verifiedAt === "number" ? bk.verifiedAt : Date.parse(bk.verifiedAt);
   if (!Number.isFinite(ms)) throw new Error(`authorizedAgents[${i}]: verifiedAt is not an instant`);
-  return { ...bk, verifiedAt: new Date(ms).toISOString() };
+  if (bk.attestationDigestSRI !== undefined && !bk.attestationDigestSRI.startsWith("sha256-")) {
+    throw new Error(`authorizedAgents[${i}]: attestationDigestSRI is not an SRI string (sha256-…)`);
+  }
+  return {
+    did: bk.did,
+    cnf: { jwk: bk.cnf.jwk },
+    ...(bk.keyId ? { keyId: bk.keyId } : {}),
+    assurance: bk.assurance,
+    binding: bk.binding,
+    ...(bk.root ? { root: bk.root } : {}),
+    verifiedAt: new Date(ms).toISOString(),
+    ...(bk.maxAttestationStaleness !== undefined ? { maxAttestationStaleness: bk.maxAttestationStaleness } : {}),
+    ...(bk.attestationDigestSRI !== undefined ? { attestationDigestSRI: bk.attestationDigestSRI } : {}),
+  };
 }
 
 export function buildMandate(input: BuildMandateInput): ViaMandateCredential {

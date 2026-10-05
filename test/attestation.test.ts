@@ -16,6 +16,7 @@ import {
   registerAgentKey,
   createRegChallengeStore,
   sha256,
+  computeSRI,
   toBase64Url,
   fromBase64Url,
   type Jwk,
@@ -540,7 +541,7 @@ describe("registerChallenge / registerAgentKey (§16.5)", () => {
       expect(res.assurance).toBe("hardware");
       expect(res.binding).toBe("attested");
       expect(res.root).toBe("aws-nitro");
-      expect(res.attestationDigestSRI).toBe(toBase64Url(sha256(fromBase64Url(doc))));
+      expect(res.attestationDigestSRI).toBe(computeSRI(fromBase64Url(doc)));
     }
 
     // Single-use: the very same nonce cannot be replayed for a second binding.

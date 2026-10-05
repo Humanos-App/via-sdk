@@ -104,6 +104,24 @@ export async function verifyAgentBinding(input: PopCheckInput, deps: PopCheckDep
   };
 }
 
+/**
+ * A candidate stands in for a SIGNED entry of the same actor, and that entry's re-attest window
+ * (§16.4, A8) is a term of the mandate, not of the key: it holds whatever key now presents. A
+ * candidate list built from the actor carries no window of its own, so without this A8 would never
+ * run on an id-pinned mandate. Where several bounds apply, the strictest wins.
+ */
+function withSignedWindow(candidates: BoundKey[], signed: BoundKey[]): BoundKey[] {
+  return candidates.map((c) => {
+    // After a merge the candidate names the survivor, not the DID the entry signed; with no entry of
+    // its own it is held to every entry's window rather than to none.
+    const own = signed.filter((e) => e.did !== undefined && e.did === c.did);
+    const windows = [c, ...(own.length ? own : signed)]
+      .map((e) => e.maxAttestationStaleness)
+      .filter((w): w is number => w !== undefined);
+    return windows.length ? { ...c, maxAttestationStaleness: Math.min(...windows) } : c;
+  });
+}
+
 export interface CredentialRecordLike {
   status: CredentialStatus;
   validFrom?: string;
@@ -149,6 +167,10 @@ export interface AgentDirectDeps {
    * into the CEL env beside the shipped assurance/binding. There is no separate
    * `actor.*` namespace: the artifact is actor-generic, projections are
    * role-specific.
+   *
+   * The PoP's own fields WIN over these: `assurance`, `binding`, `root`, `verifiedAt` and `did` come
+   * from the entry whose key just signed (§9.1bis rule 1), and an extra carrying an actor summary
+   * must not replace them.
    */
   agentEnvExtras?: Record<string, unknown>;
   /**
@@ -263,7 +285,8 @@ export async function verifyAgentDirect(
 
   // 5. agent binding is REQUIRED when the mandate carries authorizedAgents (§16.4)
   // Bound or not is the SIGNED mandate's question; which keys may sign is step 0's answer.
-  const boundKeys = m.context.authorizedAgents?.length ? (deps.candidates ?? m.context.authorizedAgents) : m.context.authorizedAgents;
+  const signed = m.context.authorizedAgents;
+  const boundKeys = signed?.length ? (deps.candidates ? withSignedWindow(deps.candidates, signed) : signed) : signed;
   if (!boundKeys || boundKeys.length === 0) return deny("agent_not_bound", urn, enforcement);
   const pop = await verifyAgentBinding(
     { authorizedAgents: boundKeys, pop: req.pop, verifier: deps.verifier.did, mandateId: urn, action: req.action, params: req.params },
@@ -337,7 +360,7 @@ export async function verifyAgentDirect(
   const { decision, evaluations } = evaluateRules(action.rules, {
     userParams: unwrapUserParamValues(m.userParams),
     executionParams: req.params,
-    agent: { ...pop.agent, ...(deps.agentEnvExtras ?? {}) },
+    agent: { ...(deps.agentEnvExtras ?? {}), ...pop.agent },
     ...(accreditation ? { accreditation } : {}),
   });
   if (decision === "allow") {

@@ -8,8 +8,8 @@
 // SDK injects both — the nonce store and the DescribeKey oracle — so the library does
 // no I/O of its own (matching the VerifyDeps dependency-injection style).
 import { randomBytes } from "node:crypto";
-import { sha256 } from "../crypto/digest.js";
-import { toBase64Url, fromBase64Url } from "../crypto/encoding.js";
+import { computeSRI } from "../crypto/digest.js";
+import { fromBase64Url } from "../crypto/encoding.js";
 import { jwkThumbprint, type Jwk } from "../crypto/p256.js";
 import {
   NO_ROOTS,
@@ -267,7 +267,7 @@ export async function registerAgentKey(
   // Model C: pin the raw attestation quote's digest into the (to-be-signed) key so a
   // relying party can re-validate confinement to public roots itself (§16.12).
   if (ev.type === "attestation-eat") {
-    bound.attestationDigestSRI = toBase64Url(sha256(fromBase64Url(ev.docB64)));
+    bound.attestationDigestSRI = computeSRI(fromBase64Url(ev.docB64));
   }
   return { ok: true, ...bound };
 }
