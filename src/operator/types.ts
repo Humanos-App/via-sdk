@@ -57,6 +57,23 @@ export type AccreditationReasonCode =
 /** Why an operator's verification was pulled — underwriters need the *why*. */
 export type AccreditationRevocationReason = "struck_off" | "fraud" | "sanctions";
 
+/**
+ * When a signed claim lapses — an accreditation's or an affiliation's (v0.3 §18.2, §18.4).
+ *
+ * The field is `validUntil`. Claims signed before 2026-10-07 say `expiresAt`, and a signed event is
+ * read as written, never rewritten — so every reader goes through here. `validUntil` wins when both
+ * are stated.
+ *
+ * `at` on a runtime attestation and on `anchoredBy` is NOT this family and was not renamed: it is
+ * when something was CHECKED (like `verifiedAt`), not when a statement starts to hold. The event
+ * that carries it has its own `validFrom`, and the two differ — a `MERGED` signed in October carries
+ * a runtime attested in March.
+ */
+export function claimValidUntil(claim: { validUntil?: unknown; expiresAt?: unknown } | null | undefined): string | undefined {
+  const text = (v: unknown) => (typeof v === "string" && v ? v : undefined);
+  return text(claim?.validUntil) ?? text(claim?.expiresAt);
+}
+
 /** The registrar's verification claims about one operator. */
 export interface AccreditationClaims {
   /** The operator (organization or individual) this credential is about. */
@@ -67,8 +84,12 @@ export interface AccreditationClaims {
   /** The root that performed the verification — `humanos` today; QTSPs / registries later. */
   registrar: string;
   verifiedAt: string;
-  /** Identity DECAYS by nature — domain rungs re-challenge (~90d), `verified` refreshes annually. */
-  expiresAt?: string;
+  /**
+   * When the claim lapses (v0.3 §18.2) — identity DECAYS by nature. The name the credential envelope
+   * uses for the same meaning. A claim signed before 2026-10-07 says `expiresAt`; read it with
+   * {@link claimValidUntil}, never by field.
+   */
+  validUntil?: string;
   /** Published, offline-checkable revocation (v0.2-new §10.1) — no live registrar call at verify. */
   status?: BitstringStatusListEntry;
 }

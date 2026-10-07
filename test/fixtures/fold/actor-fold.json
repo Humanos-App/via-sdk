@@ -1,11 +1,12 @@
 {
-  "version": 8,
+  "version": 9,
   "chains": {
     "organization": {
       "accreditation": {
         "level": "verified",
         "method": "kyb-registry",
         "registrar": "did:web:humanos.tech",
+        "validUntil": "2028-01-02T00:00:00.000Z",
         "verifiedAt": "2026-01-02T00:00:00.000Z"
       },
       "actorType": "organization",
@@ -26,7 +27,7 @@
         }
       ],
       "operator": {
-        "affiliationEvent": "sha256-sqYWbb3bIry8KElsVawz85gE7KmOgRkVm29ZYrT5ONs=",
+        "affiliationEvent": "sha256-ByL+mzLXabMes50jOTItZfoddN2NKOXoaETS0IgeGEw=",
         "org": "did:web:golden-prod.example",
         "relation": "sandbox_of"
       },
@@ -145,6 +146,7 @@
         "level": "domain",
         "method": "dns-challenge",
         "registrar": "did:web:humanos.tech",
+        "validUntil": "2027-01-02T00:00:00.000Z",
         "verifiedAt": "2026-01-02T00:00:00.000Z"
       },
       "actorType": "organization",

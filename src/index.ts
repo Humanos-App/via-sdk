@@ -330,6 +330,7 @@ export {
   meetsAccreditation,
   ACCREDITATION_RANK,
   ACCREDITATION_METHODS,
+  claimValidUntil,
   type AccreditationLevel,
   type AccreditationMethod,
   type SubjectType,

@@ -9,6 +9,7 @@
 import { buildEvent, signEvent, verifyEvent } from "../event/build.js";
 import { didFromUrl } from "../did/web.js";
 import type { ViaEvent } from "../types.js";
+import { claimValidUntil } from "./types.js";
 import type { AffiliationRelation } from "./types.js";
 
 export interface AffiliationSigner {
@@ -25,7 +26,7 @@ export interface BuildAffiliationInput {
   org: string;
   relation: AffiliationRelation;
   /** Affiliations decay too — a vendor relationship ends, staff leave. */
-  expiresAt?: string;
+  validUntil?: string;
   eventId?: string;
   validFrom?: string;
   previousEvent?: string | null;
@@ -44,7 +45,7 @@ export function buildAffiliation(input: BuildAffiliationInput, signer: Affiliati
     operator: {
       org: input.org,
       relation: input.relation,
-      ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
+      ...(input.validUntil ? { validUntil: input.validUntil } : {}),
     },
   });
   return signEvent(ev, signer);
@@ -59,7 +60,8 @@ export interface BuildAccreditationInput {
   registrar: string;
   subjectType?: "individual" | "organization";
   verifiedAt?: string;
-  expiresAt?: string;
+  /** When the claim lapses (v0.3 §18.2). */
+  validUntil?: string;
   /** Pointer to an EXTERNAL credential, when the accreditation came from outside. */
   credential?: { id: string; digestSRI?: string; location?: string };
   /**
@@ -111,7 +113,7 @@ export function buildAccreditation(
       registrar: input.registrar,
       ...(input.subjectType ? { subjectType: input.subjectType } : {}),
       verifiedAt: input.verifiedAt ?? at,
-      ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
+      ...(input.validUntil ? { validUntil: input.validUntil } : {}),
       ...(input.credential ? { credential: input.credential } : {}),
       ...(input.status ? { status: input.status } : {}),
     },
@@ -127,7 +129,7 @@ export interface BuildRegulatoryInput {
   /** e.g. `ASF` | `BdP` | `EBA`. */
   regulator: string;
   licence: { type: string; number?: string };
-  expiresAt?: string;
+  validUntil?: string;
   eventId?: string;
   validFrom?: string;
   previousEvent?: string | null;
@@ -150,7 +152,7 @@ export function buildRegulatory(input: BuildRegulatoryInput, signer: Affiliation
     operator: {
       regulator: input.regulator,
       licence: input.licence,
-      ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
+      ...(input.validUntil ? { validUntil: input.validUntil } : {}),
     },
   });
   return signEvent(ev, signer);
@@ -171,7 +173,7 @@ export async function verifyAffiliation(
   if (cs.id !== expected.subject) return { valid: false, reason: "affiliation subject mismatch" };
 
   // §18 puts the claim in `operator`; affiliations written before that was honoured carry it in `agent`.
-  const op = (cs.operator ?? cs.agent ?? {}) as { org?: string; relation?: string; expiresAt?: string };
+  const op = (cs.operator ?? cs.agent ?? {}) as { org?: string; relation?: string; validUntil?: string; expiresAt?: string };
   if (!op.org) return { valid: false, reason: "affiliation names no org" };
   if (expected.org && op.org !== expected.org) return { valid: false, reason: "affiliation org mismatch" };
   if (expected.relation && op.relation !== expected.relation) return { valid: false, reason: "affiliation relation mismatch" };
@@ -186,7 +188,9 @@ export async function verifyAffiliation(
     return { valid: false, reason: "affiliation signing key does not belong to the named org" };
   }
 
-  if (op.expiresAt && (expected.now ?? new Date()) > new Date(op.expiresAt)) {
+  // `validUntil`; `expiresAt` on an affiliation signed before 2026-10-07 — read as written.
+  const until = claimValidUntil(op);
+  if (until && (expected.now ?? new Date()) > new Date(until)) {
     return { valid: false, reason: "affiliation expired" };
   }
 

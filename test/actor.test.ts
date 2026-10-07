@@ -1396,6 +1396,21 @@ describe("§18 ACCREDITED — a registrar's claim, on the actor's own chain", ()
     expect(r.subject.binding).toBe(before.subject.binding);
   });
 
+  // @invariant The record has ONE name for when a claim lapses. A claim signed before 2026-10-07
+  // says `expiresAt`; the fold records it as `validUntil` and the instant survives the rename.
+  it("records when the claim lapses as `validUntil`, whichever name the event used", () => {
+    const now = foldActorChain(orgChain(accredited({ validUntil: "2027-07-08T11:00:00.000Z" })));
+    const before = foldActorChain(orgChain(accredited({ expiresAt: "2027-07-08T11:00:00.000Z" })));
+    if (!now.ok || !before.ok) throw new Error("fold failed");
+    expect(now.subject.accreditation).toMatchObject({ validUntil: "2027-07-08T11:00:00.000Z" });
+    expect(before.subject.accreditation).toEqual(now.subject.accreditation);
+    expect(before.subject.accreditation).not.toHaveProperty("expiresAt");
+    // No lapse stated: none recorded.
+    const open = foldActorChain(orgChain(accredited()));
+    if (!open.ok) throw new Error("fold failed");
+    expect(open.subject.accreditation).not.toHaveProperty("validUntil");
+  });
+
   it("REPLACES wholesale — an accreditation is one coherent statement", () => {
     const r = foldActorChain(orgChain(
       accredited({ level: "domain", method: "dns-challenge" }),

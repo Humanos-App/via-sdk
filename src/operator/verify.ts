@@ -16,6 +16,7 @@ import { verifyEvent } from "../event/build.js";
 import { verifyAffiliation } from "./affiliation.js";
 import { VIA_PLATFORM_DID } from "../did/web.js";
 import type { ViaEvent, BitstringStatusListEntry } from "../types.js";
+import { claimValidUntil } from "./types.js";
 import type {
   AccreditationClaims,
   AccreditationEnv,
@@ -152,8 +153,9 @@ export async function verifyAccreditation(input: AccreditationVerifyInput, deps:
   }
 
   // O4 — identity decays: domain rungs re-challenge, `verified` refreshes.
-  if (claims.expiresAt && now > new Date(claims.expiresAt)) {
-    return { ok: false, accreditation: { ...UNVERIFIED }, reason: "accreditation_expired", detail: `expired at ${claims.expiresAt}` };
+  const until = claimValidUntil(claims);
+  if (until && now > new Date(until)) {
+    return { ok: false, accreditation: { ...UNVERIFIED }, reason: "accreditation_expired", detail: `expired at ${until}` };
   }
 
   return {

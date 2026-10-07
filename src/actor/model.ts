@@ -33,6 +33,7 @@ import type { ViaEvent } from "../types.js";
 import type { Assurance, Binding, RuntimeAttestation } from "../agent/types.js";
 import { BINDINGS, assuranceRank, isAssurance, isBinding } from "../agent/types.js";
 import type { Jwk } from "../crypto/p256.js";
+import { claimValidUntil } from "../operator/types.js";
 
 // ── Types (v0.3 §3.1 — assurance fields FLAT, §16 tokens verbatim) ───────────
 
@@ -151,6 +152,7 @@ export interface ViaActorSubject {
     method: "passkey" | "otp" | "session";
     event?: string;
     host?: string;
+    /** When the person authorized — an instant something happened, like `verifiedAt`; not a `validFrom`. */
     at: string;
   };
   /** Pointer to the parent-signed DELEGATED event — set at genesis (delegated actors). */
@@ -185,7 +187,8 @@ export interface ViaActorSubject {
     method: string;
     registrar: string;
     verifiedAt: string;
-    expiresAt?: string;
+    /** When the claim lapses (v0.3 §18.2). The record says `validUntil` whatever the event said. */
+    validUntil?: string;
     /**
      * Evidence BY REFERENCE, when the accreditation came from outside — an eIDAS attestation, a
      * company registry. A foreign registrar issues in its own format and will not write an event on
@@ -415,14 +418,15 @@ export function actorSummaryFloor(
  * refused, `key_already_rotated`; 5 = runtime per key, the actor's a shared-class summary; 6 = a
  * rungless key is pop/self, and a later AFFILIATION only from the current operator; 7 = a renewal
  * states the key's whole rung, root included, and a keyed regrade never raises, `regrade_raises`;
- * 8 = `MERGED` folded — a merge's aliases and carried keys in one event).
+ * 8 = `MERGED` folded — a merge's aliases and carried keys in one event; 9 = an accreditation's
+ * `expiresAt` is recorded as `validUntil`).
  *
  * A stored record (a checkpoint) is only as current as the fold that wrote it. Seeding a fold from
  * one written by an older version would silently omit whatever the newer fold adds, so a
  * checkpointed read MUST seed only from a record written by this version and replay the whole
  * chain otherwise.
  */
-export const ACTOR_FOLD_VERSION = 8;
+export const ACTOR_FOLD_VERSION = 9;
 
 /** §5 — a keyed `ASSURANCE_UPDATED` lowers or keeps every rung field; it never raises one or names a new root. */
 function regradeLowers(k: ActorKeyState, detail: Record<string, unknown>): boolean {
@@ -728,7 +732,11 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         // one here would let an agent hold standing no registrar granted it — the forgery the
         // affiliation conjunction exists to prevent, arriving by a different door.
         if (subject.actorType === "agent") return fail("accreditation_on_agent", i);
-        subject.accreditation = { ...a, verifiedAt: a.verifiedAt ?? e.validFrom };
+        // One name on the record: a claim signed before 2026-10-07 says `expiresAt`, and is read as
+        // `validUntil` (v0.3 §18.2). The event is not touched; only the fold's output is normalized.
+        const { expiresAt: _legacy, validUntil: _stated, ...claim } = a as typeof a & { expiresAt?: string };
+        const until = claimValidUntil(a);
+        subject.accreditation = { ...claim, verifiedAt: a.verifiedAt ?? e.validFrom, ...(until ? { validUntil: until } : {}) };
         break;
       }
       case "ALIAS_ADDED": {

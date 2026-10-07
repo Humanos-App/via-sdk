@@ -4,6 +4,9 @@ import {
   generateEd25519Key,
   buildAccreditation,
   buildAffiliation,
+  buildEvent,
+  signEvent,
+  claimValidUntil,
   verifyAccreditation,
   accreditationRank,
   meetsAccreditation,
@@ -55,9 +58,9 @@ function acmeVerified(over: Record<string, unknown> = {}): ViaEvent {
   );
 }
 /** Acme's own signature: "this agent operates for us" — the ∧ link. */
-const acmeLink = (over: { subject?: string; org?: string; expiresAt?: string } = {}) =>
+const acmeLink = (over: { subject?: string; org?: string; validUntil?: string } = {}) =>
   buildAffiliation(
-    { subject: over.subject ?? AGENT, org: over.org ?? ACME, relation: "operates", ...(over.expiresAt ? { expiresAt: over.expiresAt } : {}) },
+    { subject: over.subject ?? AGENT, org: over.org ?? ACME, relation: "operates", ...(over.validUntil ? { validUntil: over.validUntil } : {}) },
     { privateKey: acme.privateKey, verificationMethod: VM_ACME },
   );
 
@@ -183,7 +186,7 @@ describe("§18 O1–O4 + the ∧ composition", () => {
   // ── O4 decay ───────────────────────────────────────────────────────────────
   it("expired credential → operator_expired (identity decays)", async () => {
     const r = await verifyAccreditation(
-      { agentDid: AGENT, accreditation: acmeVerified({ level: "domain", method: "dns-challenge", expiresAt: "2026-04-01T00:00:00.000Z" }), affiliation: acmeLink() },
+      { agentDid: AGENT, accreditation: acmeVerified({ level: "domain", method: "dns-challenge", validUntil: "2026-04-01T00:00:00.000Z" }), affiliation: acmeLink() },
       { resolvePublicKey, now },
     );
     expect(r.ok).toBe(false);
@@ -192,11 +195,74 @@ describe("§18 O1–O4 + the ∧ composition", () => {
 
   it("expired affiliation → affiliation_invalid", async () => {
     const r = await verifyAccreditation(
-      { agentDid: AGENT, accreditation: acmeVerified(), affiliation: acmeLink({ expiresAt: "2026-04-01T00:00:00.000Z" }) },
+      { agentDid: AGENT, accreditation: acmeVerified(), affiliation: acmeLink({ validUntil: "2026-04-01T00:00:00.000Z" }) },
       { resolvePublicKey, now },
     );
     expect(r.ok).toBe(false);
     expect(r.reason).toBe("affiliation_invalid");
+  });
+
+  // ── The lapse is `validUntil`; `expiresAt` on claims signed before 2026-10-07 is read as written ──
+  /** A claim signed under the OLD name — built by hand, since the builders no longer write it. */
+  const legacyAccredited = (expiresAt: string) =>
+    signEvent(
+      buildEvent({
+        subject: ACME, event: "ACCREDITED", actor: REGISTRAR, issuer: REGISTRAR, previousEvent: null,
+        validFrom: "2026-01-01T00:00:00.000Z",
+        accreditation: { level: "domain", method: "dns-challenge", registrar: "humanos", verifiedAt: "2026-01-01T00:00:00.000Z", expiresAt },
+      }),
+      { privateKey: registrar.privateKey, verificationMethod: VM_REG },
+    );
+  const legacyLink = (expiresAt: string) =>
+    signEvent(
+      buildEvent({
+        subject: AGENT, event: "AFFILIATION", actor: ACME, issuer: ACME, previousEvent: null,
+        operator: { org: ACME, relation: "operates", expiresAt },
+      }),
+      { privateKey: acme.privateKey, verificationMethod: VM_ACME },
+    );
+
+  it("writes `validUntil`, never `expiresAt`", () => {
+    const acc = acmeVerified({ validUntil: "2027-01-01T00:00:00.000Z" }).credentialSubject as unknown as { accreditation: Record<string, unknown> };
+    expect(acc.accreditation).toMatchObject({ validUntil: "2027-01-01T00:00:00.000Z" });
+    expect(acc.accreditation).not.toHaveProperty("expiresAt");
+    const link = acmeLink({ validUntil: "2027-01-01T00:00:00.000Z" }).credentialSubject as unknown as { operator: Record<string, unknown> };
+    expect(link.operator).toMatchObject({ validUntil: "2027-01-01T00:00:00.000Z" });
+    expect(link.operator).not.toHaveProperty("expiresAt");
+  });
+
+  // @invariant A claim signed under the old name still lapses when it said it would: renaming a
+  // field must never make an expired claim read as open-ended.
+  it("an accreditation signed with `expiresAt` still expires", async () => {
+    const lapsed = await verifyAccreditation(
+      { agentDid: AGENT, accreditation: legacyAccredited("2026-04-01T00:00:00.000Z"), affiliation: acmeLink() },
+      { resolvePublicKey, now },
+    );
+    expect(lapsed).toMatchObject({ ok: false, reason: "accreditation_expired" });
+    const live = await verifyAccreditation(
+      { agentDid: AGENT, accreditation: legacyAccredited("2027-04-01T00:00:00.000Z"), affiliation: acmeLink() },
+      { resolvePublicKey, now },
+    );
+    expect(live.ok).toBe(true);
+  });
+
+  it("an affiliation signed with `expiresAt` still expires", async () => {
+    const r = await verifyAccreditation(
+      { agentDid: AGENT, accreditation: acmeVerified(), affiliation: legacyLink("2026-04-01T00:00:00.000Z") },
+      { resolvePublicKey, now },
+    );
+    expect(r).toMatchObject({ ok: false, reason: "affiliation_invalid" });
+  });
+
+  it("claimValidUntil reads either name, and `validUntil` wins", () => {
+    expect(claimValidUntil({ validUntil: "2027-01-01T00:00:00.000Z" })).toBe("2027-01-01T00:00:00.000Z");
+    expect(claimValidUntil({ expiresAt: "2026-01-01T00:00:00.000Z" })).toBe("2026-01-01T00:00:00.000Z");
+    expect(claimValidUntil({ validUntil: "2027-01-01T00:00:00.000Z", expiresAt: "2026-01-01T00:00:00.000Z" })).toBe("2027-01-01T00:00:00.000Z");
+    expect(claimValidUntil({})).toBeUndefined();
+    expect(claimValidUntil(undefined)).toBeUndefined();
+    expect(claimValidUntil({ validUntil: 42 })).toBeUndefined();
+    // A malformed new name never hides the old one: the claim still lapses.
+    expect(claimValidUntil({ validUntil: 42, expiresAt: "2026-01-01T00:00:00.000Z" })).toBe("2026-01-01T00:00:00.000Z");
   });
 
   // @invariant v0.3 §18.4: an agent never holds standing of its own — it inherits its operator's.

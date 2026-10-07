@@ -71,7 +71,7 @@ const HUMANOS = "did:web:humanos.tech";
 const GOLDEN: Record<string, ViaEvent[]> = {
   organization: chain(ORG, HUMANOS, [
     ["ACTOR_REGISTERED", { agent: { actorType: "organization", keyId: `${ORG}#key-1`, publicKeyMultibase: "z6MkGolden", assurance: "pop", binding: "custodial", bootstrapAnchor: "manual", verifiedAt: "2025-05-01T00:00:00.000Z", existedSince: "2024-03-01T00:00:00.000Z" } }],
-    ["ACCREDITED", { accreditation: { level: "verified", method: "kyb-registry", registrar: HUMANOS, verifiedAt: "2026-01-02T00:00:00.000Z" } }],
+    ["ACCREDITED", { accreditation: { level: "verified", method: "kyb-registry", registrar: HUMANOS, verifiedAt: "2026-01-02T00:00:00.000Z", validUntil: "2028-01-02T00:00:00.000Z" } }],
     ["AFFILIATION", { operator: { org: "did:web:golden-prod.example", relation: "sandbox_of" } }],
     ["REGULATORY", { agent: { licence: "PT-GOLDEN-1" } }],
     ["SUSPENDED", { reason: "review" }],
@@ -97,7 +97,8 @@ const GOLDEN: Record<string, ViaEvent[]> = {
   ]),
   legacyOrgAccreditation: chain(LEGACY_ORG, HUMANOS, [
     ["ACTOR_REGISTERED", { agent: { actorType: "organization", keyId: `${LEGACY_ORG}#key-1`, publicKeyMultibase: "z6MkLegacy", assurance: "pop", binding: "custodial", bootstrapAnchor: "manual" } }],
-    ["ACCREDITED", { agent: { accreditation: { level: "domain", method: "dns-challenge", registrar: HUMANOS } } }],
+    // Signed before 2026-10-07: the lapse is `expiresAt`, recorded as `validUntil`.
+    ["ACCREDITED", { agent: { accreditation: { level: "domain", method: "dns-challenge", registrar: HUMANOS, expiresAt: "2027-01-02T00:00:00.000Z" } } }],
   ]),
   person: chain(PERSON, HUMANOS, [
     ["ACTOR_REGISTERED", { agent: { actorType: "user", keyId: `${PERSON}#key-1`, publicKeyMultibase: "z6MkPerson", assurance: "pop", binding: "custodial", bootstrapAnchor: "manual", existedSince: "2023-06-01T00:00:00.000Z" } }],

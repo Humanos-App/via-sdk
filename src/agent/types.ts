@@ -32,7 +32,15 @@ export type Runtime = "none" | "app" | "host" | "tee";
  */
 export interface RuntimeAttestation {
   class: Runtime;
-  /** ISO-8601 — when this class was established. Absent/expired evaluates as `none`. */
+  /**
+   * ISO-8601 — when this class was established. Absent/expired evaluates as `none`.
+   *
+   * Deliberately NOT `validFrom` (considered 2026-10-07, when `expiresAt` became `validUntil`). It is
+   * when the environment was CHECKED, the family of `verifiedAt` — rules read it as
+   * `agent.runtimeAt` beside `agent.verifiedAt`. `validFrom` is when a signed statement was made,
+   * and the event carrying this attestation has one of its own with a different value: a `MERGED`
+   * signed in October carries a runtime attested in March.
+   */
   at: string;
   /** The mechanism that produced it (`nitro`, `sev-snp`, `tdx`, `app-attest`, `play-integrity`, `tpm`). */
   mechanism?: string;
