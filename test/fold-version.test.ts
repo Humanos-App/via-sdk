@@ -37,6 +37,8 @@ const LEGACY_AGENT = "did:web:humanos.tech:agent:golden-legacy";
 const PERSON = "did:web:humanos.tech:user:golden-email";
 const CHANNEL = "did:web:humanos.tech:user:golden-phone";
 const LEGACY_ORG = "did:web:golden-legacy.example";
+const SURVIVOR = "did:web:humanos.tech:agent:golden-survivor";
+const ABSORBED = "did:web:humanos.tech:agent:golden-absorbed";
 const JWK = (x: string) => ({ kty: "EC", crv: "P-256", x, y: `${x}-y` });
 
 /** A chain of UNSIGNED events with fixed ids and instants — the fold reads content, not proofs. */
@@ -112,6 +114,25 @@ const GOLDEN: Record<string, ViaEvent[]> = {
   runglessKey: chain("did:web:humanos.tech:agent:golden-rungless", HUMANOS, [
     ["ACTOR_REGISTERED", { agent: { actorType: "agent", keyId: "did:web:humanos.tech:agent:golden-rungless#key-1", jwk: JWK("rk1"), assurance: "hardware", binding: "attested", root: "aws-nitro", bootstrapAnchor: "api_key", verifiedAt: "2026-01-01T00:00:00.000Z" } }],
     ["KEY_ADDED", { agent: { keyId: "did:web:humanos.tech:agent:golden-rungless#key-2", jwk: JWK("rk2") } }],
+  ]),
+  // A merge as written since 2026-10-07: the survivor's half is ONE `MERGED` (§3.6c). The chain
+  // above (`KEY_ADDED … carriedFrom` + `ALIAS_ADDED` reason `merge`) is how it was written before,
+  // and still folds.
+  mergedSurvivor: chain(SURVIVOR, HUMANOS, [
+    ["ACTOR_REGISTERED", { agent: { actorType: "agent", keyId: `${SURVIVOR}#key-1`, jwk: JWK("s1"), assurance: "hardware", binding: "attested", root: "aws-nitro", bootstrapAnchor: "api_key", verifiedAt: "2026-01-01T00:00:00.000Z" } }],
+    ["MERGED", { merge: {
+      absorbed: ABSORBED,
+      aliases: [`${ABSORBED}-old`],
+      keys: [
+        { keyId: `${ABSORBED}#key-1`, jwk: JWK("a1"), status: "rotated", rotatedTo: `${ABSORBED}#key-2`, assurance: "pop", binding: "self", verifiedAt: "2025-11-01T00:00:00.000Z" },
+        { keyId: `${ABSORBED}#key-2`, jwk: JWK("a2"), status: "active", assurance: "device", binding: "custodial", verifiedAt: "2025-12-01T00:00:00.000Z", attestation: { event: "sha256-golden-att", kind: "attestation-eat" }, runtime: { class: "tee", mechanism: "nitro", measurementId: "m-absorbed" } },
+      ],
+    } }],
+  ]),
+  mergedAbsorbed: chain(ABSORBED, HUMANOS, [
+    ["ACTOR_REGISTERED", { agent: { actorType: "agent", keyId: `${ABSORBED}#key-1`, jwk: JWK("a1"), assurance: "pop", binding: "self", bootstrapAnchor: "api_key", verifiedAt: "2025-11-01T00:00:00.000Z" } }],
+    ["KEY_ROTATED", { agent: { predecessorId: `${ABSORBED}#key-1`, keyId: `${ABSORBED}#key-2`, jwk: JWK("a2"), assurance: "device", binding: "custodial", verifiedAt: "2025-12-01T00:00:00.000Z" } }],
+    ["RETIRED", { agent: { succeededBy: SURVIVOR, keySuccession: { [`${ABSORBED}#key-1`]: `${ABSORBED}#key-1`, [`${ABSORBED}#key-2`]: `${ABSORBED}#key-2` } } }],
   ]),
   absorbedChannel: chain(CHANNEL, HUMANOS, [
     ["ACTOR_REGISTERED", { agent: { actorType: "user", keyId: `${CHANNEL}#key-1`, publicKeyMultibase: "z6MkChannel", assurance: "pop", binding: "custodial", bootstrapAnchor: "manual", existedSince: "2025-02-01T00:00:00.000Z" } }],

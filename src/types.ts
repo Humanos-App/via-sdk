@@ -249,6 +249,8 @@ export interface ViaEvent {
     operator?: Record<string, unknown>;
     /** §18.3bis — the registrar's claim on an `ACCREDITED` event: `{ level, method, registrar, verifiedAt }`. */
     accreditation?: Record<string, unknown>;
+    /** v0.3 §3.6 — `MERGED`: what the survivor took from the absorbed actor (`{ absorbed, aliases, keys }`). */
+    merge?: Record<string, unknown>;
     /** §17.4 — a step-up: the `STEP_UP_*` event's own detail, or on a `VERIFICATION_*` the co-sign it rested on. */
     stepUp?: Record<string, unknown>;
     /**

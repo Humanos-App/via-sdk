@@ -72,6 +72,9 @@ export const EVENT_TYPES = [
   // person). An agent never carries one: it INHERITS its operator's, via AFFILIATION.
   "ACCREDITED",
   "ALIAS_ADDED",
+  // v0.3 §3.6 — the survivor's half of a merge, in ONE event: the absorbed identifier, its aliases,
+  // and its live keys with their own state. Replaces `ALIAS_ADDED (merge)` + a `KEY_ADDED` per key.
+  "MERGED",
   "RUNTIME_ATTESTED",
   "SNAPSHOT_ISSUED",
   "DELEGATED",

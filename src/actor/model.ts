@@ -292,6 +292,7 @@ export const EVENT_SCOPE = {
   RETIRED: "actor",
   ACCREDITED: "actor",
   ALIAS_ADDED: "actor",
+  MERGED: "actor",
   RUNTIME_ATTESTED: "actor",
   SNAPSHOT_ISSUED: "actor",
 } as const satisfies Record<EventType, "credential" | "actor">;
@@ -413,14 +414,15 @@ export function actorSummaryFloor(
  * actor with no usable key carrying one, instead of its last; 4 = a second rotation of one key
  * refused, `key_already_rotated`; 5 = runtime per key, the actor's a shared-class summary; 6 = a
  * rungless key is pop/self, and a later AFFILIATION only from the current operator; 7 = a renewal
- * states the key's whole rung, root included, and a keyed regrade never raises, `regrade_raises`).
+ * states the key's whole rung, root included, and a keyed regrade never raises, `regrade_raises`;
+ * 8 = `MERGED` folded — a merge's aliases and carried keys in one event).
  *
  * A stored record (a checkpoint) is only as current as the fold that wrote it. Seeding a fold from
  * one written by an older version would silently omit whatever the newer fold adds, so a
  * checkpointed read MUST seed only from a record written by this version and replay the whole
  * chain otherwise.
  */
-export const ACTOR_FOLD_VERSION = 7;
+export const ACTOR_FOLD_VERSION = 8;
 
 /** §5 — a keyed `ASSURANCE_UPDATED` lowers or keeps every rung field; it never raises one or names a new root. */
 function regradeLowers(k: ActorKeyState, detail: Record<string, unknown>): boolean {
@@ -742,6 +744,56 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         if (!subject.aliases.some((a) => a.did === did)) subject.aliases.push({ did, reason });
         break;
       }
+      case "MERGED": {
+        // §3.6c — the survivor's half of a merge, as ONE fact: the absorbed actor's identifier
+        // (`merge`), its own aliases (`channel`), and the keys of it that survive, each with its own
+        // state. The absorbed chain is not replayed: what the survivor holds is stated here, on its
+        // own chain, so anyone folding it sees the keys a mandate may be pinned to. A carried key is
+        // NOT a `KEY_ADDED` — nothing was enrolled or re-verified; its rung, status and succession
+        // are the absorbed actor's, unchanged. Accreditation does not transfer (§3.6 rule 10).
+        const claim = parseMergeClaim(cs.merge);
+        if (!claim || claim.absorbed === subject.id || claim.aliases.includes(subject.id)) {
+          return fail("merge_invalid", i);
+        }
+        const carriedIds = new Set(claim.keys.map((k) => k.keyId));
+        if (carriedIds.size !== claim.keys.length) return fail("duplicate_key", i);
+        for (const k of claim.keys) {
+          if (key(k.keyId)) return fail("duplicate_key", i);
+          if (k.assurance !== undefined && !isAssurance(k.assurance)) return fail("invalid_assurance", i);
+          if (k.binding !== undefined && !isBinding(k.binding)) return fail("invalid_binding", i);
+          // A rotated key carries its succession only onto a key carried with it: one the survivor
+          // would have to find elsewhere is a pointer into nothing.
+          if (k.rotatedTo !== undefined && (k.status !== "rotated" || !carriedIds.has(k.rotatedTo) || k.rotatedTo === k.keyId)) {
+            return fail("merge_invalid", i);
+          }
+          if (k.runtime !== undefined) {
+            if (subject.actorType !== "agent") return fail("runtime_on_non_agent", i);
+            if (!RUNTIME_CLASSES.has(String(k.runtime.class))) return fail("runtime_attestation_invalid", i);
+          }
+        }
+        subject.aliases ??= [];
+        const named: [string, "merge" | "channel"][] = [
+          [claim.absorbed, "merge"],
+          ...claim.aliases.map((a): [string, "channel"] => [a, "channel"]),
+        ];
+        // The alias set is a set: a name the survivor already answers to is left as it is.
+        for (const [did, reason] of named) {
+          if (!subject.aliases.some((a) => a.did === did)) subject.aliases.push({ did, reason });
+        }
+        for (const k of claim.keys) {
+          const fields = k as unknown as Record<string, unknown>;
+          subject.keys.push({
+            id: k.keyId,
+            ...keyMaterial(fields),
+            status: k.status,
+            ...(k.rotatedTo ? { rotatedTo: k.rotatedTo } : {}),
+            ...(k.attestation ? { attestation: k.attestation } : {}),
+            ...(k.runtime ? { runtime: k.runtime } : {}),
+            ...keyRung(fields, e.validFrom),
+          });
+        }
+        break;
+      }
     }
     // The summary follows the keys (v0.3 §9.1bis rule 5). Derived here, after the event, so a
     // revoked weak key raises the floor and an added weak key lowers it without anyone asserting.
@@ -755,7 +807,138 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
 }
 
 /** The events after which the summary is re-derived. `ASSURANCE_UPDATED` derives inside its case. */
-const KEY_EVENTS: ReadonlySet<string> = new Set(["KEY_ADDED", "KEY_ROTATED", "KEY_REVOKED", "ATTESTATION_RENEWED"]);
+const KEY_EVENTS: ReadonlySet<string> = new Set(["KEY_ADDED", "KEY_ROTATED", "KEY_REVOKED", "ATTESTATION_RENEWED", "MERGED"]);
+
+// ── The merge claim (v0.3 §3.6c) — what `MERGED` carries ─────────────────────
+
+/** One key of the absorbed actor as `MERGED` carries it onto the survivor — its state, unchanged. */
+export interface MergedKey {
+  /** The id the key has on the SURVIVOR — the value of its `keySuccession` entry. */
+  keyId: string;
+  jwk?: Jwk;
+  publicKeyMultibase?: string;
+  /** `active` or `rotated`: a revoked key does not survive a merge and is never carried. */
+  status: "active" | "rotated";
+  /** Present only on a `rotated` key whose successor is carried by the same event. */
+  rotatedTo?: string;
+  attestation?: AttestationRef;
+  assurance?: Assurance;
+  binding?: Binding;
+  root?: string;
+  verifiedAt?: string;
+  runtime?: RuntimeAttestation;
+}
+
+/** `credentialSubject.merge` of a `MERGED` event (v0.3 §3.6c). */
+export interface MergeClaim {
+  /** The actor retired into this one — recorded as an alias with reason `merge`. */
+  absorbed: string;
+  /** The absorbed actor's own aliases — recorded with reason `channel`. */
+  aliases: string[];
+  /** The absorbed actor's keys that survive. */
+  keys: MergedKey[];
+}
+
+/** Read a `merge` claim off an event; null when it is not one (the fold then fails `merge_invalid`). */
+function parseMergeClaim(raw: unknown): MergeClaim | null {
+  const m = (raw ?? {}) as { absorbed?: unknown; aliases?: unknown; keys?: unknown };
+  if (typeof m.absorbed !== "string" || !m.absorbed) return null;
+  const aliases = m.aliases === undefined ? [] : m.aliases;
+  const keys = m.keys === undefined ? [] : m.keys;
+  if (!Array.isArray(aliases) || aliases.some((a) => typeof a !== "string" || !a)) return null;
+  if (!Array.isArray(keys)) return null;
+  for (const k of keys as Record<string, unknown>[]) {
+    if (!k || typeof k !== "object" || typeof k.keyId !== "string" || !k.keyId) return null;
+    // §3.6c rule 2: a revoked key does not survive a merge — it is left out, never carried dead.
+    if (k.status !== "active" && k.status !== "rotated") return null;
+    if (k.rotatedTo !== undefined && typeof k.rotatedTo !== "string") return null;
+    if (typeof k.publicKeyMultibase !== "string" && (!k.jwk || typeof k.jwk !== "object")) return null;
+    const att = k.attestation as { event?: unknown; kind?: unknown } | undefined;
+    if (att !== undefined && (typeof att !== "object" || att === null || typeof att.event !== "string" || typeof att.kind !== "string")) return null;
+    if (k.runtime !== undefined && (typeof k.runtime !== "object" || k.runtime === null)) return null;
+  }
+  return { absorbed: m.absorbed, aliases: aliases as string[], keys: keys as MergedKey[] };
+}
+
+/**
+ * Build both halves of a merge from the ABSORBED actor's state (v0.3 §3.6c): the `merge` claim the
+ * survivor's `MERGED` carries, and the `keySuccession` the absorbed actor's `RETIRED` carries.
+ *
+ * Every key that is not revoked survives, with the state it has — a `rotated` key stays rotated and
+ * keeps its succession when its successor survives too. Nothing is re-graded and nothing is
+ * invented: the claim is the absorbed actor's own keys under the ids they take on the survivor
+ * (`keyId`, default: unchanged — a key keeps the id its own DID gave it).
+ *
+ * `held` names key ids the survivor already has: they are mapped in `keySuccession` and left out of
+ * the claim, because the fold refuses a key id it already holds (`duplicate_key`).
+ */
+export function buildMergeClaim(
+  absorbed: ViaActorSubject,
+  opts: { keyId?: (absorbedKeyId: string) => string; held?: ReadonlySet<string> } = {},
+): { merge: MergeClaim; keySuccession: Record<string, string> } {
+  const idOf = opts.keyId ?? ((id: string) => id);
+  const keySuccession: Record<string, string> = {};
+  for (const k of absorbed.keys) if (k.status !== "revoked") keySuccession[k.id] = idOf(k.id);
+  const carried = absorbed.keys.filter((k) => k.status !== "revoked" && !opts.held?.has(keySuccession[k.id]!));
+  const carriedIds = new Set(carried.map((k) => keySuccession[k.id]!));
+  const keys = carried.map((k): MergedKey => {
+    const successor = k.rotatedTo ? keySuccession[k.rotatedTo] : undefined;
+    return {
+      keyId: keySuccession[k.id]!,
+      ...(k.publicKeyMultibase ? { publicKeyMultibase: k.publicKeyMultibase } : {}),
+      ...(k.jwk ? { jwk: k.jwk } : {}),
+      status: k.status as "active" | "rotated",
+      // A successor that was revoked (or is already the survivor's) is not carried: the pointer ends.
+      ...(k.status === "rotated" && successor && carriedIds.has(successor) ? { rotatedTo: successor } : {}),
+      ...(k.attestation ? { attestation: k.attestation } : {}),
+      ...(k.assurance ? { assurance: k.assurance } : {}),
+      ...(k.binding ? { binding: k.binding } : {}),
+      ...(k.root ? { root: k.root } : {}),
+      ...(k.verifiedAt ? { verifiedAt: k.verifiedAt } : {}),
+      ...(k.runtime ? { runtime: k.runtime } : {}),
+    };
+  });
+  return {
+    merge: { absorbed: absorbed.id, aliases: (absorbed.aliases ?? []).map((a) => a.did), keys },
+    keySuccession,
+  };
+}
+
+/**
+ * The cross-chain check of a `MERGED` (v0.3 §5.2) — does the claim state only what the absorbed
+ * actor's own chain holds? A fold sees one chain, so it cannot answer this; the appender, and any
+ * auditor holding both chains, can.
+ *
+ * `MERGED` puts keys on an actor with no evidence of its own, so it must not be a way to add one:
+ * every key it carries MUST be the target of a `keySuccession` entry of the absorbed actor, whose
+ * source key is not revoked and matches in material, status and rung; every alias MUST be one of
+ * the absorbed actor's; and the absorbed actor MUST be retired INTO this one, of the same type.
+ */
+export function checkMergeClaim(
+  claim: unknown,
+  survivor: Pick<ViaActorSubject, "id" | "actorType">,
+  absorbed: ViaActorSubject,
+): { ok: true } | { ok: false; reason: "merge_invalid" | "merge_target_invalid" } {
+  const m = parseMergeClaim(claim);
+  if (!m) return { ok: false, reason: "merge_invalid" };
+  const bad = { ok: false, reason: "merge_target_invalid" } as const;
+  if (m.absorbed !== absorbed.id || absorbed.status !== "retired" || absorbed.succeededBy !== survivor.id) return bad;
+  if (absorbed.actorType !== survivor.actorType) return bad;
+  const known = new Set((absorbed.aliases ?? []).map((a) => a.did));
+  if (m.aliases.some((a) => !known.has(a))) return bad;
+  const sourceOf = new Map(Object.entries(absorbed.keySuccession ?? {}).map(([from, to]) => [to, from]));
+  const same = (a: unknown, b: unknown) => canonicalizeRFC8785(a ?? null) === canonicalizeRFC8785(b ?? null);
+  for (const k of m.keys) {
+    const source = absorbed.keys.find((x) => x.id === sourceOf.get(k.keyId));
+    if (!source || source.status === "revoked" || source.status !== k.status) return bad;
+    if (!same(source.jwk, k.jwk) || source.publicKeyMultibase !== k.publicKeyMultibase) return bad;
+    if (source.assurance !== k.assurance || source.binding !== k.binding || source.root !== k.root) return bad;
+    if (source.verifiedAt !== k.verifiedAt || !same(source.runtime, k.runtime) || !same(source.attestation, k.attestation)) return bad;
+    // The succession it carries is the source's own, translated — never a new one.
+    if (k.rotatedTo !== undefined && absorbed.keySuccession?.[source.rotatedTo ?? ""] !== k.rotatedTo) return bad;
+  }
+  return { ok: true };
+}
 
 // ── Party resolution across a merge (v0.3 §3.6) ─────────────────────────────
 

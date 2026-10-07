@@ -1,5 +1,5 @@
 {
-  "version": 7,
+  "version": 8,
   "chains": {
     "organization": {
       "accreditation": {
@@ -275,6 +275,122 @@
       ],
       "status": "active",
       "verifiedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "mergedSurvivor": {
+      "actorType": "agent",
+      "aliases": [
+        {
+          "did": "did:web:humanos.tech:agent:golden-absorbed",
+          "reason": "merge"
+        },
+        {
+          "did": "did:web:humanos.tech:agent:golden-absorbed-old",
+          "reason": "channel"
+        }
+      ],
+      "assurance": "pop",
+      "binding": "self",
+      "bootstrapAnchor": "api_key",
+      "genesisAt": "2026-01-01T00:00:00.000Z",
+      "id": "did:web:humanos.tech:agent:golden-survivor",
+      "keys": [
+        {
+          "assurance": "hardware",
+          "binding": "attested",
+          "id": "did:web:humanos.tech:agent:golden-survivor#key-1",
+          "jwk": {
+            "crv": "P-256",
+            "kty": "EC",
+            "x": "s1",
+            "y": "s1-y"
+          },
+          "root": "aws-nitro",
+          "status": "active",
+          "verifiedAt": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "assurance": "pop",
+          "binding": "self",
+          "id": "did:web:humanos.tech:agent:golden-absorbed#key-1",
+          "jwk": {
+            "crv": "P-256",
+            "kty": "EC",
+            "x": "a1",
+            "y": "a1-y"
+          },
+          "rotatedTo": "did:web:humanos.tech:agent:golden-absorbed#key-2",
+          "status": "rotated",
+          "verifiedAt": "2025-11-01T00:00:00.000Z"
+        },
+        {
+          "assurance": "device",
+          "attestation": {
+            "event": "sha256-golden-att",
+            "kind": "attestation-eat"
+          },
+          "binding": "custodial",
+          "id": "did:web:humanos.tech:agent:golden-absorbed#key-2",
+          "jwk": {
+            "crv": "P-256",
+            "kty": "EC",
+            "x": "a2",
+            "y": "a2-y"
+          },
+          "runtime": {
+            "class": "tee",
+            "measurementId": "m-absorbed",
+            "mechanism": "nitro"
+          },
+          "status": "active",
+          "verifiedAt": "2025-12-01T00:00:00.000Z"
+        }
+      ],
+      "status": "active",
+      "verifiedAt": "2025-11-01T00:00:00.000Z"
+    },
+    "mergedAbsorbed": {
+      "actorType": "agent",
+      "assurance": "pop",
+      "binding": "self",
+      "bootstrapAnchor": "api_key",
+      "genesisAt": "2026-01-01T00:00:00.000Z",
+      "id": "did:web:humanos.tech:agent:golden-absorbed",
+      "keySuccession": {
+        "did:web:humanos.tech:agent:golden-absorbed#key-1": "did:web:humanos.tech:agent:golden-absorbed#key-1",
+        "did:web:humanos.tech:agent:golden-absorbed#key-2": "did:web:humanos.tech:agent:golden-absorbed#key-2"
+      },
+      "keys": [
+        {
+          "assurance": "pop",
+          "binding": "self",
+          "id": "did:web:humanos.tech:agent:golden-absorbed#key-1",
+          "jwk": {
+            "crv": "P-256",
+            "kty": "EC",
+            "x": "a1",
+            "y": "a1-y"
+          },
+          "rotatedTo": "did:web:humanos.tech:agent:golden-absorbed#key-2",
+          "status": "rotated",
+          "verifiedAt": "2025-11-01T00:00:00.000Z"
+        },
+        {
+          "assurance": "device",
+          "binding": "custodial",
+          "id": "did:web:humanos.tech:agent:golden-absorbed#key-2",
+          "jwk": {
+            "crv": "P-256",
+            "kty": "EC",
+            "x": "a2",
+            "y": "a2-y"
+          },
+          "status": "active",
+          "verifiedAt": "2025-12-01T00:00:00.000Z"
+        }
+      ],
+      "status": "retired",
+      "succeededBy": "did:web:humanos.tech:agent:golden-survivor",
+      "verifiedAt": "2025-11-01T00:00:00.000Z"
     },
     "absorbedChannel": {
       "actorType": "user",

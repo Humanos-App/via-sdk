@@ -42,6 +42,8 @@ export interface BuildEventInput {
   operator?: Record<string, unknown>;
   /** §18 — `ACCREDITED` detail: the registrar's claim about THIS actor's identity. */
   accreditation?: Record<string, unknown>;
+  /** v0.3 §3.6 — `MERGED`'s claim: `{ absorbed, aliases, keys }`. */
+  merge?: Record<string, unknown>;
   /** §17.4 — step-up detail: `{ id, method, termsDigest, tool }` on `STEP_UP_*`; the reference on a `VERIFICATION_*`. */
   stepUp?: Record<string, unknown>;
   /** §20.3 — which machinery governed this decision. */
@@ -99,6 +101,7 @@ export function buildEvent(input: BuildEventInput): ViaEvent {
       ...(input.review ? { review: input.review } : {}),
       ...(input.operator ? { operator: input.operator } : {}),
       ...(input.accreditation ? { accreditation: input.accreditation } : {}),
+      ...(input.merge ? { merge: input.merge } : {}),
     },
   };
 }
@@ -282,6 +285,8 @@ export interface BuildChainedEventInput {
   operator?: Record<string, unknown>;
   /** §18 — `ACCREDITED` detail: the registrar's claim about THIS actor's identity. */
   accreditation?: Record<string, unknown>;
+  /** v0.3 §3.6 — `MERGED`'s claim: `{ absorbed, aliases, keys }`. */
+  merge?: Record<string, unknown>;
   /** §2.2/§17.4 — step-up detail: `{ id, method, termsDigest, tool }` on `STEP_UP_*`; the reference on a `VERIFICATION_*`. */
   stepUp?: Record<string, unknown>;
   /** §20.3 — which machinery governed this decision. */
@@ -320,6 +325,7 @@ export function buildChainedEvent(input: BuildChainedEventInput): ViaEvent {
     ...(input.agent ? { agent: input.agent } : {}),
     ...(input.operator ? { operator: input.operator } : {}),
     ...(input.accreditation ? { accreditation: input.accreditation } : {}),
+    ...(input.merge ? { merge: input.merge } : {}),
     ...(input.stepUp ? { stepUp: input.stepUp } : {}),
     ...(input.enforcement ? { enforcement: input.enforcement } : {}),
     ...(input.review ? { review: input.review } : {}),

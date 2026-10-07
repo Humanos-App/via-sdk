@@ -20,6 +20,8 @@ import {
   projectAgentContext,
   type ViaActorSubject,
   resolvePinnedKeys,
+  buildMergeClaim,
+  checkMergeClaim,
   foldActorRecord,
   auditActorRecord,
   ACTOR_EVENT_TYPES,
@@ -1204,6 +1206,168 @@ describe("§3.6c keySuccession — a mandate survives the merge, or fails closed
   it("an un-merged actor behaves exactly as §7 alone", () => {
     const plain = actor("did:A", ["did:A#key-1"]);
     expect(resolvePinnedKeysAcrossMerge(plain, "did:A#key-1", () => undefined).map((k) => k.id)).toEqual(["did:A#key-1"]);
+  });
+});
+
+describe("§3.6c MERGED — the survivor's half of a merge, in one event", () => {
+  const B = "did:web:humanos.tech:agent:b2";
+  const K = (n: number) => `${B}#key-${n}`;
+  /** `MERGED` on the survivor (ACTOR): its claim rides in `credentialSubject.merge`. */
+  const merged = (merge: Record<string, unknown>) => (p: ViaEvent) => {
+    const e = ev("MERGED", {}, { prev: p });
+    (e.credentialSubject as unknown as { merge: unknown }).merge = merge;
+    return e;
+  };
+  const active = (n: number, over: Record<string, unknown> = {}) => ({
+    keyId: K(n), jwk: { ...JWK, x: `x${n}` }, status: "active", assurance: "pop", binding: "self",
+    verifiedAt: "2026-03-01T00:00:00.000Z", ...over,
+  });
+
+  // @invariant The absorbed actor's name, its aliases and its surviving keys reach the survivor in
+  // ONE event — and a carried key arrives with the state it had, not as a freshly enrolled one.
+  it("adds the absorbed identifier, its aliases and its keys, each key with its own state", () => {
+    const r = foldActorChain(chain(merged({
+      absorbed: B,
+      aliases: ["did:web:humanos.tech:agent:b2-old"],
+      keys: [
+        active(1, { status: "rotated", rotatedTo: K(2) }),
+        active(2, { assurance: "hardware", binding: "attested", root: "aws-nitro",
+          attestation: { event: "sha256-att", kind: "attestation-eat" } }),
+      ],
+    })));
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.subject.aliases).toEqual([
+      { did: B, reason: "merge" },
+      { did: "did:web:humanos.tech:agent:b2-old", reason: "channel" },
+    ]);
+    const k1 = r.subject.keys.find((k) => k.id === K(1))!;
+    const k2 = r.subject.keys.find((k) => k.id === K(2))!;
+    expect(k1).toMatchObject({ status: "rotated", rotatedTo: K(2), assurance: "pop", binding: "self", verifiedAt: "2026-03-01T00:00:00.000Z" });
+    expect(k2).toMatchObject({ status: "active", assurance: "hardware", root: "aws-nitro", attestation: { event: "sha256-att", kind: "attestation-eat" } });
+    // …and a pin on the rotated key still walks to its successor, on the survivor (§7).
+    expect(resolvePinnedKeys(r.subject, K(1)).map((k) => k.id)).toEqual([K(1), K(2)]);
+    expect(r.subject.status).toBe("active"); // state-neutral for the status (§4)
+  });
+
+  it("the summary follows: a weak key carried in lowers the survivor's floor", () => {
+    const before = foldActorChain([genesis()]);
+    const r = foldActorChain(chain(merged({ absorbed: B, keys: [active(1)] })));
+    if (!before.ok || !r.ok) throw new Error("fold failed");
+    expect(before.subject.assurance).toBe("hardware");
+    expect(r.subject).toMatchObject({ assurance: "pop", binding: "self" });
+  });
+
+  // @invariant §3.6 rule 10: accreditation does not transfer — a `MERGED` carries none and moves none.
+  it("moves no accreditation and no status", () => {
+    const r = foldActorChain(chain(merged({ absorbed: B, keys: [active(1)], accreditation: { level: "verified", method: "kyc-doc" } })));
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.subject.accreditation).toBeUndefined();
+  });
+
+  it.each<[string, Record<string, unknown>, string]>([
+    ["names no absorbed actor", { keys: [] }, "merge_invalid"],
+    ["names the survivor itself", { absorbed: ACTOR }, "merge_invalid"],
+    ["lists the survivor among the aliases", { absorbed: B, aliases: [ACTOR] }, "merge_invalid"],
+    // §3.6c rule 2: a revoked key does not survive a merge.
+    ["carries a revoked key", { absorbed: B, keys: [active(1, { status: "revoked" })] }, "merge_invalid"],
+    ["carries a key with no material", { absorbed: B, keys: [{ keyId: K(1), status: "active" }] }, "merge_invalid"],
+    ["points a rotated key at a key it does not carry", { absorbed: B, keys: [active(1, { status: "rotated", rotatedTo: K(9) })] }, "merge_invalid"],
+    ["gives an active key a successor", { absorbed: B, keys: [active(1, { rotatedTo: K(2) }), active(2)] }, "merge_invalid"],
+    ["carries a key id the survivor already holds", { absorbed: B, keys: [{ ...active(1), keyId: "k1" }] }, "duplicate_key"],
+    ["carries one key id twice", { absorbed: B, keys: [active(1), active(1)] }, "duplicate_key"],
+    ["carries an unknown rung", { absorbed: B, keys: [active(1, { assurance: "platinum" })] }, "invalid_assurance"],
+  ])("refuses a MERGED that %s", (_case, merge, reason) => {
+    expect(foldActorChain(chain(merged(merge)))).toMatchObject({ ok: false, reason: expect.stringContaining(reason) });
+  });
+
+  it("is refused on a retired actor, like every event (§4)", () => {
+    const r = foldActorChain(chain((p) => ev("RETIRED", {}, { prev: p }), merged({ absorbed: B })));
+    expect(r).toMatchObject({ ok: false, reason: expect.stringContaining("event_after_retired") });
+  });
+
+  it("a rotated key whose successor was revoked is carried without a pointer", () => {
+    const r = foldActorChain(chain(merged({ absorbed: B, keys: [active(1, { status: "rotated" })] })));
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.subject.keys.find((k) => k.id === K(1))).toMatchObject({ status: "rotated" });
+    expect(r.subject.keys.find((k) => k.id === K(1))!.rotatedTo).toBeUndefined();
+  });
+
+  describe("the whole merge, across both chains", () => {
+    // The absorbed actor B: key-1 rotated to key-2, key-3 revoked, one alias.
+    const bEv = (event: string, detail: Record<string, unknown>, prev: ViaEvent | null) => ev(event, detail, { prev, id: B });
+    const absorbedChain = () => {
+      const g = bEv("ACTOR_REGISTERED", { keyId: K(1), jwk: { ...JWK, x: "x1" }, actorType: "agent", assurance: "pop", binding: "self", bootstrapAnchor: "api_key", verifiedAt: "2026-03-01T00:00:00.000Z" }, null);
+      const rot = bEv("KEY_ROTATED", { keyId: K(2), jwk: { ...JWK, x: "x2" }, predecessorId: K(1), assurance: "hardware", binding: "attested", root: "aws-nitro", verifiedAt: "2026-04-01T00:00:00.000Z" }, g);
+      const add = bEv("KEY_ADDED", { keyId: K(3), jwk: { ...JWK, x: "x3" }, verifiedAt: "2026-04-02T00:00:00.000Z" }, rot);
+      const rev = bEv("KEY_REVOKED", { keyId: K(3) }, add);
+      const alias = bEv("ALIAS_ADDED", { alias: "did:web:humanos.tech:agent:b2-old", aliasReason: "channel" }, rev);
+      return [g, rot, add, rev, alias];
+    };
+    const fold = (events: ViaEvent[]) => {
+      const r = foldActorChain(events);
+      if (!r.ok) throw new Error(r.reason);
+      return r.subject;
+    };
+
+    // @invariant `buildMergeClaim` states exactly what the absorbed actor holds: live keys with
+    // their state, never the revoked one — and the two halves it returns agree with each other.
+    it("builds both halves from the absorbed actor, folds them, and a pinned mandate survives", () => {
+      const live = absorbedChain();
+      const { merge, keySuccession } = buildMergeClaim(fold(live));
+      expect(merge.keys.map((k) => [k.keyId, k.status, k.rotatedTo])).toEqual([[K(1), "rotated", K(2)], [K(2), "active", undefined]]);
+      expect(keySuccession).toEqual({ [K(1)]: K(1), [K(2)]: K(2) });
+      expect(merge.aliases).toEqual(["did:web:humanos.tech:agent:b2-old"]);
+
+      const retired = fold([...live, bEv("RETIRED", { succeededBy: ACTOR, keySuccession }, live.at(-1)!)]);
+      const survivor = fold(chain(merged(merge as never)));
+      expect(checkMergeClaim(merge, survivor, retired)).toEqual({ ok: true });
+
+      // A mandate pinned to the absorbed actor's ROTATED key resolves on the survivor, through
+      // the succession the merge carried — and the revoked key resolves to nothing.
+      const usable = resolvePinnedKeysAcrossMerge(retired, K(1), (d) => (d === ACTOR ? survivor : undefined));
+      expect(usable.map((k) => k.id)).toEqual([K(1), K(2)]);
+      expect(resolvePinnedKeysAcrossMerge(retired, K(3), () => survivor)).toEqual([]);
+      // The rung read at authorization is the carried key's own (§9.1bis rule 1).
+      expect(usable[1]).toMatchObject({ assurance: "hardware", binding: "attested", root: "aws-nitro" });
+    });
+
+    it("re-ids keys when asked, and leaves out a key the survivor already holds", () => {
+      const absorbed = fold(absorbedChain());
+      const reId = buildMergeClaim(absorbed, { keyId: (id) => id.replace(B, ACTOR).replace("key-", "key-1") });
+      expect(reId.keySuccession).toEqual({ [K(1)]: `${ACTOR}#key-11`, [K(2)]: `${ACTOR}#key-12` });
+      expect(reId.merge.keys.map((k) => [k.keyId, k.rotatedTo])).toEqual([[`${ACTOR}#key-11`, `${ACTOR}#key-12`], [`${ACTOR}#key-12`, undefined]]);
+      const held = buildMergeClaim(absorbed, { held: new Set([K(2)]) });
+      // key-2 is mapped but not carried again; key-1's pointer to it is not carried either.
+      expect(held.keySuccession[K(2)]).toBe(K(2));
+      expect(held.merge.keys.map((k) => [k.keyId, k.rotatedTo])).toEqual([[K(1), undefined]]);
+    });
+
+    // @invariant §5.2: `MERGED` puts keys on an actor with no evidence of its own, so it carries
+    // only what the absorbed actor's chain holds. Anything else is refused at append.
+    it.each<[string, (m: ReturnType<typeof buildMergeClaim>["merge"]) => void]>([
+      ["smuggles a key the absorbed actor never had", (m) => m.keys.push({ keyId: `${B}#key-9`, jwk: { ...JWK, x: "evil" } as never, status: "active" })],
+      ["carries the revoked key", (m) => m.keys.push({ keyId: K(3), jwk: { ...JWK, x: "x3" } as never, status: "active", assurance: "pop", binding: "self", verifiedAt: "2026-04-02T00:00:00.000Z" })],
+      ["swaps a key's material", (m) => { m.keys[0]!.jwk = { ...JWK, x: "evil" } as never; }],
+      ["raises a key's rung", (m) => { m.keys[0]!.assurance = "hardware"; }],
+      ["un-rotates a rotated key", (m) => { m.keys[0]!.status = "active"; delete m.keys[0]!.rotatedTo; }],
+      ["names an alias the absorbed actor never had", (m) => m.aliases.push("did:web:humanos.tech:agent:stranger")],
+    ])("checkMergeClaim refuses a claim that %s", (_case, tamper) => {
+      const live = absorbedChain();
+      const { merge, keySuccession } = buildMergeClaim(fold(live));
+      const retired = fold([...live, bEv("RETIRED", { succeededBy: ACTOR, keySuccession }, live.at(-1)!)]);
+      tamper(merge);
+      expect(checkMergeClaim(merge, { id: ACTOR, actorType: "agent" }, retired)).toEqual({ ok: false, reason: "merge_target_invalid" });
+    });
+
+    it("checkMergeClaim refuses an actor that is not retired into this one, or of another type", () => {
+      const live = absorbedChain();
+      const { merge, keySuccession } = buildMergeClaim(fold(live));
+      expect(checkMergeClaim(merge, { id: ACTOR, actorType: "agent" }, fold(live))).toMatchObject({ ok: false, reason: "merge_target_invalid" });
+      const elsewhere = fold([...live, bEv("RETIRED", { succeededBy: "did:web:humanos.tech:agent:other", keySuccession }, live.at(-1)!)]);
+      expect(checkMergeClaim(merge, { id: ACTOR, actorType: "agent" }, elsewhere)).toMatchObject({ ok: false, reason: "merge_target_invalid" });
+      const retired = fold([...live, bEv("RETIRED", { succeededBy: ACTOR, keySuccession }, live.at(-1)!)]);
+      expect(checkMergeClaim(merge, { id: ACTOR, actorType: "user" }, retired)).toMatchObject({ ok: false, reason: "merge_target_invalid" });
+    });
   });
 });
 

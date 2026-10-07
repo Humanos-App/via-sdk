@@ -386,6 +386,11 @@ export {
   resolveSuccession,
   resolvePinnedKeysAcrossMerge,
   resolvePinnedKeys,
+  // v0.3 §3.6c — `MERGED`: build the claim from the absorbed actor, and check one against it.
+  buildMergeClaim,
+  checkMergeClaim,
+  type MergeClaim,
+  type MergedKey,
   foldActorRecord,
   auditActorRecord,
   projectAgentContext,
