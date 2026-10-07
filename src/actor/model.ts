@@ -928,14 +928,17 @@ export function checkMergeClaim(
   if (m.aliases.some((a) => !known.has(a))) return bad;
   const sourceOf = new Map(Object.entries(absorbed.keySuccession ?? {}).map(([from, to]) => [to, from]));
   const same = (a: unknown, b: unknown) => canonicalizeRFC8785(a ?? null) === canonicalizeRFC8785(b ?? null);
+  const carried = new Set(m.keys.map((k) => k.keyId));
   for (const k of m.keys) {
     const source = absorbed.keys.find((x) => x.id === sourceOf.get(k.keyId));
     if (!source || source.status === "revoked" || source.status !== k.status) return bad;
     if (!same(source.jwk, k.jwk) || source.publicKeyMultibase !== k.publicKeyMultibase) return bad;
     if (source.assurance !== k.assurance || source.binding !== k.binding || source.root !== k.root) return bad;
     if (source.verifiedAt !== k.verifiedAt || !same(source.runtime, k.runtime) || !same(source.attestation, k.attestation)) return bad;
-    // The succession it carries is the source's own, translated — never a new one.
-    if (k.rotatedTo !== undefined && absorbed.keySuccession?.[source.rotatedTo ?? ""] !== k.rotatedTo) return bad;
+    // The succession it carries is the source's own, translated — never a new one, and never
+    // dropped while the successor is carried too (a pin on the rotated key would stop at it).
+    const successor = source.rotatedTo ? absorbed.keySuccession?.[source.rotatedTo] : undefined;
+    if (k.rotatedTo !== (successor && carried.has(successor) ? successor : undefined)) return bad;
   }
   return { ok: true };
 }

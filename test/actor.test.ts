@@ -1350,6 +1350,8 @@ describe("§3.6c MERGED — the survivor's half of a merge, in one event", () =>
       ["swaps a key's material", (m) => { m.keys[0]!.jwk = { ...JWK, x: "evil" } as never; }],
       ["raises a key's rung", (m) => { m.keys[0]!.assurance = "hardware"; }],
       ["un-rotates a rotated key", (m) => { m.keys[0]!.status = "active"; delete m.keys[0]!.rotatedTo; }],
+      ["drops a rotated key's pointer to the successor it carries", (m) => { delete m.keys[0]!.rotatedTo; }],
+      ["points a rotated key at another carried key", (m) => { m.keys.push({ keyId: `${B}#key-9`, jwk: { ...JWK, x: "x9" } as never, status: "active" }); m.keys[0]!.rotatedTo = `${B}#key-9`; }],
       ["names an alias the absorbed actor never had", (m) => m.aliases.push("did:web:humanos.tech:agent:stranger")],
     ])("checkMergeClaim refuses a claim that %s", (_case, tamper) => {
       const live = absorbedChain();
