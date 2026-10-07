@@ -4,6 +4,7 @@ import {
   jwkThumbprint,
   buildMandate,
   normalizeMandateStepUp,
+  projectAccreditation,
   buildPoP,
   actionHash,
   constraintsToRules,
@@ -587,6 +588,29 @@ describe("accreditation.* when the operator has none (§18.6)", () => {
   it("projects unverified, so the small call is allowed and the large one denied", async () => {
     expect(await call(50, { loadAccreditation: () => undefined })).toMatchObject({ decision: "allow" });
     expect(await call(5000, { loadAccreditation: () => undefined })).toMatchObject({ decision: "deny" });
+  });
+
+  // @invariant §18.6: `accreditation.*` is a closed list. Whatever a loader returns beside the four
+  // fields never reaches a rule — otherwise the same mandate allows at one verifier and denies at
+  // another. The lapse is O4's to enforce; the organization is `agent.operator.org`.
+  it("gives a rule the four listed fields and nothing else a loader returned", async () => {
+    const full = {
+      level: "verified", method: "kyb-registry", registrar: "did:web:humanos.tech", verifiedAt: "2026-03-01T00:00:00.000Z",
+      validUntil: "2027-03-01T00:00:00.000Z", expiresAt: "2027-03-01T00:00:00.000Z", org: "did:web:acme.com", subjectType: "organization",
+    };
+    const reads = (expression: string) =>
+      call(5000, {
+        loadAccreditation: () => full,
+        loadActionVersion: async () => ({ ...SMALL_OR_VERIFIED, rules: [{ name: "reads", description: "reads a field", expression }] }) as unknown as ActionDetail,
+      });
+    for (const listed of ['accreditation.level == "verified"', 'accreditation.method == "kyb-registry"', 'accreditation.registrar == "did:web:humanos.tech"', 'accreditation.verifiedAt == "2026-03-01T00:00:00.000Z"']) {
+      expect(await reads(listed), listed).toMatchObject({ decision: "allow" });
+    }
+    for (const dropped of ['accreditation.validUntil > "2026-12-31T00:00:00.000Z"', 'accreditation.expiresAt > "2026-12-31T00:00:00.000Z"', 'accreditation.org == "did:web:acme.com"', 'accreditation.subjectType == "organization"']) {
+      expect(await reads(dropped), dropped).toMatchObject({ decision: "deny" });
+    }
+    expect(projectAccreditation(full)).toEqual({ level: "verified", method: "kyb-registry", registrar: "did:web:humanos.tech", verifiedAt: "2026-03-01T00:00:00.000Z" });
+    expect(projectAccreditation({ org: "did:web:acme.com" })).toEqual({ level: "unverified" });
   });
 
   // @invariant §16.10: a verifier that does not implement accreditation denies a rule that reads it.

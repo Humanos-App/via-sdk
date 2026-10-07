@@ -309,6 +309,8 @@ export {
 export {
   verifyAgentBinding,
   verifyAgentDirect,
+  projectAccreditation,
+  ACCREDITATION_ENV_FIELDS,
   type AgentEnv,
   type PopCheckInput,
   type PopCheckDeps,

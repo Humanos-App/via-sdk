@@ -189,6 +189,28 @@ export interface AgentDirectDeps {
   loadAccreditation?: () => AccreditationLoad | Promise<AccreditationLoad>;
 }
 
+/** The fields of `accreditation.*` a rule may read — v0.3 §18.6, a closed list. */
+export const ACCREDITATION_ENV_FIELDS = ["level", "method", "registrar", "verifiedAt"] as const;
+
+/**
+ * What a rule sees of an accreditation (v0.3 §18.6): the four listed fields and nothing a loader
+ * happens to return beside them. A field one verifier projects and another does not makes the same
+ * mandate allow here and deny there, so the list is closed HERE, where every loader's answer passes.
+ *
+ * Two that are deliberately absent: when the claim lapses — O4 denies an expired claim before any
+ * rule runs, so a rule has nothing to decide — and the operator's organization, which is
+ * `agent.operator.org` (§9.3), a relationship and not a standing.
+ */
+export function projectAccreditation(loaded: Record<string, unknown>): Record<string, unknown> {
+  const env: Record<string, unknown> = {};
+  for (const field of ACCREDITATION_ENV_FIELDS) {
+    if (loaded[field] !== undefined && loaded[field] !== null) env[field] = loaded[field];
+  }
+  // An accreditation with no level is the bottom of the ladder, never an object a rank cannot read.
+  if (env.level === undefined) env.level = "unverified";
+  return env;
+}
+
 /**
  * What the accreditation loader may answer (v0.3 §18.5): the env to evaluate, nothing at all, or a
  * FAILURE that denies.
@@ -377,7 +399,9 @@ export async function verifyAgentDirect(
   // §18.6 — an operator with no ACCREDITED is the unverified tier, not an absent object: a rule like
   // `amount <= 1000 || accreditationRank(...) >= …` must still allow the small call. Only a verifier
   // with no loader at all (accreditation not implemented) leaves it out — and the rule then denies.
-  const accreditation = loaded ?? (wantsAccreditation && deps.loadAccreditation ? { level: "unverified" } : undefined);
+  const accreditation = loaded
+    ? projectAccreditation(loaded as Record<string, unknown>)
+    : wantsAccreditation && deps.loadAccreditation ? { level: "unverified" } : undefined;
   const { decision, evaluations } = evaluateRules(action.rules, {
     userParams: unwrapUserParamValues(m.userParams),
     executionParams: req.params,
