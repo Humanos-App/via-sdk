@@ -150,6 +150,32 @@ export function buildEvidence(input: BuildEvidenceInput): EvidenceEntry {
  * the registrar saw (`custodyRef`, `evidence`, `runtime`); spreading it would sign KMS details
  * and grading evidence into a mandate every relying party reads.
  */
+/**
+ * The mandate's own step-up declaration as it is signed (v0.3 §17.4), or nothing when it declares
+ * none. Checked here because it is the last point before the value is signed, and a typo would
+ * change who is asked: an unknown trigger is ignored by a verifier, so "ask me every time" spelled
+ * wrong would be a mandate that never asks.
+ *
+ * `action` is not a mandate trigger — it is the ActionVersion's own. `reasons` narrows `verifier`
+ * and means nothing without it.
+ */
+export function normalizeMandateStepUp(stepUp: MandateStepUp | undefined): MandateStepUp | undefined {
+  if (stepUp === undefined) return undefined;
+  const triggers = [...new Set(stepUp.triggers ?? [])];
+  for (const t of triggers) {
+    if (t !== "mandate" && t !== "verifier") {
+      throw new Error(`stepUp.triggers: "${String(t)}" is not a mandate trigger — use "mandate" or "verifier" (§17.4)`);
+    }
+  }
+  const reasons = stepUp.reasons === undefined ? undefined : [...new Set(stepUp.reasons)];
+  if (reasons?.some((r) => typeof r !== "string" || !r)) throw new Error("stepUp.reasons must be non-empty strings (§17.4)");
+  if (reasons?.length && !triggers.includes("verifier")) {
+    throw new Error('stepUp.reasons narrows the "verifier" trigger and needs it in stepUp.triggers (§17.4)');
+  }
+  if (triggers.length === 0) return undefined;
+  return { triggers, ...(reasons?.length ? { reasons } : {}) };
+}
+
 function normalizeBoundKey(bk: BoundKey, i: number, window?: number): BoundKey {
   if (!bk.did) throw new Error(`authorizedAgents[${i}] requires did (§16.4)`);
   if (bk.keyId && !bk.keyId.startsWith(`${bk.did}#`)) {
@@ -202,6 +228,7 @@ export function buildMandate(input: BuildMandateInput): ViaMandateCredential {
   // allow every call under a mandate whose whole point is that something reads it first. Listing
   // it in the signed manifest is what makes "this verifier does not implement §20.6" detectable.
   const enforcement = input.enforcement;
+  const stepUp = normalizeMandateStepUp(input.stepUp);
   const criticalExtensions: string[] = [];
   if (enforcement === "semantic") {
     extensions.push(EXT_SEMANTIC_REVIEW);
@@ -232,7 +259,7 @@ export function buildMandate(input: BuildMandateInput): ViaMandateCredential {
         description: input.description,
         enforcement,
         ...(input.initiator ? { initiator: input.initiator } : {}),
-        ...(input.stepUp ? { stepUp: input.stepUp } : {}),
+        ...(stepUp ? { stepUp } : {}),
         ...(input.delegation ? { delegation: input.delegation } : {}),
         ...(input.maxExecutions !== undefined ? { maxExecutions: input.maxExecutions } : {}),
         ...(extensions.length ? { extensions } : {}),

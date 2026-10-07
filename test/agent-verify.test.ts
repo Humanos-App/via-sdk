@@ -3,6 +3,7 @@ import {
   generateP256Key,
   jwkThumbprint,
   buildMandate,
+  normalizeMandateStepUp,
   buildPoP,
   actionHash,
   constraintsToRules,
@@ -418,6 +419,23 @@ describe("§20 — enforcement, semantic review, and when a person is asked (S7)
     const small = { amount: 10, action: "transfer" };
     const r = await verifyAgentDirect(ruled, { pop: await pop(attested, "transfer", small), action: "transfer", params: small }, deps());
     expect(r).toMatchObject({ decision: "rechallenge", stepUp: { trigger: "mandate", reason: "stepup_required" } });
+  });
+
+  // @invariant §17.4: the declaration is checked before it is signed. A verifier ignores a trigger it
+  // does not know, so a misspelt "ask me every time" would be a mandate that never asks.
+  it("signs only a well-formed step-up declaration", () => {
+    const signed = (stepUp: MandateStepUp) => (semantic(stepUp).credentialSubject.mandate as { stepUp?: MandateStepUp }).stepUp;
+    expect(signed({ triggers: ["mandate", "mandate", "verifier"], reasons: ["semantic_review", "semantic_review"] }))
+      .toEqual({ triggers: ["mandate", "verifier"], reasons: ["semantic_review"] });
+    // Declaring nothing signs nothing — absent, never an empty object a reader has to interpret.
+    expect(signed({})).toBeUndefined();
+    expect(signed({ triggers: [] })).toBeUndefined();
+    expect(() => semantic({ triggers: ["always" as never] })).toThrow(/not a mandate trigger/);
+    // `action` is the ActionVersion's trigger, not something a mandate declares.
+    expect(() => semantic({ triggers: ["action"] })).toThrow(/not a mandate trigger/);
+    expect(() => semantic({ triggers: ["mandate"], reasons: ["semantic_review"] })).toThrow(/needs it in stepUp.triggers/);
+    expect(() => semantic({ triggers: ["verifier"], reasons: [""] })).toThrow(/non-empty/);
+    expect(normalizeMandateStepUp(undefined)).toBeUndefined();
   });
 
   // S7: the step-up used to be raised BEFORE the rules ran, so a call the rules would deny sent a

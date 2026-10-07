@@ -198,7 +198,12 @@ export interface ViaActorSubject {
     /** Published revocation entry (O3) — checkable offline, no live registrar call. */
     status?: Record<string, unknown>;
   };
-  aliases?: { did: string; reason: "channel" | "merge" }[];
+  /**
+   * Prior identifiers that resolve to this actor (v0.3 §3.6). `merge` — an actor retired INTO this
+   * one (its chain ends pointing here); `inherited` — an alias such an actor held, which came with
+   * it; `channel` — a contact identifier that never had a chain of its own.
+   */
+  aliases?: { did: string; reason: "channel" | "merge" | "inherited" }[];
   /**
    * Set by `RETIRED` when this actor was absorbed into another (§3.6c) — the surviving actor's DID.
    * `rotatedTo` at actor scope: the old identifier is a label, not a dead end, and a verifier
@@ -419,14 +424,15 @@ export function actorSummaryFloor(
  * rungless key is pop/self, and a later AFFILIATION only from the current operator; 7 = a renewal
  * states the key's whole rung, root included, and a keyed regrade never raises, `regrade_raises`;
  * 8 = `MERGED` folded — a merge's aliases and carried keys in one event; 9 = an accreditation's
- * `expiresAt` is recorded as `validUntil`).
+ * `expiresAt` is recorded as `validUntil`; 10 = the aliases an absorbed actor held join the
+ * survivor as `inherited`, not `channel`).
  *
  * A stored record (a checkpoint) is only as current as the fold that wrote it. Seeding a fold from
  * one written by an older version would silently omit whatever the newer fold adds, so a
  * checkpointed read MUST seed only from a record written by this version and replay the whole
  * chain otherwise.
  */
-export const ACTOR_FOLD_VERSION = 9;
+export const ACTOR_FOLD_VERSION = 10;
 
 /** §5 — a keyed `ASSURANCE_UPDATED` lowers or keeps every rung field; it never raises one or names a new root. */
 function regradeLowers(k: ActorKeyState, detail: Record<string, unknown>): boolean {
@@ -780,9 +786,11 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
           }
         }
         subject.aliases ??= [];
-        const named: [string, "merge" | "channel"][] = [
+        // `merge` is checkable — the absorbed chain ends pointing here. What the absorbed actor
+        // answered to came WITH it, and points at it, not here: `inherited` says exactly that.
+        const named: [string, "merge" | "inherited"][] = [
           [claim.absorbed, "merge"],
-          ...claim.aliases.map((a): [string, "channel"] => [a, "channel"]),
+          ...claim.aliases.map((a): [string, "inherited"] => [a, "inherited"]),
         ];
         // The alias set is a set: a name the survivor already answers to is left as it is.
         for (const [did, reason] of named) {
@@ -841,7 +849,7 @@ export interface MergedKey {
 export interface MergeClaim {
   /** The actor retired into this one — recorded as an alias with reason `merge`. */
   absorbed: string;
-  /** The absorbed actor's own aliases — recorded with reason `channel`. */
+  /** The absorbed actor's own aliases — recorded with reason `inherited`. */
   aliases: string[];
   /** The absorbed actor's keys that survive. */
   keys: MergedKey[];

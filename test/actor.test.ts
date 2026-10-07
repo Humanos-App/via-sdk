@@ -1238,7 +1238,7 @@ describe("§3.6c MERGED — the survivor's half of a merge, in one event", () =>
     if (!r.ok) throw new Error(r.reason);
     expect(r.subject.aliases).toEqual([
       { did: B, reason: "merge" },
-      { did: "did:web:humanos.tech:agent:b2-old", reason: "channel" },
+      { did: "did:web:humanos.tech:agent:b2-old", reason: "inherited" },
     ]);
     const k1 = r.subject.keys.find((k) => k.id === K(1))!;
     const k2 = r.subject.keys.find((k) => k.id === K(2))!;

@@ -116,6 +116,7 @@ export {
 // Mandate
 export {
   buildMandate,
+  normalizeMandateStepUp,
   // §20 — the mandate description (spec §20.1–§20.3)
   buildEvidence,
   stampMandate,
