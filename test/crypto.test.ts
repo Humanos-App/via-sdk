@@ -84,7 +84,7 @@ describe("eddsa-jcs-2022 Data Integrity proof", () => {
     expect(verifyDataIntegrityProof(doc, tampered, k.publicKey)).toBe(false);
   });
 
-  it("event (the STAMP kind) is committed by the signature (spec §5.2)", () => {
+  it("event (the STAMP kind) is committed by the signature (spec §0.5.2)", () => {
     const k = generateEd25519Key();
     const proof = createDataIntegrityProof({
       document: doc,

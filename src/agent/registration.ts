@@ -64,7 +64,7 @@ export interface RegisterChallengeDeps {
   /**
    * Nonce freshness window in seconds. Default 60.
    *
-   * UNSOURCED: this carried a `spec §10` citation that resolves to nothing — v0.2-new §10 is
+   * UNSOURCED: this carried a `spec §10` citation that resolves to nothing — §0.10 is
    * Status & events, v0.3 §10 is Migration, and no document here states a 30–60s window. The
    * value matches what the platform's challenge store uses; treat it as an implementation default
    * until §16.5 is given an explicit TTL bound.

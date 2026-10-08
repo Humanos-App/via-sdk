@@ -41,7 +41,7 @@ export interface WebauthnGrantorBinding {
 }
 
 /**
- * Authenticated by a single-use code to a channel the grantor controls (v0.2-new §9).
+ * Authenticated by a single-use code to a channel the grantor controls (§0.9).
  *
  * No `cnf`: there is no key. What it records is that the ordinary path HAPPENED — before this shape
  * existed, a code-approved mandate carried nothing at all, so absence of a binding meant both "a

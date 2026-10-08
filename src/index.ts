@@ -157,14 +157,14 @@ export {
   type AdoptInput,
 } from "./mandate/description.js";
 
-// Credential-level signer (v0.2-new §5.4) — the SDK owns HOW the securing STAMP is made.
+// Credential-level signer (§0.5.4) — the SDK owns HOW the securing STAMP is made.
 export {
   signCredentialProof,
   type CredentialProof,
   type CredentialProofSigner,
 } from "./credential/proof.js";
 
-// Events — the unified VIAEvent primitive (spec v0.2-new §5)
+// Events — the unified VIAEvent primitive (spec §0.5)
 export {
   buildEvent,
   signEvent,

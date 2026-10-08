@@ -28,7 +28,7 @@ const mkPayload = (): PopPayload => ({
   action_hash: actionHash("urn:via:credential:1", "transfer_funds", { amount: 40000 }),
 });
 
-describe("actionHash (§16.6 / §5.3)", () => {
+describe("actionHash (§16.6 / §0.5.3)", () => {
   it("is the self-describing sha256- digestSRI form", () => {
     const h = actionHash("m1", "pay", { amount: 10 });
     expect(h).toMatch(/^sha256-[A-Za-z0-9+/]+=*$/); // sha256- + standard base64

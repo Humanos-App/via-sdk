@@ -59,7 +59,7 @@ export function validateMandateDescription(
   const enforcement = enforcementOf(mandate);
   const d = mandate.description;
   if (!d) {
-    // A pre-§20 `rules` mandate carries no description and must keep verifying (v0.2-new §13);
+    // A pre-§20 `rules` mandate carries no description and must keep verifying (§0.13);
     // the requirement bites where the description IS the grant.
     return enforcement === "rules" ? { ok: true } : { ok: false, reason: "description_required" };
   }

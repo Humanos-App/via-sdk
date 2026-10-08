@@ -29,15 +29,15 @@ sdk/src/
   status/                   # buildCredentialStatusEntry, BitstringStatusList build/encode/decode (N15)
   presentation/             # buildPresentation (full, secured VC), buildSdJwtPresentation (D-f),
                             # verifyPresentation
-  verify/                   # verify({ presentation, executionParams }, deps) — §8 flow
+  verify/                   # verify({ presentation, executionParams }, deps) — §0.8 flow
   receipt/                  # buildReceipt, signReceipt, verifyReceipt
   cel/                      # @marcbachmann/cel-js wrapper (evaluate rules)
-  context/via-ns-v1.json    # the JSON-LD context (§4.4) shipped with the package
+  context/via-ns-v1.json    # the JSON-LD context (§0.4.4) shipped with the package
   compat/                   # [SECONDARY] legacy.ts: old @humanos/via-protocol export names,
                             # legacy-mode byte-compatible behavior; isolated, optional
 ```
 
-## Coverage (spec §11)
+## Coverage (spec §0.11)
 
 | Area | Functions |
 |------|-----------|
@@ -107,7 +107,7 @@ Verified: the platform imports only **5 functions + 2 types** from `@humanos/via
 
 ## Versioning
 
-Four independent axes (spec §13, `spec/VERSIONING.md`): the **spec version** (signed
+Four independent axes (spec §0.13, `spec/VERSIONING.md`): the **spec version** (signed
 `specVersion` marker on every artifact, `VIA_SPEC_VERSION`), the **JSON-LD context**
 version (`…/ns/v1`), the **crypto wire format** (`FormatMode`), and the **package**
 semver. Builders stamp `specVersion`; `detectSpecVersion()` reads it; `verify`/`verifyAny`

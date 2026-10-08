@@ -102,7 +102,7 @@ describe("the two validity rules (§20.3)", () => {
     expect(validateMandateDescription(m as unknown as Mandate)).toEqual({ ok: false, reason: "enforcement_invalid" });
   });
 
-  // A mandate issued before §20 existed carries no description and must keep verifying (v0.2-new §13).
+  // A mandate issued before §20 existed carries no description and must keep verifying (§0.13).
   it("leaves a pre-§20 rules mandate alone", () => {
     expect(validateMandateDescription({ action: ACTION } as Mandate).ok).toBe(true);
   });

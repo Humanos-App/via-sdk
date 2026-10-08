@@ -19,7 +19,7 @@ export function generateChallenge(ctx?: GenerateChallengeContext): string {
 }
 
 export interface BuildPresentationInput {
-  /** The mandate to present — carries its single securing STAMP proof (spec v0.2-new §7.1). */
+  /** The mandate to present — carries its single securing STAMP proof (spec §0.7.1). */
   credential: ViaMandateCredential;
   /** Presenter/signer DID — Humanos (N14). */
   holder: string;
@@ -27,7 +27,7 @@ export interface BuildPresentationInput {
   privateKey: Uint8Array;
   verificationMethod: string;
   created?: string;
-  /** Audience binding (v0.2-new §7.3). */
+  /** Audience binding (§0.7.3). */
   domain?: string;
   challenge?: string;
 }
@@ -52,7 +52,7 @@ export function buildPresentation(input: BuildPresentationInput): VerifiablePres
   return vp;
 }
 
-/** True if a bound domain matches the verifier domain or any subdomain of it (v0.2-new §7.3). */
+/** True if a bound domain matches the verifier domain or any subdomain of it (§0.7.3). */
 export function domainMatches(boundDomain: string, verifierDomain: string): boolean {
   return boundDomain === verifierDomain || boundDomain.endsWith(`.${verifierDomain}`);
 }
@@ -65,7 +65,7 @@ export interface VerifiedPresentation {
   challenge?: string;
 }
 
-/** Verify the VP's (Humanos) proof. Domain/challenge enforcement happens in the verify flow (v0.2-new §8). */
+/** Verify the VP's (Humanos) proof. Domain/challenge enforcement happens in the verify flow (§0.8). */
 export async function verifyPresentation(
   vp: VerifiablePresentation,
   resolvePublicKey: (vmId: string) => Uint8Array | Promise<Uint8Array>,

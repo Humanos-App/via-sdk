@@ -7,7 +7,7 @@ import { toBase64Url, fromBase64Url, fromUtf8 } from "../crypto/encoding.js";
 import type { ViaMandateCredential } from "../types.js";
 
 /**
- * SD-JWT VC selective-disclosure presentation (spec v0.2-new §7.2, D-f — additive).
+ * SD-JWT VC selective-disclosure presentation (spec §0.7.2, D-f — additive).
  *
  * Ed25519 / `typ: dc+sd-jwt`. `userParams` (per key) and `evidence` are
  * selectively disclosable; `action`, `scope`, `grantor`, `context` are always

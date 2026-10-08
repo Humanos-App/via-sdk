@@ -5,7 +5,7 @@ import { signMultibase, verifyMultibase } from "./ed25519.js";
 export type ProofPurpose = "assertionMethod" | "authentication";
 
 /**
- * The unified VIA event taxonomy (spec v0.2-new §5.4). Every signed fact is a `VIAEvent`
+ * The unified VIA event taxonomy (spec §0.5.4). Every signed fact is a `VIAEvent`
  * whose kind is one of these. The embedded securing `STAMP` proof carries its
  * kind in the proof's `event` field; standalone events carry it in
  * `credentialSubject.event`.
@@ -96,13 +96,13 @@ export type EventTypeEnum = EventType;
 
 /**
  * @deprecated Use {@link EventType}. Legacy authorization-subset alias kept for one
- * migration window; the v0.1 `CANCELED_STAMP` is retired (see spec v0.2-new §5.4).
+ * migration window; the v0.1 `CANCELED_STAMP` is retired (see spec §0.5.4).
  */
 export type LifecycleAction = "ISSUE" | "ACCEPT" | "REJECT" | "REVOKE" | "STAMP" | "CANCELED_STAMP";
 
 /**
  * A W3C Data Integrity proof using the **real** `eddsa-jcs-2022` cryptosuite
- * (spec v0.2-new §5.2). For the mandate's securing `STAMP`, `event` names the securing
+ * (spec §0.5.2). For the mandate's securing `STAMP`, `event` names the securing
  * event and is carried inside `proofConfig`, so it is covered by the signature.
  * (`lifecycleAction` is the deprecated predecessor of `event`, kept for one
  * migration window; the legacy `actionProof` side-hash is not needed — N21.)
@@ -113,7 +113,7 @@ export interface DataIntegrityProof {
   proofPurpose: ProofPurpose;
   verificationMethod: string;
   created: string;
-  /** The securing event kind (spec v0.2-new §5.4) — used by the mandate's `STAMP` proof. */
+  /** The securing event kind (spec §0.5.4) — used by the mandate's `STAMP` proof. */
   event?: EventType;
   /** @deprecated Use {@link DataIntegrityProof.event}. */
   lifecycleAction?: LifecycleAction;
@@ -130,7 +130,7 @@ export interface CreateProofParams {
   verificationMethod: string;
   proofPurpose: ProofPurpose;
   created?: string;
-  /** The securing event kind (spec v0.2-new §5.4) — committed inside `proofConfig`. */
+  /** The securing event kind (spec §0.5.4) — committed inside `proofConfig`. */
   event?: EventType;
   /** @deprecated Use {@link CreateProofParams.event}. */
   lifecycleAction?: LifecycleAction;

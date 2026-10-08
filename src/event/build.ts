@@ -52,7 +52,7 @@ export interface BuildEventInput {
   review?: Record<string, unknown>;
   /**
    * Content-bound: the credential to hash (e.g. a {@link ViaMandateCredential}), or a
-   * precomputed digest. Any existing `proof` is stripped before hashing (spec v0.2-new §5.4).
+   * precomputed digest. Any existing `proof` is stripped before hashing (spec §0.5.4).
    */
   credential?: BindableCredential;
   credentialDigest?: string;
@@ -62,7 +62,7 @@ export interface BuildEventInput {
 export type BindableCredential = Record<string, unknown> | object;
 
 /**
- * Compute the content-binding digest of a credential (spec v0.2-new §5.4):
+ * Compute the content-binding digest of a credential (spec §0.5.4):
  * `SRI(canonicalizeRFC8785(credential-without-proof))`.
  */
 export function credentialDigestOf(credential: BindableCredential): string {
@@ -70,7 +70,7 @@ export function credentialDigestOf(credential: BindableCredential): string {
 }
 
 /**
- * Build the **unsigned** `VIAEvent` (spec v0.2-new §5). When `credential` is given, the event
+ * Build the **unsigned** `VIAEvent` (spec §0.5). When `credential` is given, the event
  * is content-bound: its `credentialDigest` is computed over the proofless credential.
  * Otherwise it is reference-bound (commits only to `credentialSubject.id`).
  */
@@ -107,7 +107,7 @@ export function buildEvent(input: BuildEventInput): ViaEvent {
 }
 
 /**
- * Sign a `VIAEvent` with `eddsa-jcs-2022` (spec v0.2-new §5.2). The event *kind* lives in the
+ * Sign a `VIAEvent` with `eddsa-jcs-2022` (spec §0.5.2). The event *kind* lives in the
  * signed body (`credentialSubject.event`), so no `event` tag is added to the proof.
  */
 /** The signing material for an event/proof — a raw Ed25519 seed + its verification method. */
@@ -130,7 +130,7 @@ export function signEvent(event: ViaEvent, signer: EventSigner): ViaEvent {
 
 /**
  * Verify a `VIAEvent`'s signature. When the event is content-bound and the referenced
- * `credential` is supplied, also recompute and compare `credentialDigest` (spec v0.2-new §5.4).
+ * `credential` is supplied, also recompute and compare `credentialDigest` (spec §0.5.4).
  */
 export async function verifyEvent(
   event: ViaEvent,
@@ -156,7 +156,7 @@ export async function verifyEvent(
 }
 
 /**
- * Verify the ordering of a credential's event chain (spec v0.2-new §5.4): each event's
+ * Verify the ordering of a credential's event chain (spec §0.5.4): each event's
  * `previousEvent` must equal `SRI(canonicalizeRFC8785(prior-event))` (the full prior
  * event, including its proof). The first event's `previousEvent` may be null or a root.
  * Returns the first ordering failure.
@@ -171,7 +171,7 @@ export async function walkEventChain(events: ViaEvent[]): Promise<{ ok: boolean;
   return { ok: true };
 }
 
-/** The next event's `previousEvent` — `SRI(JCS(the whole prior signed event))` (spec v0.2-new §5.4). */
+/** The next event's `previousEvent` — `SRI(JCS(the whole prior signed event))` (spec §0.5.4). */
 export function eventChainLink(prior: ViaEvent): string {
   return computeSRI(canonicalizeRFC8785(prior));
 }
@@ -201,7 +201,7 @@ export interface ChainAudit {
 }
 
 /**
- * Audit a credential's `VIAEvent` chain (spec v0.2-new §5.4) — the audit-side reader, kept OFF the verify
+ * Audit a credential's `VIAEvent` chain (spec §0.5.4) — the audit-side reader, kept OFF the verify
  * critical path. Given the events in chain order (root first), it (1) walks the `previousEvent`
  * links (`walkEventChain` — the tamper-evidence: altering any event's bytes changes its SRI and
  * breaks the next link) and (2) re-verifies each event's signature against its resolved signer key.
@@ -254,7 +254,7 @@ export async function auditEventChain(
 
 // ============================================================================
 // Chained construction — build + sign an event linked to its predecessor, and
-// the issuance consent ceremony (spec v0.2-new §9). Pure; the caller supplies keys.
+// the issuance consent ceremony (spec §0.9). Pure; the caller supplies keys.
 // ============================================================================
 
 export interface BuildChainedEventInput {
@@ -360,7 +360,7 @@ export interface IssuanceResult {
 }
 
 /**
- * Build the v0.2 issuance artifacts (spec v0.2-new §5/§9): the content-bound event chain
+ * Build the v0.2 issuance artifacts (spec §0.5/§0.9): the content-bound event chain
  * ISSUE→ACCEPT/REJECT…, and the securing `STAMP` — emitted only when the policy is satisfied
  * (all grantors ACCEPT, zero REJECT). A REJECT terminates the ceremony: no STAMP, status REJECTED.
  * Pure — the caller persists `events` (as rows) + `stampProof` (the credential's `proof`).

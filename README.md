@@ -116,13 +116,13 @@ A complete runnable script: [`examples/healthcare-claims.ts`](../examples/health
 | Function | Notes |
 |---|---|
 | `buildPresentation(input)` / `verifyPresentation(vp, resolvePublicKey)` | full VP (Humanos-signed) |
-| `generateChallenge(ctx?)` / `domainMatches(bound, verifierDomain)` | audience binding (§7.3) |
+| `generateChallenge(ctx?)` / `domainMatches(bound, verifierDomain)` | audience binding (§0.7.3) |
 | `buildSdJwtMandate(input)` / `presentSdJwt(input)` / `verifySdJwtPresentation(input)` | SD-JWT VC selective disclosure (`dc+sd-jwt`) |
 
 ### Verify
 | Function | Notes |
 |---|---|
-| `verify({ presentation, executionParams }, deps)` | §8 flow (v0.2) |
+| `verify({ presentation, executionParams }, deps)` | §0.8 flow |
 | `verifyAny(...)` | dual-accept legacy + v0.2 during migration; reports `result.format` |
 
 `deps` (injected I/O):

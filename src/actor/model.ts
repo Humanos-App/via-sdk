@@ -71,7 +71,7 @@ export interface ActorKeyState {
   /** Key id (`<did>#key-N`) — what a v0.3 mandate pins (D7). */
   id: string;
   /**
-   * The key's published form, and there are TWO because v0.2-new §16.2 says so deliberately:
+   * The key's published form, and there are TWO because §16.2 says so deliberately:
    * Humanos-issued keys (organizations, people) are Ed25519 published as `Multikey` +
    * `publicKeyMultibase`; agent keys are P-256 published as `JsonWebKey` + `publicKeyJwk`. Ed25519
    * has no hardware-attestation ecosystem, which is the whole reason agent keys are P-256.
@@ -310,7 +310,7 @@ export type EventScope = (typeof EVENT_SCOPE)[EventType];
 
 /** The actor-scoped event kinds (v0.3 §3.4) — DERIVED, never a second list. */
 /**
- * Read whichever published form the event carries (§3.1, v0.2-new §16.2). Neither is invented: an
+ * Read whichever published form the event carries (§3.1, §16.2). Neither is invented: an
  * event that names no key material yields none, and the fold's own validation is what rejects it.
  */
 function keyMaterial(detail: Record<string, unknown>): { jwk?: Jwk; publicKeyMultibase?: string } {

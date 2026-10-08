@@ -48,7 +48,7 @@ export interface PopPayload {
 }
 
 /**
- * `action_hash` — the v0.2-new §5.3 `digestSRI` (`sha256-` + base64) of
+ * `action_hash` — the §0.5.3 `digestSRI` (`sha256-` + base64) of
  * `JCS({ mandateId, action, params })`. Binds a PoP to *this* transaction, closing
  * the base-spec gap that `executionParams` reach verify unsigned (§16.6).
  */
@@ -81,7 +81,7 @@ export function algForKey(jwk: Jwk): "ES256" | "RS256" | "EdDSA" | null {
 /**
  * Which algorithms an actor's PoP may use (§16.6).
  *
- * **Agents are ES256-only, and that is not an oversight.** v0.2-new §16.2 chose P-256 deliberately:
+ * **Agents are ES256-only, and that is not an oversight.** §16.2 chose P-256 deliberately:
  * hardware substrates speak it and Ed25519 has no attestation ecosystem — and the ISSUER controls
  * an agent's key, so the choice is ours to make.
  *

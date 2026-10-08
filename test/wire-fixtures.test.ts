@@ -5,7 +5,7 @@
  * `fixtures.generate.test.ts`) and verifies them with CURRENT code. If a change to
  * the builders / canonicalization / data model ever stops a shipped version's
  * artifacts from verifying, THIS fails — which is the whole point: already-issued
- * mandates must keep verifying forever (spec §13, VERSIONING.md, N40).
+ * mandates must keep verifying forever (spec §0.13, VERSIONING.md, N40).
  *
  * Organized per (version × format); adding v0.3 later = drop `v0.3/` fixtures + a block.
  */

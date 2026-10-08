@@ -294,7 +294,7 @@ export interface StampSigner {
 }
 
 /**
- * Secure the mandate with the single content-bound Humanos `STAMP` (spec v0.2-new §5) — a
+ * Secure the mandate with the single content-bound Humanos `STAMP` (spec §0.5) — a
  * Data Integrity proof whose `event` is `"STAMP"`. Returns the credential with its
  * `proof` set (a single object, not an array).
  */
@@ -312,7 +312,7 @@ export function stampMandate(credential: ViaMandateCredential, signer: StampSign
 
 export type ResolvePublicKey = (verificationMethod: string) => Uint8Array | Promise<Uint8Array>;
 
-/** Verify the mandate's single securing `STAMP` proof (spec v0.2-new §5). */
+/** Verify the mandate's single securing `STAMP` proof (spec §0.5). */
 export async function verifyStamp(
   credential: ViaMandateCredential,
   resolvePublicKey: ResolvePublicKey,

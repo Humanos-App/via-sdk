@@ -3,7 +3,7 @@
  *
  * These fixtures are FROZEN, real artifacts checked into the repo. `wire-fixtures.test.ts`
  * verifies them with current code — the permanent "already-issued artifacts must keep
- * verifying" contract (per spec §13 / VERSIONING.md). Regenerating them is a deliberate
+ * verifying" contract (per spec §0.13 / VERSIONING.md). Regenerating them is a deliberate
  * act (a new spec version, or an intended wire change), never automatic.
  *
  * Regenerate:  REGEN_FIXTURES=1 npx vitest run test/fixtures.generate.test.ts
@@ -65,7 +65,7 @@ const REGEN = !!process.env.REGEN_FIXTURES;
       [vmUser]: hex(publicKeyFromPrivate(SEED_USER)),
     });
 
-    // ---- v0.2: unified VIAEvent model (spec §5) ----
+    // ---- v0.2: unified VIAEvent model (spec §0.5) ----
     // action + mandate (single STAMP) + standalone consent/operational events + presentation.
     const action = buildActionVersion({
       $id: "urn:via:action:fixture-pay-1",
@@ -100,7 +100,7 @@ const REGEN = !!process.env.REGEN_FIXTURES;
     mandate = stampMandate(mandate, { privateKey: SEED_PLATFORM, verificationMethod: vmPlatform, created: "2026-01-03T00:00:00.000Z" });
     write("v0.2/mandate.json", mandate);
 
-    // consent events: standalone, content-bound VIAEvents chained by previousEvent (§5.4)
+    // consent events: standalone, content-bound VIAEvents chained by previousEvent (§0.5.4)
     /** Sign a v0.2-era event: the marker goes back to "0.2" before the proof covers it. */
     const signV02 = (e: ReturnType<typeof buildEvent>, signer: Parameters<typeof signEvent>[1]) =>
       signEvent({ ...e, specVersion: "0.2" }, signer);

@@ -84,7 +84,7 @@ describe("RFC 8785 (JCS)", () => {
 });
 
 describe("digestSRI", () => {
-  it("is sha256- + standard base64 (spec §5.3)", () => {
+  it("is sha256- + standard base64 (spec §0.5.3)", () => {
     const sri = computeSRI("hello");
     expect(sri).toMatch(/^sha256-[A-Za-z0-9+/]+=*$/);
     expect(Buffer.from(sri.slice("sha256-".length), "base64")).toHaveLength(32);

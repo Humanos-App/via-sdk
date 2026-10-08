@@ -80,7 +80,7 @@ async function verifyVpSignature(vp: VerifiablePresentation, deps: VerifyDeps): 
   }
 }
 
-/** Steps 2–9 of v0.2-new §8. */
+/** Steps 2–9 of §0.8. */
 async function runChecks(
   vp: VerifiablePresentation,
   executionParams: Record<string, unknown>,
@@ -139,7 +139,7 @@ async function runChecks(
   if (!enforcementFitsShape(mandate)) return { ...deny("enforcement_invalid", urn), enforcement };
   if (!mandate.action) {
     // §20.6 — a `semantic` mandate is enforced by a READER, and this is the custodial
-    // presentation path (v0.2-new §7.1), which has no reviewer to consult: semantic mandates
+    // presentation path (§0.7.1), which has no reviewer to consult: semantic mandates
     // present agent-direct (§16.11). Failing closed is the only honest answer — allowing here
     // would let the one mode whose enforcement is a reader be verified by not reading.
     if (enforcement === "semantic") return { ...deny("reviewer_unavailable", urn), enforcement };
@@ -196,7 +196,7 @@ export interface VerifyInput {
 /**
  * After a signature matches: read the credential's spec version and fail closed if
  * it is one this SDK does not understand — an absent marker included, since pre-0.2
- * artifacts no longer exist — otherwise run the v0.2-new §8 checks and tag the result.
+ * artifacts no longer exist — otherwise run the §0.8 checks and tag the result.
  */
 async function finish(
   vp: VerifiablePresentation,
@@ -210,7 +210,7 @@ async function finish(
   return { ...(await runChecks(vp, input.executionParams ?? {}, deps)), specVersion };
 }
 
-/** Verify a presentation (spec v0.2-new §8). No top-level action — read from `mandate.action`. */
+/** Verify a presentation (spec §0.8). No top-level action — read from `mandate.action`. */
 export async function verify(input: VerifyInput, deps: VerifyDeps): Promise<VerifyResult> {
   const vp = input.presentation;
   const sig = await verifyVpSignature(vp, deps);

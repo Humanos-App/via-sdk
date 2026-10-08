@@ -83,7 +83,7 @@ beforeAll(() => {
     description: { text: "Act within the pinned action.", lang: "en", author: "issuer" },
     enforcement: "rules",
   });
-  // Securing model (spec §5): the mandate carries ONE content-bound STAMP; the
+  // Securing model (spec §0.5): the mandate carries ONE content-bound STAMP; the
   // ISSUE/ACCEPT consents are standalone content-bound VIAEvents in the chain.
   mandate = stampMandate(mandate, { privateKey: platform.privateKey, verificationMethod: vm(VIA_PLATFORM_DID) });
 
@@ -150,7 +150,7 @@ describe("presentation", () => {
   });
 });
 
-describe("verify flow (§8)", () => {
+describe("verify flow (§0.8)", () => {
   const deps = () => ({
     verifier: { did: verifierDid },
     resolvePublicKey,

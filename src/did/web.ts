@@ -12,7 +12,7 @@ function isActorType(value: string): value is ActorType {
 }
 
 /**
- * `did:web:humanos.tech:{org|user|agent}:{uuid}` (v0.2-new §3.1; agents per v0.3 §16.1, §16.14).
+ * `did:web:humanos.tech:{org|user|agent}:{uuid}` (§0.3.1; agents per v0.3 §16.1, §16.14).
  *
  * The id is RANDOM, and for agents that is the point: it was briefly minted from the genesis key's
  * RFC 7638 thumbprint, which read as self-certifying without being so — nothing re-derived it, so it
@@ -51,7 +51,7 @@ export function verificationMethodId(did: string, fragment: string): string {
   return `${did}#${fragment}`;
 }
 
-/** `<did>#key-<index>` — the verification-method id for a DID's Nth key (spec v0.2-new §3.1). */
+/** `<did>#key-<index>` — the verification-method id for a DID's Nth key (spec §0.3.1). */
 export function getKeyId(did: string, index: number): string {
   return verificationMethodId(did, `key-${index}`);
 }
@@ -93,7 +93,7 @@ export function parseDidWeb(did: string): ParsedDidWeb {
   return { domain };
 }
 
-/** The domain segment of a verifier DID (for audience/domain binding, v0.2-new §7.3). */
+/** The domain segment of a verifier DID (for audience/domain binding, §0.7.3). */
 export function verifierDomainOf(did: string): string | undefined {
   return did.includes("did:web:") ? did.split("did:web:")[1]!.split(":")[0] : undefined;
 }

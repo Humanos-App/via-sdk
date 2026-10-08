@@ -34,7 +34,7 @@ export const VIA_CONTEXT_VERSION = "v1";
 export const TYPE_VC = "VerifiableCredential";
 export const TYPE_VIA_MANDATE = "VIAMandate";
 export const TYPE_VIA_EVENT = "VIAEvent";
-/** @deprecated Use {@link TYPE_VIA_EVENT}. `VIAReceipt` is a reference-bound `VIAEvent` alias (spec v0.2-new §10.2). */
+/** @deprecated Use {@link TYPE_VIA_EVENT}. `VIAReceipt` is a reference-bound `VIAEvent` alias (spec §0.10.2). */
 export const TYPE_VIA_RECEIPT = "VIAReceipt";
 export const TYPE_VP = "VerifiablePresentation";
 
@@ -44,7 +44,7 @@ export type CredentialStatus = "DRAFT" | "ACTIVE" | "REJECTED" | "CANCELED" | "R
 
 /**
  * @deprecated Use {@link EventType}. Operational-event subset kept as an alias for
- * one migration window (spec v0.2-new §10.2). `VP_DENIED` / `MANDATE_REVOKED` predate the
+ * one migration window (spec §0.10.2). `VP_DENIED` / `MANDATE_REVOKED` predate the
  * unified taxonomy.
  */
 export type ReceiptType =
@@ -123,7 +123,7 @@ export interface Mandate {
   userParams?: Record<string, WrappedUserParam>;
   /**
    * §20.1 — the words the person was shown. Optional on the TYPE because artifacts issued before
-   * §20 exist and must keep verifying (v0.2-new §13); §20.3's validity rules are enforced by
+   * §20 exist and must keep verifying (§0.13); §20.3's validity rules are enforced by
    * `validateMandateDescription`, not by the type.
    */
   description?: MandateDescription;
@@ -206,7 +206,7 @@ export interface ViaMandateCredential {
   credentialStatus?: BitstringStatusListEntry;
   /**
    * A **single** content-bound securing proof — the Humanos `STAMP` (its proof
-   * object carries `event: "STAMP"`), spec v0.2-new §4.1/§5. Consents (`ISSUE`/`ACCEPT`/
+   * object carries `event: "STAMP"`), spec §0.4.1/§0.5. Consents (`ISSUE`/`ACCEPT`/
    * `REJECT`) and operational facts are standalone {@link ViaEvent}s, not entries
    * here.
    */
@@ -214,11 +214,11 @@ export interface ViaMandateCredential {
 }
 
 /**
- * The unified `VIAEvent` primitive (spec v0.2-new §5) — a W3C VC carrying one Data Integrity
+ * The unified `VIAEvent` primitive (spec §0.5) — a W3C VC carrying one Data Integrity
  * proof that asserts "actor A asserts event E about credential C". Consents, the
  * securing `STAMP`, and operational facts are all `VIAEvent`s. Content-bound events
  * carry `credentialDigest`; reference-bound events omit it. `previousEvent` links
- * the credential's ordered event chain (spec v0.2-new §5.4).
+ * the credential's ordered event chain (spec §0.5.4).
  */
 export interface ViaEvent {
   "@context": string[];
@@ -271,7 +271,7 @@ export interface ViaEvent {
 
 /**
  * @deprecated Use {@link ViaEvent}. A `VIAReceipt` is a reference-bound `VIAEvent`
- * with a `receiptType` field (spec v0.2-new §10.2); kept readable for one migration window.
+ * with a `receiptType` field (spec §0.10.2); kept readable for one migration window.
  */
 export interface ViaReceiptCredential {
   "@context": string[];

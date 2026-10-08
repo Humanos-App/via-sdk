@@ -1,4 +1,4 @@
-// Affiliation + regulatory attestations (§18) — both ride the v0.2-new §5 `VIAEvent` primitive,
+// Affiliation + regulatory attestations (§18) — both ride the §0.5 `VIAEvent` primitive,
 // so signing, chaining and one verify routine come for free.
 //
 // AFFILIATION is the ∧ half of operator inheritance: the registrar says "Acme is
@@ -182,7 +182,7 @@ export async function verifyAffiliation(
   // The org must have signed it ITSELF — this is what makes inheritance unforgeable.
   // Checking the `issuer` LABEL is not enough: anyone can write `issuer: acme`. The
   // SIGNING KEY must belong to the org, so bind the proof's verificationMethod to it
-  // (same check v0.2-new §8 step 1 makes for the VP holder).
+  // (same check §0.8 step 1 makes for the VP holder).
   if (event.issuer !== op.org) return { valid: false, reason: "affiliation not signed by the named org" };
   if (!event.proof) return { valid: false, reason: "affiliation has no proof" };
   if (didFromUrl(event.proof.verificationMethod) !== op.org) {
