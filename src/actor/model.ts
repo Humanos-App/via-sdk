@@ -185,6 +185,7 @@ export interface ViaActorSubject {
   accreditation?: {
     level: "unverified" | "domain" | "verified";
     method: string;
+    /** Who made the claim: the DID that signed the `ACCREDITED` event (v0.3 §18.2). */
     registrar: string;
     verifiedAt: string;
     /** When the claim lapses (v0.3 §18.2). The record says `validUntil` whatever the event said. */
@@ -425,14 +426,15 @@ export function actorSummaryFloor(
  * states the key's whole rung, root included, and a keyed regrade never raises, `regrade_raises`;
  * 8 = `MERGED` folded — a merge's aliases and carried keys in one event; 9 = an accreditation's
  * `expiresAt` is recorded as `validUntil`; 10 = the aliases an absorbed actor held join the
- * survivor as `inherited`, not `channel`).
+ * survivor as `inherited`, not `channel`; 11 = an accreditation's `registrar` is the event's signer,
+ * whatever the claim stated).
  *
  * A stored record (a checkpoint) is only as current as the fold that wrote it. Seeding a fold from
  * one written by an older version would silently omit whatever the newer fold adds, so a
  * checkpointed read MUST seed only from a record written by this version and replay the whole
  * chain otherwise.
  */
-export const ACTOR_FOLD_VERSION = 10;
+export const ACTOR_FOLD_VERSION = 11;
 
 /** §5 — a keyed `ASSURANCE_UPDATED` lowers or keeps every rung field; it never raises one or names a new root. */
 function regradeLowers(k: ActorKeyState, detail: Record<string, unknown>): boolean {
@@ -740,9 +742,11 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         if (subject.actorType === "agent") return fail("accreditation_on_agent", i);
         // One name on the record: a claim signed before 2026-10-07 says `expiresAt`, and is read as
         // `validUntil` (v0.3 §18.2). The event is not touched; only the fold's output is normalized.
-        const { expiresAt: _legacy, validUntil: _stated, ...claim } = a as typeof a & { expiresAt?: string };
+        // The registrar is who SIGNED the event — its issuer (v0.3 §18.2) — never a name the claim
+        // states about itself: a claim signed before 2026-10-08 may carry one, and it is not read.
+        const { expiresAt: _legacy, validUntil: _stated, registrar: _named, ...claim } = a as typeof a & { expiresAt?: string };
         const until = claimValidUntil(a);
-        subject.accreditation = { ...claim, verifiedAt: a.verifiedAt ?? e.validFrom, ...(until ? { validUntil: until } : {}) };
+        subject.accreditation = { ...claim, registrar: e.issuer, verifiedAt: a.verifiedAt ?? e.validFrom, ...(until ? { validUntil: until } : {}) };
         break;
       }
       case "ALIAS_ADDED": {

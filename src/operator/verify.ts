@@ -164,7 +164,9 @@ export async function verifyAccreditation(input: AccreditationVerifyInput, deps:
       level: claims.level,
       method: claims.method,
       subjectType: claims.subjectType,
-      registrar: claims.registrar,
+      // v0.3 §18.2 — the registrar is who SIGNED the event (checked by O1 above), never a name the
+      // claim states about itself.
+      registrar,
       verifiedAt: claims.verifiedAt,
       ...(org ? { org } : {}),
     },

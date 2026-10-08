@@ -1411,6 +1411,17 @@ describe("§18 ACCREDITED — a registrar's claim, on the actor's own chain", ()
     expect(open.subject.accreditation).not.toHaveProperty("validUntil");
   });
 
+  // @invariant v0.3 §18.2: the registrar is who SIGNED the event — its issuer — never a name the
+  // claim states about itself. A claim signed before 2026-10-08 may carry one; it is not read.
+  it("records the event's signer as the registrar, whatever the claim names", () => {
+    const stated = foldActorChain(orgChain(accredited({ registrar: "some-other-registrar" })));
+    const silent = foldActorChain(orgChain((p: ViaEvent) => ev("ACCREDITED", { accreditation: { level: "domain", method: "dns-challenge" } }, { prev: p })));
+    if (!stated.ok || !silent.ok) throw new Error("fold failed");
+    const signer = orgChain()[0]!.issuer;
+    expect(stated.subject.accreditation?.registrar).toBe(signer);
+    expect(silent.subject.accreditation?.registrar).toBe(signer);
+  });
+
   it("REPLACES wholesale — an accreditation is one coherent statement", () => {
     const r = foldActorChain(orgChain(
       accredited({ level: "domain", method: "dns-challenge" }),

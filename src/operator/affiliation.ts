@@ -56,8 +56,6 @@ export interface BuildAccreditationInput {
   subject: string;
   level: "unverified" | "domain" | "verified";
   method: string;
-  /** The root that performed the verification — Humanos today, a QTSP or registry later (§18.9). */
-  registrar: string;
   subjectType?: "individual" | "organization";
   verifiedAt?: string;
   /** When the claim lapses (v0.3 §18.2). */
@@ -91,7 +89,11 @@ export interface BuildAccreditationInput {
  */
 export function buildAccreditation(
   input: BuildAccreditationInput & {
-    /** The registrar asserting it — Humanos today, a QTSP or registry later (§18.9). */
+    /**
+     * The registrar asserting it — Humanos today, a QTSP or registry later (§18.9). It SIGNS the
+     * event, and that is how a reader learns who the registrar is (v0.3 §18.2): the claim does not
+     * restate it.
+     */
     registrarDid: string;
   },
   signer: AffiliationSigner,
@@ -110,7 +112,6 @@ export function buildAccreditation(
     accreditation: {
       level: input.level,
       method: input.method,
-      registrar: input.registrar,
       ...(input.subjectType ? { subjectType: input.subjectType } : {}),
       verifiedAt: input.verifiedAt ?? at,
       ...(input.validUntil ? { validUntil: input.validUntil } : {}),

@@ -48,7 +48,6 @@ function acmeVerified(over: Record<string, unknown> = {}): ViaEvent {
       level: "verified",
       method: "kyb-registry",
       subjectType: "organization",
-      registrar: "humanos",
       verifiedAt: "2026-01-01T00:00:00.000Z",
       registrarDid: REGISTRAR,
       ...(rest as Record<string, never>),
@@ -221,6 +220,27 @@ describe("§18 O1–O4 + the ∧ composition", () => {
       }),
       { privateKey: acme.privateKey, verificationMethod: VM_ACME },
     );
+
+  // @invariant v0.3 §18.2: the registrar is who signed. The claim does not restate it, and what a
+  // rule reads as `accreditation.registrar` is the signer O1 just checked — never a self-given name.
+  it("names the signer as the registrar, and writes no registrar into the claim", async () => {
+    const event = acmeVerified();
+    const claim = (event.credentialSubject as unknown as { accreditation: Record<string, unknown> }).accreditation;
+    expect(claim).not.toHaveProperty("registrar");
+    const r = await verifyAccreditation({ agentDid: AGENT, accreditation: event, affiliation: acmeLink() }, { resolvePublicKey, now });
+    expect(r).toMatchObject({ ok: true, accreditation: { level: "verified", registrar: REGISTRAR } });
+    // A claim signed before 2026-10-08 that names itself something else: the signer still wins.
+    const legacy = signEvent(
+      buildEvent({
+        subject: ACME, event: "ACCREDITED", actor: REGISTRAR, issuer: REGISTRAR, previousEvent: null,
+        validFrom: "2026-01-01T00:00:00.000Z",
+        accreditation: { level: "verified", method: "kyb-registry", registrar: "a-name-it-gave-itself", verifiedAt: "2026-01-01T00:00:00.000Z" },
+      }),
+      { privateKey: registrar.privateKey, verificationMethod: VM_REG },
+    );
+    const old = await verifyAccreditation({ agentDid: AGENT, accreditation: legacy, affiliation: acmeLink() }, { resolvePublicKey, now });
+    expect(old).toMatchObject({ ok: true, accreditation: { registrar: REGISTRAR } });
+  });
 
   it("writes `validUntil`, never `expiresAt`", () => {
     const acc = acmeVerified({ validUntil: "2027-01-01T00:00:00.000Z" }).credentialSubject as unknown as { accreditation: Record<string, unknown> };

@@ -81,8 +81,11 @@ export interface AccreditationClaims {
   level: AccreditationLevel;
   method: AccreditationMethod;
   subjectType: SubjectType;
-  /** The root that performed the verification — `humanos` today; QTSPs / registries later. */
-  registrar: string;
+  /**
+   * Not stated since 2026-10-08: the registrar is who SIGNED the event (v0.3 §18.2). A claim signed
+   * before may carry a name here; it is not read.
+   */
+  registrar?: string;
   verifiedAt: string;
   /**
    * When the claim lapses (v0.3 §18.2) — identity DECAYS by nature. The name the credential envelope
