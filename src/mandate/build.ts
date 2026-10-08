@@ -119,14 +119,29 @@ export interface BuildEvidenceInput {
   digestSRI?: string;
 }
 
+/**
+ * An evidence `mediaType`: a bare lowercase `type/subtype` in RFC 6838 restricted-name syntax.
+ *
+ * It is signed, so a bad value cannot be corrected later. Parameters are rejected:
+ * `application/json` and `application/json;charset=utf-8` would be two byte-different spellings
+ * of one type inside a signature, and equivalent credentials would stop comparing equal. Which
+ * media types are acceptable is platform policy; this is only the grammar.
+ */
+export const MEDIA_TYPE_PATTERN = /^[a-z0-9][a-z0-9!#$&^_.+-]{0,126}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}$/;
+
 /** Build a by-reference `evidence` entry, computing the SRI digest from `content` if needed. */
 export function buildEvidence(input: BuildEvidenceInput): EvidenceEntry {
   const digestSRI = input.digestSRI ?? (input.content !== undefined ? computeSRI(input.content) : undefined);
   if (!digestSRI) throw new Error("buildEvidence requires `content` or `digestSRI`");
+  if (input.mediaType !== undefined && !MEDIA_TYPE_PATTERN.test(input.mediaType)) {
+    throw new Error(
+      `buildEvidence: invalid mediaType '${input.mediaType}': expected a lowercase type/subtype with no parameters`,
+    );
+  }
   return {
     id: input.id ?? `urn:via:evidence:${randomUUID()}`,
     type: input.type ?? ["VIAEvidence"],
-    ...(input.mediaType ? { mediaType: input.mediaType } : {}),
+    ...(input.mediaType !== undefined ? { mediaType: input.mediaType } : {}),
     digestSRI,
     location: input.location,
   };

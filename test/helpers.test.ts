@@ -7,6 +7,7 @@ import {
   StatusList,
   checkCredentialStatus,
   buildEvidence,
+  MEDIA_TYPE_PATTERN,
   computeSRI,
   buildMandate,
   stampMandate,
@@ -71,5 +72,21 @@ describe("buildEvidence", () => {
     expect(e.digestSRI).toBe("sha256-abc");
     expect(e.id).toBe("urn:via:evidence:fixed");
     expect(() => buildEvidence({ location: "https://x" })).toThrow();
+  });
+
+  // @invariant v0.3 §12: an evidence `mediaType` is signed, so it is a bare lowercase type/subtype —
+  // a parameter or a capital would be a second spelling of one type inside a signature, and two
+  // equivalent credentials would stop comparing equal. Refused before signing, never normalized.
+  it("accepts a bare lowercase media type and refuses any other spelling", () => {
+    const entry = (mediaType: string) => buildEvidence({ digestSRI: "sha256-abc", location: "https://x", mediaType });
+    for (const ok of ["application/pdf", "application/json", "image/svg+xml", "application/vnd.humanos.consent-v1+json"]) {
+      expect(entry(ok).mediaType, ok).toBe(ok);
+      expect(MEDIA_TYPE_PATTERN.test(ok), ok).toBe(true);
+    }
+    for (const bad of ["application/json;charset=utf-8", "Application/PDF", "application/json ", " application/json", "pdf", "application/", "/pdf", "a/b/c", ""]) {
+      expect(() => entry(bad), JSON.stringify(bad)).toThrow(/invalid mediaType/);
+    }
+    // Stating none is allowed: the entry simply carries no `mediaType`.
+    expect(buildEvidence({ digestSRI: "sha256-abc", location: "https://x" })).not.toHaveProperty("mediaType");
   });
 });
