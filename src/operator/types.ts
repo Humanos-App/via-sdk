@@ -5,7 +5,7 @@
 // Mirrors §16.3's three-part anatomy on purpose — `level` (ordinal, CEL floors) +
 // `method` (categorical, CEL matches) + `registrar` (the root) — so the existing CEL
 // and staleness machinery consumes it unchanged.
-import type { BitstringStatusListEntry, SpecVersion } from "../types.js";
+import type { SpecVersion } from "../types.js";
 import type { DataIntegrityProof } from "../crypto/proof.js";
 
 /**
@@ -57,6 +57,9 @@ export type AccreditationReasonCode =
 /** Why an operator's verification was pulled — underwriters need the *why*. */
 export type AccreditationRevocationReason = "struck_off" | "fraud" | "sanctions";
 
+/** The reasons a registrar may withdraw an accreditation for cause (v0.3 §18.2) — a fixed list. */
+export const WITHDRAWAL_REASONS: ReadonlySet<string> = new Set<AccreditationRevocationReason>(["struck_off", "fraud", "sanctions"]);
+
 /**
  * When a signed claim lapses — an accreditation's or an affiliation's (v0.3 §18.2, §18.4).
  *
@@ -93,8 +96,13 @@ export interface AccreditationClaims {
    * {@link claimValidUntil}, never by field.
    */
   validUntil?: string;
-  /** Published, offline-checkable revocation (§0.10.1) — no live registrar call at verify. */
-  status?: BitstringStatusListEntry;
+  // No `status`: an outside registrar's published revocation entry is parked in v0.4 §9.3 with the
+  // actors' status lists (2026-10-11).
+  /**
+   * Withdrawn for cause (v0.3 §18.2): the party was struck off, committed fraud or was sanctioned.
+   * Only on a bottom-rung claim (`level: "unverified"`); O3 denies with the reason.
+   */
+  withdrawn?: { reason: AccreditationRevocationReason };
 }
 
 /** A registrar-signed operator verification credential (a W3C VC, one securing proof). */

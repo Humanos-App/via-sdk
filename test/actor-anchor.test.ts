@@ -29,15 +29,15 @@ const ANCHORED_BY = {
   at: "2026-09-12T09:59:58.720Z",
 };
 
-function genesis(agent: Record<string, unknown>): ViaEvent {
+function genesis(fields: Record<string, unknown>): ViaEvent {
   return buildChainedEvent({
     subject: DID,
     event: "ACTOR_REGISTERED",
-    actor: "did:web:humanos.tech",
     issuer: "did:web:humanos.tech",
     previous: null,
     validFrom: AT,
-    agent: { actorType: "agent", keyId: `${DID}#key-1`, jwk: { kty: "EC", crv: "P-256", x: "aJ43", y: "FIN9" }, assurance: "pop", binding: "custodial", verifiedAt: AT, ...agent },
+    actorType: "agent", keyId: `${DID}#key-1`, publicKeyJwk: { kty: "EC", crv: "P-256", x: "aJ43", y: "FIN9" }, assurance: "pop", binding: "custodial", verifiedAt: AT,
+    ...fields,
     signer,
   });
 }
@@ -84,12 +84,11 @@ describe("bootstrapAnchor: person (v0.3 §3.1/§16.14)", () => {
     const later = buildChainedEvent({
       subject: DID,
       event: "ASSURANCE_UPDATED",
-      actor: "did:web:humanos.tech",
       issuer: "did:web:humanos.tech",
       previous: g,
       validFrom: "2026-09-12T11:00:00.000Z",
       // Re-anchoring to the organization's own key after the fact is exactly the rewrite §9.5 bars.
-      agent: { assurance: "pop", binding: "custodial", bootstrapAnchor: "api_key" },
+      assurance: "pop", binding: "custodial", bootstrapAnchor: "api_key",
       signer: { ...signer, created: "2026-09-12T11:00:00.000Z" },
     });
     const folded = foldActorChain([g, later]);

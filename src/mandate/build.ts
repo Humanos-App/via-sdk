@@ -55,8 +55,6 @@ export interface BuildMandateInput {
   validFrom: string;
   /** Omitted entirely when there is no expiry (never null — N19). */
   validUntil?: string;
-  /** v0.3 delegation — marks a CHILD mandate (attenuated from `parent`). */
-  delegation?: { parent: string; depth: number; tools: string[] };
   /** §20.1 — the words the person was shown, with their language and their author. REQUIRED. */
   description: MandateDescription;
   /**
@@ -275,7 +273,6 @@ export function buildMandate(input: BuildMandateInput): ViaMandateCredential {
         enforcement,
         ...(input.initiator ? { initiator: input.initiator } : {}),
         ...(stepUp ? { stepUp } : {}),
-        ...(input.delegation ? { delegation: input.delegation } : {}),
         ...(input.maxExecutions !== undefined ? { maxExecutions: input.maxExecutions } : {}),
         ...(extensions.length ? { extensions } : {}),
         ...(criticalExtensions.length ? { criticalExtensions } : {}),

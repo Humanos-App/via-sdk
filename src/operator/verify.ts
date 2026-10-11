@@ -15,7 +15,7 @@
 import { verifyEvent } from "../event/build.js";
 import { verifyAffiliation } from "./affiliation.js";
 import { VIA_PLATFORM_DID } from "../did/web.js";
-import type { ViaEvent, BitstringStatusListEntry } from "../types.js";
+import type { ViaEvent } from "../types.js";
 import { claimValidUntil } from "./types.js";
 import type {
   AccreditationClaims,
@@ -49,11 +49,6 @@ export interface AccreditationVerifyDeps {
    * `did:web:humanos.tech`; an environment with its own platform DID (dev, stage) passes that.
    */
   registrarDid?: string;
-  /**
-   * **O3** — resolve the PUBLISHED status list entry (offline; no live registrar call,
-   * preserving the agent-direct property §16.11). Omit to skip revocation checking.
-   */
-  checkStatus?: (entry: BitstringStatusListEntry) => Promise<{ revoked: boolean; reason?: AccreditationRevocationReason }> | { revoked: boolean; reason?: AccreditationRevocationReason };
   now?: Date;
 }
 
@@ -92,7 +87,7 @@ export async function verifyAccreditation(input: AccreditationVerifyInput, deps:
   const ev = input.accreditation;
   const cs = ev.credentialSubject as unknown as {
     id: string;
-    accreditation?: AccreditationClaims & { status?: BitstringStatusListEntry };
+    accreditation?: AccreditationClaims;
   };
   const claims = cs.accreditation;
   if (!claims) {
@@ -137,19 +132,17 @@ export async function verifyAccreditation(input: AccreditationVerifyInput, deps:
     org = cs.id;
   }
 
-  // O3 — published revocation (offline). A struck-off operator must not keep trading
-  // on a mandate that snapshotted its level at issuance.
-  if (claims.status && deps.checkStatus) {
-    const st = await deps.checkStatus(claims.status);
-    if (st.revoked) {
-      return {
-        ok: false,
-        accreditation: { ...UNVERIFIED },
-        reason: "accreditation_revoked",
-        ...(st.reason ? { revocationReason: st.reason } : {}),
-        detail: `operator verification revoked${st.reason ? `: ${st.reason}` : ""}`,
-      };
-    }
+  // O3 — not withdrawn for cause (v0.3 §18.2, §18.5): the registrar's `ACCREDITED { level:
+  // "unverified", withdrawn: { reason } }`. First failure denies, so a floor written at `unverified`
+  // cannot pass on it. A plain downgrade is O5's. The published-list check is parked in v0.4 §9.3.
+  if (claims.withdrawn) {
+    return {
+      ok: false,
+      accreditation: { ...UNVERIFIED },
+      reason: "accreditation_revoked",
+      revocationReason: claims.withdrawn.reason,
+      detail: `operator accreditation withdrawn: ${claims.withdrawn.reason}`,
+    };
   }
 
   // O4 — identity decays: domain rungs re-challenge, `verified` refreshes.

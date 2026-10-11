@@ -1,5 +1,5 @@
 {
-  "version": 11,
+  "version": 12,
   "chains": {
     "organization": {
       "accreditation": {
@@ -14,7 +14,6 @@
       "binding": "custodial",
       "bootstrapAnchor": "manual",
       "existedSince": "2024-03-01T00:00:00.000Z",
-      "genesisAt": "2026-01-01T00:00:00.000Z",
       "id": "did:web:golden.example",
       "keys": [
         {
@@ -40,7 +39,6 @@
       "binding": "attested",
       "bootstrapAnchor": "api_key",
       "existedSince": "2026-01-01T00:00:00.000Z",
-      "genesisAt": "2026-01-01T00:00:00.000Z",
       "id": "did:web:humanos.tech:agent:golden-1",
       "keys": [
         {
@@ -51,7 +49,7 @@
           },
           "binding": "attested",
           "id": "did:web:humanos.tech:agent:golden-1#key-1",
-          "jwk": {
+          "publicKeyJwk": {
             "crv": "P-256",
             "kty": "EC",
             "x": "k1",
@@ -72,7 +70,7 @@
           "assurance": "pop",
           "binding": "custodial",
           "id": "did:web:humanos.tech:agent:golden-1#key-2",
-          "jwk": {
+          "publicKeyJwk": {
             "crv": "P-256",
             "kty": "EC",
             "x": "k2",
@@ -89,7 +87,7 @@
           },
           "binding": "attested",
           "id": "did:web:humanos.tech:agent:golden-1#key-3",
-          "jwk": {
+          "publicKeyJwk": {
             "crv": "P-256",
             "kty": "EC",
             "x": "k3",
@@ -99,10 +97,6 @@
           "verifiedAt": "2026-01-05T00:00:00.000Z"
         }
       ],
-      "lineage": {
-        "event": "sha256-delegated",
-        "parent": "did:web:humanos.tech:agent:golden-parent"
-      },
       "operator": {
         "affiliationEvent": "sha256-KIOLhiXPLXG25ZPjAo2nd3iEHaE4Z+fdKoNDc1jAOMU=",
         "org": "did:web:golden.example",
@@ -116,14 +110,14 @@
       "assurance": "pop",
       "binding": "self",
       "bootstrapAnchor": "api_key",
-      "genesisAt": "2026-01-01T00:00:00.000Z",
+      "existedSince": "2026-01-01T00:00:00.000Z",
       "id": "did:web:humanos.tech:agent:golden-legacy",
       "keys": [
         {
           "assurance": "pop",
           "binding": "self",
           "id": "did:web:humanos.tech:agent:golden-legacy#key-1",
-          "jwk": {
+          "publicKeyJwk": {
             "crv": "P-256",
             "kty": "EC",
             "x": "kl",
@@ -153,7 +147,7 @@
       "assurance": "pop",
       "binding": "custodial",
       "bootstrapAnchor": "manual",
-      "genesisAt": "2026-01-01T00:00:00.000Z",
+      "existedSince": "2026-01-01T00:00:00.000Z",
       "id": "did:web:golden-legacy.example",
       "keys": [
         {
@@ -180,7 +174,6 @@
       "binding": "self",
       "bootstrapAnchor": "manual",
       "existedSince": "2023-06-01T00:00:00.000Z",
-      "genesisAt": "2026-01-01T00:00:00.000Z",
       "id": "did:web:humanos.tech:user:golden-email",
       "keys": [
         {
@@ -195,7 +188,7 @@
           "assurance": "device",
           "binding": "self",
           "id": "did:web:humanos.tech:user:golden-email#key-2",
-          "jwk": {
+          "publicKeyJwk": {
             "crv": "P-256",
             "kty": "EC",
             "x": "pk",
@@ -219,14 +212,14 @@
     "noUsableKey": {
       "actorType": "agent",
       "bootstrapAnchor": "api_key",
-      "genesisAt": "2026-01-01T00:00:00.000Z",
+      "existedSince": "2026-01-01T00:00:00.000Z",
       "id": "did:web:humanos.tech:agent:golden-revoked",
       "keys": [
         {
           "assurance": "hardware",
           "binding": "attested",
           "id": "did:web:humanos.tech:agent:golden-revoked#key-1",
-          "jwk": {
+          "publicKeyJwk": {
             "crv": "P-256",
             "kty": "EC",
             "x": "kr",
@@ -244,14 +237,14 @@
       "assurance": "pop",
       "binding": "self",
       "bootstrapAnchor": "api_key",
-      "genesisAt": "2026-01-01T00:00:00.000Z",
+      "existedSince": "2026-01-01T00:00:00.000Z",
       "id": "did:web:humanos.tech:agent:golden-rungless",
       "keys": [
         {
           "assurance": "hardware",
           "binding": "attested",
           "id": "did:web:humanos.tech:agent:golden-rungless#key-1",
-          "jwk": {
+          "publicKeyJwk": {
             "crv": "P-256",
             "kty": "EC",
             "x": "rk1",
@@ -265,7 +258,7 @@
           "assurance": "pop",
           "binding": "self",
           "id": "did:web:humanos.tech:agent:golden-rungless#key-2",
-          "jwk": {
+          "publicKeyJwk": {
             "crv": "P-256",
             "kty": "EC",
             "x": "rk2",
@@ -293,14 +286,14 @@
       "assurance": "pop",
       "binding": "self",
       "bootstrapAnchor": "api_key",
-      "genesisAt": "2026-01-01T00:00:00.000Z",
+      "existedSince": "2026-01-01T00:00:00.000Z",
       "id": "did:web:humanos.tech:agent:golden-survivor",
       "keys": [
         {
           "assurance": "hardware",
           "binding": "attested",
           "id": "did:web:humanos.tech:agent:golden-survivor#key-1",
-          "jwk": {
+          "publicKeyJwk": {
             "crv": "P-256",
             "kty": "EC",
             "x": "s1",
@@ -314,7 +307,7 @@
           "assurance": "pop",
           "binding": "self",
           "id": "did:web:humanos.tech:agent:golden-absorbed#key-1",
-          "jwk": {
+          "publicKeyJwk": {
             "crv": "P-256",
             "kty": "EC",
             "x": "a1",
@@ -332,7 +325,7 @@
           },
           "binding": "custodial",
           "id": "did:web:humanos.tech:agent:golden-absorbed#key-2",
-          "jwk": {
+          "publicKeyJwk": {
             "crv": "P-256",
             "kty": "EC",
             "x": "a2",
@@ -355,7 +348,7 @@
       "assurance": "pop",
       "binding": "self",
       "bootstrapAnchor": "api_key",
-      "genesisAt": "2026-01-01T00:00:00.000Z",
+      "existedSince": "2026-01-01T00:00:00.000Z",
       "id": "did:web:humanos.tech:agent:golden-absorbed",
       "keySuccession": {
         "did:web:humanos.tech:agent:golden-absorbed#key-1": "did:web:humanos.tech:agent:golden-absorbed#key-1",
@@ -366,7 +359,7 @@
           "assurance": "pop",
           "binding": "self",
           "id": "did:web:humanos.tech:agent:golden-absorbed#key-1",
-          "jwk": {
+          "publicKeyJwk": {
             "crv": "P-256",
             "kty": "EC",
             "x": "a1",
@@ -380,7 +373,7 @@
           "assurance": "device",
           "binding": "custodial",
           "id": "did:web:humanos.tech:agent:golden-absorbed#key-2",
-          "jwk": {
+          "publicKeyJwk": {
             "crv": "P-256",
             "kty": "EC",
             "x": "a2",
@@ -400,7 +393,6 @@
       "binding": "custodial",
       "bootstrapAnchor": "manual",
       "existedSince": "2025-02-01T00:00:00.000Z",
-      "genesisAt": "2026-01-01T00:00:00.000Z",
       "id": "did:web:humanos.tech:user:golden-phone",
       "keySuccession": {
         "did:web:humanos.tech:user:golden-phone#key-1": "did:web:humanos.tech:user:golden-email#key-3"

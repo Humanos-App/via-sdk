@@ -7,7 +7,7 @@ import {
   verifierDomainOf,
   VIA_PLATFORM_DID,
 } from "../src/did/web.js";
-import { buildDidDocument, isAuthorizedFor } from "../src/did/document.js";
+import { buildDidDocument, isAuthorizedFor, resolveVerificationJwk, resolveVerificationKey } from "../src/did/document.js";
 import { generateEd25519Key } from "../src/crypto/ed25519.js";
 import { buildActionVersion, actionDigestSRI, verifyActionReference } from "../src/action/build.js";
 import { validateExecutionParams, validateUserParams, unwrapUserParamValues } from "../src/action/execution-params.js";
@@ -34,11 +34,45 @@ describe("did:web", () => {
     const k = generateEd25519Key();
     const did = generateViaDID("org", { uuid: "u1" });
     const doc = buildDidDocument({ did, publicKey: k.publicKey });
-    expect(doc.verificationMethod[0]!.type).toBe("Multikey");
-    expect(doc.verificationMethod[0]!.publicKeyMultibase.startsWith("z6Mk")).toBe(true);
+    const vm = doc.verificationMethod[0]!;
+    expect(vm.type).toBe("Multikey");
+    expect(vm.type === "Multikey" && vm.publicKeyMultibase.startsWith("z6Mk")).toBe(true);
     expect(doc["@context"]).toContain("https://w3id.org/security/multikey/v1");
+    expect(doc["@context"]).not.toContain("https://w3id.org/security/jwk/v1");
     expect(isAuthorizedFor(doc, `${did}#key-1`, "assertionMethod")).toBe(true);
     expect(isAuthorizedFor(doc, `${did}#key-1`, "authentication")).toBe(true);
+  });
+
+  // v0.3 §16.2: an agent's P-256 key is published as `JsonWebKey` + `publicKeyJwk`; a reader also
+  // takes `JsonWebKey2020`, the older name documents used before 2026-10-11.
+  it("builds and reads an agent's key as JsonWebKey, and still reads JsonWebKey2020", () => {
+    const jwk = { kty: "EC", crv: "P-256", x: "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU", y: "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0" };
+    const did = generateViaDID("agent", { uuid: "a1" });
+    const doc = buildDidDocument({ did, publicKeyJwk: { ...jwk, d: "secret-must-not-leak" } });
+    const vm = doc.verificationMethod[0]!;
+    expect(vm.type).toBe("JsonWebKey");
+    expect(vm.type !== "Multikey" && vm.publicKeyJwk).toEqual(jwk);
+    // v0.3 §0.3.3: the context that defines JsonWebKey, or a JSON-LD processor drops the key.
+    expect(doc["@context"]).toContain("https://w3id.org/security/jwk/v1");
+    expect(resolveVerificationJwk(doc, `${did}#key-1`, "assertionMethod")).toEqual(jwk);
+    expect(() => resolveVerificationKey(doc, `${did}#key-1`)).toThrow(/resolveVerificationJwk/);
+
+    const older = { ...doc, verificationMethod: [{ id: vm.id, controller: vm.controller, type: "JsonWebKey2020" as const, publicKeyJwk: jwk }] };
+    expect(resolveVerificationJwk(older, `${did}#key-1`)).toEqual(jwk);
+  });
+
+  // v0.3 §0.3.3: W3C's verifier rejects a method whose controller is not the document's own DID.
+  it("names the DID itself as every key's controller, even when another party controls the document", () => {
+    const k = generateEd25519Key();
+    const did = generateViaDID("org", { uuid: "u3" });
+    const doc = buildDidDocument({ did, publicKey: k.publicKey, controller: "did:web:humanos.tech" });
+    expect(doc.verificationMethod[0]!.controller).toBe(did);
+    expect(doc.controller).toBe("did:web:humanos.tech");
+  });
+
+  it("builds a key from exactly one of an Ed25519 key and a JWK", () => {
+    const did = generateViaDID("org", { uuid: "u2" });
+    expect(() => buildDidDocument({ did })).toThrow(/exactly one/);
   });
 });
 

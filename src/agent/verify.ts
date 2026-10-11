@@ -10,6 +10,7 @@ import { evaluateRules, type RuleEvaluation } from "../cel/evaluate.js";
 import { agentReasonForRule } from "./constraints.js";
 import { unwrapUserParamValues, validateExecutionParams } from "../action/execution-params.js";
 import { actionDigestSRI } from "../action/build.js";
+import type { AccreditationRevocationReason } from "../operator/types.js";
 import type { ActionDetail } from "../action/types.js";
 import { boundKeyVerifiedAtMs, type AgentReasonCode, type Assurance, type Binding, type BoundKey, type Root } from "./types.js";
 import type {
@@ -219,7 +220,11 @@ export function projectAccreditation(loaded: Record<string, unknown>): Record<st
  * cannot be projected as data and left for a rule to notice. Quietly downgrading it to `unverified`
  * would pass any floor written at `unverified`, which is the opposite of what decay means.
  */
-export type AccreditationLoad = Record<string, unknown> | undefined | { denied: true; reason: string };
+export type AccreditationLoad =
+  | Record<string, unknown>
+  | undefined
+  // `revocationReason` with `accreditation_revoked`: why a registrar withdrew it for cause (v0.3 §18.2).
+  | { denied: true; reason: string; revocationReason?: AccreditationRevocationReason };
 
 /** §20.6 — what a reviewer is asked. The words, their author, and the call. */
 export interface SemanticReviewInput {
@@ -256,6 +261,8 @@ export interface AgentDirectResult {
   stepUp?: { trigger: StepUpTrigger; reason: string };
   /** §20.6 — the reviewer that took part, for the audit record (§9.9). */
   reviewer?: { id: string; version?: string };
+  /** §18.5 O3 — with `accreditation_revoked`: why the registrar withdrew the accreditation (§18.2). */
+  revocationReason?: AccreditationRevocationReason;
 }
 
 const deny = (reason: string, credentialId?: string, enforcement?: Enforcement): AgentDirectResult => ({
@@ -394,8 +401,10 @@ export async function verifyAgentDirect(
   const loaded = wantsAccreditation && deps.loadAccreditation ? await deps.loadAccreditation() : undefined;
   // §18.5 — O1–O4 are ordered and the first failure denies. `accreditation_expired` and
   // `accreditation_revoked` are decisions, not data for a rule to weigh.
-  const failure = loaded && "denied" in loaded ? (loaded as { denied: true; reason: string }) : null;
-  if (failure) return deny(failure.reason, urn, enforcement);
+  const failure = loaded && "denied" in loaded ? (loaded as Extract<AccreditationLoad, { denied: true }>) : null;
+  if (failure) {
+    return { ...deny(failure.reason, urn, enforcement), ...(failure.revocationReason ? { revocationReason: failure.revocationReason } : {}) };
+  }
   // §18.6 — an operator with no ACCREDITED is the unverified tier, not an absent object: a rule like
   // `amount <= 1000 || accreditationRank(...) >= …` must still allow the small call. Only a verifier
   // with no loader at all (accreditation not implemented) leaves it out — and the rule then denies.

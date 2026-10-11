@@ -53,7 +53,10 @@ export {
   type ProofPurpose,
   EVENT_TYPES,
   EventTypeEnum,
+  LEGACY_EVENT_NAMES,
+  canonicalEventType,
   type EventType,
+  type LegacyEventName,
   type LifecycleAction,
   type CreateProofParams,
 } from "./crypto/proof.js";
@@ -80,9 +83,14 @@ export {
   findVerificationMethod,
   isAuthorizedFor,
   resolveVerificationKey,
+  resolveVerificationJwk,
   DID_CONTEXT,
+  DID_JWK_CONTEXT,
+  JWK_METHOD_TYPES,
   type DidDocument,
   type VerificationMethod,
+  type MultikeyMethod,
+  type JsonWebKeyMethod,
 } from "./did/document.js";
 
 // Action & CEL
@@ -175,7 +183,9 @@ export {
   buildChainedEvent,
   buildIssuanceEvents,
   credentialDigestOf,
+  signerOf,
   type BuildEventInput,
+  type EventFields,
   type BindableCredential,
   type EventAudit,
   type ChainAudit,
@@ -326,6 +336,7 @@ export {
 // Agent Binding (§16) — audit (§16.9, signed VIAEvents). `EventSigner` now lives in event/build.js.
 export {
   buildVerificationEvent,
+  buildOutcomeEvent,
 } from "./agent/audit.js";
 
 // Operator Verification (§18 proposal) — the identity axis
@@ -335,6 +346,7 @@ export {
   ACCREDITATION_RANK,
   ACCREDITATION_METHODS,
   claimValidUntil,
+  WITHDRAWAL_REASONS,
   type AccreditationLevel,
   type AccreditationMethod,
   type SubjectType,
@@ -348,11 +360,9 @@ export {
   type BuildAccreditationInput,
   buildAccreditation,
   buildAffiliation,
-  buildRegulatory,
   verifyAffiliation,
   type AffiliationSigner,
   type BuildAffiliationInput,
-  type BuildRegulatoryInput,
 } from "./operator/affiliation.js";
 export {
   verifyAccreditation,

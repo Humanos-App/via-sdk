@@ -23,9 +23,8 @@ const event = () =>
   buildChainedEvent({
     subject: "did:web:humanos.tech:agent:a1",
     event: "ACTOR_REGISTERED",
-    actor: "did:web:humanos.tech",
     previous: null,
-    agent: { actorType: "agent" },
+    actorType: "agent",
     signer: { ...signer, created: "2026-09-28T00:00:00.000Z" },
   });
 
@@ -44,16 +43,19 @@ describe("verifiers check `type`", () => {
 });
 
 describe("verifyAffiliation reads the org where the spec puts it, and where history put it", () => {
-  const affiliation = (detail: Record<string, unknown>) =>
-    buildChainedEvent({
-      subject: "did:web:humanos.tech:agent:a1",
-      event: "AFFILIATION",
-      actor: "did:web:acme.example",
-      issuer: "did:web:acme.example",
-      previous: null,
-      ...detail,
-      signer: { privateKey: key.privateKey, verificationMethod: "did:web:acme.example#key-1", created: "2026-09-28T00:00:00.000Z" },
-    } as never);
+  const acme = { privateKey: key.privateKey, verificationMethod: "did:web:acme.example#key-1", created: "2026-09-28T00:00:00.000Z" };
+  const affiliation = (detail: Record<string, unknown>): ViaEvent => {
+    if (!("agent" in detail)) {
+      return buildChainedEvent({ subject: "did:web:humanos.tech:agent:a1", event: "ACTOR_AFFILIATED", previous: null, ...detail, signer: acme });
+    }
+    // Written before the fix, under the old name, with the org in the `agent` wrapper and an `actor`.
+    const e = buildChainedEvent({ subject: "did:web:humanos.tech:agent:a1", event: "ACTOR_AFFILIATED", previous: null, signer: acme });
+    const { proof: _p, ...unsigned } = e;
+    return signEvent(
+      { ...unsigned, credentialSubject: { ...unsigned.credentialSubject, event: "AFFILIATION", actor: "did:web:acme.example", ...detail } } as ViaEvent,
+      acme,
+    );
+  };
 
   it.each([
     ["operator", { operator: { org: "did:web:acme.example", relation: "operates" } }],

@@ -101,22 +101,25 @@ const REGEN = !!process.env.REGEN_FIXTURES;
     write("v0.2/mandate.json", mandate);
 
     // consent events: standalone, content-bound VIAEvents chained by previousEvent (§0.5.4)
-    /** Sign a v0.2-era event: the marker goes back to "0.2" before the proof covers it. */
-    const signV02 = (e: ReturnType<typeof buildEvent>, signer: Parameters<typeof signEvent>[1]) =>
-      signEvent({ ...e, specVersion: "0.2" }, signer);
+    /**
+     * Sign a v0.2-era event: the marker goes back to "0.2", and the `actor` a "0.2" event carries is
+     * put back (the builder writes "0.3" events, which have none — v0.3 §2), before the proof covers it.
+     */
+    const signV02 = (e: ReturnType<typeof buildEvent>, signer: Parameters<typeof signEvent>[1], actor: string) =>
+      signEvent({ ...e, specVersion: "0.2", credentialSubject: { ...e.credentialSubject, actor } }, signer);
 
     const issueEvent = signV02(
       buildEvent({
         eventId: "urn:via:event:fixture-issue",
         subject: mandate.id,
         event: "ISSUE",
-        actor: orgDid,
         issuer: orgDid,
         credential: mandate,
         previousEvent: null,
         validFrom: "2026-01-01T00:00:00.000Z",
       }),
       { privateKey: SEED_ORG, verificationMethod: vmOrg, created: "2026-01-01T00:00:00.000Z" },
+      orgDid,
     );
     write("v0.2/event-issue.json", issueEvent);
 
@@ -125,13 +128,13 @@ const REGEN = !!process.env.REGEN_FIXTURES;
         eventId: "urn:via:event:fixture-accept",
         subject: mandate.id,
         event: "ACCEPT",
-        actor: userDid,
         issuer: userDid,
         credential: mandate,
         previousEvent: computeSRI(canonicalizeRFC8785(issueEvent)),
         validFrom: "2026-01-02T00:00:00.000Z",
       }),
       { privateKey: SEED_USER, verificationMethod: vmUser, created: "2026-01-02T00:00:00.000Z" },
+      userDid,
     );
     write("v0.2/event-accept.json", acceptEvent);
 
@@ -141,7 +144,6 @@ const REGEN = !!process.env.REGEN_FIXTURES;
         eventId: "urn:via:event:fixture-verification",
         subject: mandate.id,
         event: "VERIFICATION_APPROVED",
-        actor: VERIFIER_DID,
         previousEvent: computeSRI(canonicalizeRFC8785(acceptEvent)),
         evaluations: [{ rule: "amt", result: "pass" }],
         executionParams: { amount: 100 },
@@ -149,6 +151,7 @@ const REGEN = !!process.env.REGEN_FIXTURES;
         validFrom: "2026-01-05T00:00:00.000Z",
       }),
       { privateKey: SEED_PLATFORM, verificationMethod: vmPlatform, created: "2026-01-05T00:00:00.000Z" },
+      VERIFIER_DID,
     );
     write("v0.2/event-verification.json", verificationEvent);
 
@@ -242,7 +245,6 @@ const REGEN = !!process.env.REGEN_FIXTURES;
         eventId: "urn:via:event:fixture-v03-issue",
         subject: policy.id,
         event: "ISSUE",
-        actor: orgDid,
         issuer: orgDid,
         credential: policy,
         previousEvent: null,
@@ -257,7 +259,6 @@ const REGEN = !!process.env.REGEN_FIXTURES;
         eventId: "urn:via:event:fixture-v03-accept",
         subject: policy.id,
         event: "ACCEPT",
-        actor: userDid,
         issuer: userDid,
         credential: policy,
         previousEvent: computeSRI(canonicalizeRFC8785(issueV3)),
@@ -274,7 +275,6 @@ const REGEN = !!process.env.REGEN_FIXTURES;
         eventId: "urn:via:event:fixture-v03-verification",
         subject: policy.id,
         event: "VERIFICATION_APPROVED",
-        actor: VERIFIER_DID,
         previousEvent: computeSRI(canonicalizeRFC8785(acceptV3)),
         evaluations: [
           { rule: "allowed_tools", result: "pass" },

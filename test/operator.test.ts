@@ -77,7 +77,7 @@ describe("§18 O1–O4 + the ∧ composition", () => {
   it("honest: registrar credential ∧ org affiliation → verified, org attributed", async () => {
     const r = await verifyAccreditation({ agentDid: AGENT, accreditation: acmeVerified(), affiliation: acmeLink() }, { resolvePublicKey, now });
     expect(r.ok).toBe(true);
-    expect(r.accreditation).toMatchObject({ level: "verified", method: "kyb-registry", subjectType: "organization", org: ACME });
+    expect(r.accreditation).toMatchObject({ level: "verified", method: "kyb-registry", org: ACME });
   });
 
   // ── absence ≠ impersonation (the ❔ tier, must NOT be flagged) ──────────────
@@ -168,18 +168,17 @@ describe("§18 O1–O4 + the ∧ composition", () => {
     expect(r.reason).toBe("accreditation_signature_invalid");
   });
 
-  // ── O3 revocation (verify-time, offline) ───────────────────────────────────
-  it("revoked operator → operator_revoked with the reason", async () => {
-    const cred = acmeVerified({
-      status: { id: "https://status.humanos.tech/operator/list/1#42", type: "BitstringStatusListEntry", statusPurpose: "revocation", statusListIndex: "42", statusListCredential: "https://status.humanos.tech/operator/list/1" },
-    });
-    const r = await verifyAccreditation(
-      { agentDid: AGENT, accreditation: cred, affiliation: acmeLink() },
-      { resolvePublicKey, now, checkStatus: () => ({ revoked: true, reason: "struck_off" }) },
-    );
+  // ── O3 (v0.3 §18.2, §18.5): withdrawn for cause — no published list in v0.3 ──
+  it("withdrawn for cause → accreditation_revoked with the reason", async () => {
+    const cred = acmeVerified({ level: "unverified", method: undefined, withdrawn: { reason: "struck_off" } });
+    const r = await verifyAccreditation({ agentDid: AGENT, accreditation: cred, affiliation: acmeLink() }, { resolvePublicKey, now });
     expect(r.ok).toBe(false);
     expect(r.reason).toBe("accreditation_revoked");
     expect(r.revocationReason).toBe("struck_off");
+  });
+
+  it("refuses to build a withdrawal above the bottom rung", () => {
+    expect(() => acmeVerified({ withdrawn: { reason: "fraud" } })).toThrow(/level unverified/);
   });
 
   // ── O4 decay ───────────────────────────────────────────────────────────────
@@ -202,22 +201,27 @@ describe("§18 O1–O4 + the ∧ composition", () => {
   });
 
   // ── The lapse is `validUntil`; `expiresAt` on claims signed before 2026-10-07 is read as written ──
-  /** A claim signed under the OLD name — built by hand, since the builders no longer write it. */
+  /**
+   * A claim signed under the OLD names — built by hand, since the builders no longer write them: the
+   * kind named as on its day (v0.3 §3.4) and an `actor` beside `issuer`, as events before 2026-10-11 had.
+   */
+  const asWritten = (e: ReturnType<typeof buildEvent>, kind: string, actor: string) =>
+    ({ ...e, credentialSubject: { ...e.credentialSubject, event: kind, actor } }) as ReturnType<typeof buildEvent>;
   const legacyAccredited = (expiresAt: string) =>
     signEvent(
-      buildEvent({
-        subject: ACME, event: "ACCREDITED", actor: REGISTRAR, issuer: REGISTRAR, previousEvent: null,
+      asWritten(buildEvent({
+        subject: ACME, event: "ACTOR_ACCREDITED", issuer: REGISTRAR, previousEvent: null,
         validFrom: "2026-01-01T00:00:00.000Z",
         accreditation: { level: "domain", method: "dns-challenge", registrar: "humanos", verifiedAt: "2026-01-01T00:00:00.000Z", expiresAt },
-      }),
+      }), "ACCREDITED", REGISTRAR),
       { privateKey: registrar.privateKey, verificationMethod: VM_REG },
     );
   const legacyLink = (expiresAt: string) =>
     signEvent(
-      buildEvent({
-        subject: AGENT, event: "AFFILIATION", actor: ACME, issuer: ACME, previousEvent: null,
+      asWritten(buildEvent({
+        subject: AGENT, event: "ACTOR_AFFILIATED", issuer: ACME, previousEvent: null,
         operator: { org: ACME, relation: "operates", expiresAt },
-      }),
+      }), "AFFILIATION", ACME),
       { privateKey: acme.privateKey, verificationMethod: VM_ACME },
     );
 
@@ -231,11 +235,11 @@ describe("§18 O1–O4 + the ∧ composition", () => {
     expect(r).toMatchObject({ ok: true, accreditation: { level: "verified", registrar: REGISTRAR } });
     // A claim signed before 2026-10-08 that names itself something else: the signer still wins.
     const legacy = signEvent(
-      buildEvent({
-        subject: ACME, event: "ACCREDITED", actor: REGISTRAR, issuer: REGISTRAR, previousEvent: null,
+      asWritten(buildEvent({
+        subject: ACME, event: "ACTOR_ACCREDITED", issuer: REGISTRAR, previousEvent: null,
         validFrom: "2026-01-01T00:00:00.000Z",
         accreditation: { level: "verified", method: "kyb-registry", registrar: "a-name-it-gave-itself", verifiedAt: "2026-01-01T00:00:00.000Z" },
-      }),
+      }), "ACCREDITED", REGISTRAR),
       { privateKey: registrar.privateKey, verificationMethod: VM_REG },
     );
     const old = await verifyAccreditation({ agentDid: AGENT, accreditation: legacy, affiliation: acmeLink() }, { resolvePublicKey, now });

@@ -37,9 +37,9 @@ export const EVENT_TYPES = [
   "VERIFICATION_DENIED",
   "AGENT_REGISTERED",
   // §18 operator verification — an org's signed link to an agent/operator
-  // (`relation: operates|vouches`) and a regulator's licence attestation.
-  "AFFILIATION",
-  "REGULATORY",
+  // (`relation: operates|vouches`); a regulator's licence claim is reserved (parked in v0.4 §10).
+  "ACTOR_AFFILIATED",
+  "ACTOR_REGULATED",
   // v0.3 §2.1 two-phase outcomes — the execution result after a
   // VERIFICATION_APPROVED decision (agent-attested, gateway-signed).
   // CREDENTIAL-scoped: they name a credential URN, never an actor DID.
@@ -59,28 +59,54 @@ export const EVENT_TYPES = [
   "KEY_REVOKED",
   "ATTESTATION_RENEWED",
   "ASSURANCE_UPDATED",
-  "FORK_EVIDENCE", // clone detection — evidence points, the triggered kill events mutate
-  "SUSPENDED",
-  "RESUMED",
-  "RETIRED",
+  "FORK_DETECTED", // clone detection — evidence points, the triggered kill events mutate
+  "ACTOR_SUSPENDED",
+  "ACTOR_RESUMED",
+  "ACTOR_RETIRED",
   // v0.3 §9.4ter — the RUNTIME axis. Written when the key-holding process's environment CLASS
   // changes, not per session: per-boot volume stays off the actor chain (§9.5), and freshness is
   // proven at presentation like the PoP, not by writing an event per boot.
   // v0.3 §3.6 — a prior identifier that resolves to this actor: a per-channel DID, or a party
   // absorbed by a merge. State-neutral apart from the alias set.
   // v0.3 §18 — a registrar's accreditation of THIS actor (KYB for an organization, KYC for a
-  // person). An agent never carries one: it INHERITS its operator's, via AFFILIATION.
-  "ACCREDITED",
+  // person). An agent never carries one: it INHERITS its operator's, via ACTOR_AFFILIATED.
+  "ACTOR_ACCREDITED",
   "ALIAS_ADDED",
   // v0.3 §3.6 — the survivor's half of a merge, in ONE event: the absorbed identifier, its aliases,
   // and its live keys with their own state. Replaces `ALIAS_ADDED (merge)` + a `KEY_ADDED` per key.
-  "MERGED",
+  "ACTOR_MERGED",
   "RUNTIME_ATTESTED",
   "SNAPSHOT_ISSUED",
+  // reserved; delegation is parked in v0.4 §8 — accepted on a chain, state-neutral
   "DELEGATED",
 ] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];
+
+/**
+ * Names of the day, read as today's (v0.3 §3.4, renamed 2026-10-11). Every actor kind names what
+ * happened to the actor (`<OBJECT>_<VERB, past>`); eight did not, and were renamed. A reader MUST read
+ * the old name as the new one — on a `"0.2"` event (where `AFFILIATION` and `REGULATORY` were defined)
+ * and on a `"0.3"` event written before that date. A writer writes only the new name. Mandate kinds
+ * keep their names.
+ */
+export const LEGACY_EVENT_NAMES = {
+  SUSPENDED: "ACTOR_SUSPENDED",
+  RESUMED: "ACTOR_RESUMED",
+  RETIRED: "ACTOR_RETIRED",
+  MERGED: "ACTOR_MERGED",
+  ACCREDITED: "ACTOR_ACCREDITED",
+  AFFILIATION: "ACTOR_AFFILIATED",
+  REGULATORY: "ACTOR_REGULATED",
+  FORK_EVIDENCE: "FORK_DETECTED",
+} as const satisfies Record<string, EventType>;
+
+export type LegacyEventName = keyof typeof LEGACY_EVENT_NAMES;
+
+/** An event's kind in today's vocabulary — the old name mapped (v0.3 §3.4); an unknown name as is. */
+export function canonicalEventType(name: string): EventType | string {
+  return (LEGACY_EVENT_NAMES as Record<string, EventType>)[name] ?? name;
+}
 
 /**
  * Runtime map of {@link EVENT_TYPES} for consumers that need a **value**, not a type — Swagger's

@@ -88,14 +88,13 @@ beforeAll(() => {
   mandate = stampMandate(mandate, { privateKey: platform.privateKey, verificationMethod: vm(VIA_PLATFORM_DID) });
 
   issueEvent = signEvent(
-    buildEvent({ subject: mandate.id, event: "ISSUE", actor: orgDid, issuer: orgDid, credential: mandate, previousEvent: null }),
+    buildEvent({ subject: mandate.id, event: "ISSUE", issuer: orgDid, credential: mandate, previousEvent: null }),
     { privateKey: org.privateKey, verificationMethod: vm(orgDid) },
   );
   acceptEvent = signEvent(
     buildEvent({
       subject: mandate.id,
       event: "ACCEPT",
-      actor: userDid,
       issuer: userDid,
       credential: mandate,
       previousEvent: computeSRI(canonicalizeRFC8785(issueEvent)),

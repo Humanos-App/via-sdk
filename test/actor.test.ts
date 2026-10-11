@@ -55,13 +55,29 @@ function ev(
     specVersion: "0.3",
     issuer: "did:web:humanos.tech",
     validFrom: opts.at ?? "2026-09-01T00:00:00.000Z",
+    // v0.3 §2.0: the kind's own fields directly in credentialSubject — no `agent` wrapper, no `actor`.
     credentialSubject: {
       id: opts.id ?? ACTOR,
       event,
-      actor: ACTOR,
       ...(previousEvent !== undefined ? { previousEvent } : {}),
-      agent: detail,
+      ...detail,
     },
+  } as unknown as ViaEvent;
+}
+
+/**
+ * An event as written before 2026-10-11 (and every "0.2" actor event): its fields under `agent`, an
+ * `actor` beside `issuer`, and — when given — the kind's old name (v0.3 §2.0, §3.4). Read as written.
+ */
+function evOld(
+  event: string,
+  detail: Record<string, unknown> = {},
+  opts: { prev?: ViaEvent | null | undefined; id?: string; at?: string } = {},
+): ViaEvent {
+  const e = ev(event, {}, opts);
+  return {
+    ...e,
+    credentialSubject: { ...(e.credentialSubject as object), actor: "did:web:humanos.tech", agent: detail },
   } as unknown as ViaEvent;
 }
 
@@ -92,6 +108,14 @@ function chain(...steps: ((prev: ViaEvent) => ViaEvent)[]): ViaEvent[] {
 // ── genesis ──────────────────────────────────────────────────────────────────
 
 describe("foldActorChain — genesis", () => {
+  // `lineage` left the v0.3 record with delegation (v0.4 §8): a genesis that carries one, written
+  // by an implementation that delegates, still folds — without it.
+  it("a genesis carrying lineage folds without it", () => {
+    const r = foldActorChain([genesis({ lineage: { parent: "did:web:humanos.tech:agent:parent", event: "sha256-Del" } })]);
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.subject).not.toHaveProperty("lineage");
+  });
+
   it("refuses an empty chain", () => {
     expect(foldActorChain([])).toEqual({ ok: false, reason: "empty_chain" });
   });
@@ -447,8 +471,8 @@ describe("foldActorChain — attestation and assurance", () => {
 describe("foldActorChain — status transitions", () => {
   it("suspends from active and resumes from suspended", () => {
     const c = chain(
-      (p) => ev("SUSPENDED", {}, { prev: p }),
-      (p) => ev("RESUMED", {}, { prev: p }),
+      (p) => ev("ACTOR_SUSPENDED", {}, { prev: p }),
+      (p) => ev("ACTOR_RESUMED", {}, { prev: p }),
     );
     const mid = foldActorChain(c.slice(0, 2));
     if (!mid.ok) throw new Error(mid.reason);
@@ -460,24 +484,24 @@ describe("foldActorChain — status transitions", () => {
 
   it("refuses a double suspend and a resume that was never suspended", () => {
     const twice = chain(
-      (p) => ev("SUSPENDED", {}, { prev: p }),
-      (p) => ev("SUSPENDED", {}, { prev: p }),
+      (p) => ev("ACTOR_SUSPENDED", {}, { prev: p }),
+      (p) => ev("ACTOR_SUSPENDED", {}, { prev: p }),
     );
     expect(foldActorChain(twice)).toMatchObject({ ok: false, reason: "illegal_transition", at: 2 });
 
-    const bogus = chain((p) => ev("RESUMED", {}, { prev: p }));
+    const bogus = chain((p) => ev("ACTOR_RESUMED", {}, { prev: p }));
     expect(foldActorChain(bogus)).toMatchObject({ ok: false, reason: "illegal_transition", at: 1 });
   });
 
   it("retires from active and from suspended", () => {
-    const fromActive = chain((p) => ev("RETIRED", {}, { prev: p }));
+    const fromActive = chain((p) => ev("ACTOR_RETIRED", {}, { prev: p }));
     const a = foldActorChain(fromActive);
     if (!a.ok) throw new Error(a.reason);
     expect(a.subject.status).toBe("retired");
 
     const fromSuspended = chain(
-      (p) => ev("SUSPENDED", {}, { prev: p }),
-      (p) => ev("RETIRED", {}, { prev: p }),
+      (p) => ev("ACTOR_SUSPENDED", {}, { prev: p }),
+      (p) => ev("ACTOR_RETIRED", {}, { prev: p }),
     );
     const s = foldActorChain(fromSuspended);
     if (!s.ok) throw new Error(s.reason);
@@ -486,7 +510,7 @@ describe("foldActorChain — status transitions", () => {
 
   it("retired is absorbing — nothing may follow it", () => {
     const c = chain(
-      (p) => ev("RETIRED", {}, { prev: p }),
+      (p) => ev("ACTOR_RETIRED", {}, { prev: p }),
       (p) => ev("KEY_ADDED", { keyId: "k2", jwk: JWK }, { prev: p }),
     );
     expect(foldActorChain(c)).toMatchObject({ ok: false, reason: "event_after_retired", at: 2 });
@@ -494,7 +518,7 @@ describe("foldActorChain — status transitions", () => {
 
   it("content events stay legal while suspended — the audit trail does not pause", () => {
     const c = chain(
-      (p) => ev("SUSPENDED", {}, { prev: p }),
+      (p) => ev("ACTOR_SUSPENDED", {}, { prev: p }),
       (p) => ev("KEY_ADDED", { keyId: "k2", jwk: JWK }, { prev: p }),
     );
     const r = foldActorChain(c);
@@ -510,7 +534,7 @@ describe("foldActorChain — pointer and evidence events", () => {
   it("FORK_EVIDENCE, DELEGATED and SNAPSHOT_ISSUED change no state", () => {
     const before = foldActorChain([genesis()]);
     const c = chain(
-      (p) => ev("FORK_EVIDENCE", {}, { prev: p }),
+      (p) => ev("FORK_DETECTED", {}, { prev: p }),
       (p) => ev("DELEGATED", {}, { prev: p }),
       (p) => ev("SNAPSHOT_ISSUED", {}, { prev: p }),
     );
@@ -520,9 +544,20 @@ describe("foldActorChain — pointer and evidence events", () => {
     expect(after.subject).toEqual(before.subject);
   });
 
+  // Delegation is parked in v0.4 §8 (2026-10-11): `DELEGATED` stays a reserved kind, so a chain
+  // written by an implementation that delegates still folds here — and nothing of it is folded.
+  it("DELEGATED is reserved: a parent's grant is accepted and folds nothing", () => {
+    const before = foldActorChain([genesis()]);
+    const after = foldActorChain(
+      chain((p) => ev("DELEGATED", { child: "did:web:humanos.tech:agent:child", tools: ["search"], depth: 1 }, { prev: p })),
+    );
+    if (!before.ok || !after.ok) throw new Error("fold failed");
+    expect(after.subject).toEqual(before.subject);
+  });
+
   it("AFFILIATION sets an operator POINTER, never an inline claim", () => {
     const g = genesis();
-    const aff = ev("AFFILIATION", { org: "did:web:acme.example" }, { prev: g });
+    const aff = ev("ACTOR_AFFILIATED", { org: "did:web:acme.example" }, { prev: g });
     const r = foldActorChain([g, aff]);
     if (!r.ok) throw new Error(r.reason);
     expect(r.subject.operator).toEqual({
@@ -547,7 +582,7 @@ describe("detail fields — each event kind reads the field the spec names", () 
   // §18: the org-signed AFFILIATION carries its claim in `credentialSubject.operator`.
   it("AFFILIATION reads the org and relation from `operator`", () => {
     const g = genesis();
-    const aff = evNamed("AFFILIATION", { operator: { org: "did:web:acme.example", relation: "operates" } }, g, "did:web:other.example");
+    const aff = evNamed("ACTOR_AFFILIATED", { operator: { org: "did:web:acme.example", relation: "operates" } }, g, "did:web:other.example");
     const r = foldActorChain([g, aff]);
     if (!r.ok) throw new Error(r.reason);
     // The org the EVENT names, not whoever the envelope says issued it.
@@ -557,14 +592,62 @@ describe("detail fields — each event kind reads the field the spec names", () 
   // Signed history cannot be rewritten: events written with the org in `agent` must keep folding.
   it("an AFFILIATION written with its org in `agent` still folds", () => {
     const g = genesis();
-    const aff = ev("AFFILIATION", { org: "did:web:acme.example", relation: "sandbox_of" }, { prev: g });
+    const aff = ev("ACTOR_AFFILIATED", { org: "did:web:acme.example", relation: "sandbox_of" }, { prev: g });
     const r = foldActorChain([g, aff]);
     expect(r.ok && r.subject.operator).toEqual({ org: "did:web:acme.example", relation: "sandbox_of", affiliationEvent: eventChainLink(aff) });
   });
 
+  // §18.4, §3.1: the record restates the affiliation's lapse — no event marks the moment it passes.
+  it("AFFILIATION records the claim's lapse as `operator.validUntil`", () => {
+    const g = genesis();
+    const until = "2026-12-31T23:59:59.000Z";
+    const aff = evNamed("ACTOR_AFFILIATED", { operator: { org: "did:web:acme.example", relation: "operates", validUntil: until } }, g, "did:web:acme.example");
+    const r = foldActorChain([g, aff]);
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.subject.operator).toEqual({
+      org: "did:web:acme.example",
+      relation: "operates",
+      validUntil: until,
+      affiliationEvent: eventChainLink(aff),
+    });
+  });
+
+  // Signed history is read as written: an affiliation signed before 2026-10-07 names its lapse `expiresAt`.
+  it("reads an AFFILIATION's `expiresAt` as `validUntil`", () => {
+    const g = genesis();
+    const until = "2026-12-31T23:59:59.000Z";
+    const aff = evNamed("ACTOR_AFFILIATED", { operator: { org: "did:web:acme.example", relation: "operates", expiresAt: until } }, g, "did:web:acme.example");
+    const r = foldActorChain([g, aff]);
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.subject.operator?.validUntil).toBe(until);
+    expect(r.subject.operator).not.toHaveProperty("expiresAt");
+  });
+
+  it("records no lapse when the AFFILIATION states none", () => {
+    const g = genesis();
+    const aff = evNamed("ACTOR_AFFILIATED", { operator: { org: "did:web:acme.example", relation: "operates" } }, g, "did:web:acme.example");
+    const r = foldActorChain([g, aff]);
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.subject.operator).not.toHaveProperty("validUntil");
+  });
+
+  // A renewal is a new claim: its lapse replaces the old one, and a renewal with none clears it.
+  it("a later AFFILIATION from the operator replaces the lapse", () => {
+    const g = genesis();
+    const first = evNamed("ACTOR_AFFILIATED", { operator: { org: "did:web:acme.example", relation: "operates", validUntil: "2026-12-31T23:59:59.000Z" } }, g, "did:web:acme.example");
+    const renewed = evNamed("ACTOR_AFFILIATED", { operator: { org: "did:web:acme.example", relation: "operates", validUntil: "2027-06-30T23:59:59.000Z" } }, first, "did:web:acme.example");
+    const open = evNamed("ACTOR_AFFILIATED", { operator: { org: "did:web:acme.example", relation: "operates" } }, renewed, "did:web:acme.example");
+    const r1 = foldActorChain([g, first, renewed]);
+    if (!r1.ok) throw new Error(r1.reason);
+    expect(r1.subject.operator?.validUntil).toBe("2027-06-30T23:59:59.000Z");
+    const r2 = foldActorChain([g, first, renewed, open]);
+    if (!r2.ok) throw new Error(r2.reason);
+    expect(r2.subject.operator).not.toHaveProperty("validUntil");
+  });
+
   it("ACCREDITED reads the accreditation from its own `accreditation` field", () => {
     const g = genesis({ actorType: "organization" });
-    const acc = evNamed("ACCREDITED", { accreditation: { level: "verified", method: "kyb-registry", registrar: "humanos" } }, g);
+    const acc = evNamed("ACTOR_ACCREDITED", { accreditation: { level: "verified", method: "kyb-registry", registrar: "humanos" } }, g);
     const r = foldActorChain([g, acc]);
     if (!r.ok) throw new Error(r.reason);
     expect(r.subject.accreditation).toMatchObject({ level: "verified", method: "kyb-registry" });
@@ -589,11 +672,48 @@ describe("detail fields — each event kind reads the field the spec names", () 
 
   // §3.4: "REGULATORY — a regulator's own claim about this actor … Actor-scoped, like AFFILIATION".
   it("REGULATORY is actor-scoped and state-neutral on the chain", () => {
-    expect(EVENT_SCOPE.REGULATORY).toBe("actor");
+    expect(EVENT_SCOPE.ACTOR_REGULATED).toBe("actor");
     const g = genesis({ actorType: "organization" });
-    const reg = ev("REGULATORY", { licence: "PT-INS-1234" }, { prev: g });
+    const reg = ev("ACTOR_REGULATED", { licence: "PT-INS-1234" }, { prev: g });
     const r = foldActorChain([g, reg]);
     expect(r.ok && r.subject.status).toBe("active");
+  });
+});
+
+// ── an agent key's JWK: one name in the record (v0.3 §3.1, 2026-10-11) ─────────
+
+describe("an agent key's JWK — `publicKeyJwk` in the record, read from either name", () => {
+  const recordKey = (events: ViaEvent[], id: string) => {
+    const r = foldActorChain(events);
+    if (!r.ok) throw new Error(r.reason);
+    return r.subject.keys.find((k) => k.id === id)!;
+  };
+
+  it.each<[string, string]>([
+    ["an event written from 2026-10-11", "publicKeyJwk"],
+    ["an event signed before, as written", "jwk"],
+  ])("ACTOR_REGISTERED, KEY_ADDED and KEY_ROTATED from %s fold to `publicKeyJwk`", (_case, name) => {
+    const key = (n: number) => ({ [name]: { ...JWK, x: `x${n}` } });
+    const g = ev("ACTOR_REGISTERED", { keyId: "k1", ...key(1), actorType: "agent", assurance: "hardware", binding: "attested", bootstrapAnchor: "api_key" }, { prev: null });
+    const add = ev("KEY_ADDED", { keyId: "k2", ...key(2) }, { prev: g });
+    const rot = ev("KEY_ROTATED", { predecessorId: "k2", keyId: "k3", ...key(3) }, { prev: add });
+    for (const [id, n] of [["k1", 1], ["k2", 2], ["k3", 3]] as const) {
+      const k = recordKey([g, add, rot], id);
+      expect(k.publicKeyJwk).toEqual({ ...JWK, x: `x${n}` });
+      expect(k).not.toHaveProperty("jwk");
+    }
+  });
+
+  it.each(["publicKeyJwk", "jwk"])("a MERGED key written with `%s` folds to `publicKeyJwk`", (name) => {
+    const g = genesis();
+    const m = ev("ACTOR_MERGED", {}, { prev: g });
+    (m.credentialSubject as unknown as { merge: unknown }).merge = {
+      absorbed: "did:web:humanos.tech:agent:b2",
+      keys: [{ keyId: "did:web:humanos.tech:agent:b2#key-1", [name]: { ...JWK, x: "xb" }, status: "active" }],
+    };
+    const k = recordKey([g, m], "did:web:humanos.tech:agent:b2#key-1");
+    expect(k.publicKeyJwk).toEqual({ ...JWK, x: "xb" });
+    expect(k).not.toHaveProperty("jwk");
   });
 });
 
@@ -663,8 +783,8 @@ describe("resolvePinnedKeys", () => {
     if (!r.ok) throw new Error(r.reason);
     // Not reachable through the fold; guards the walk itself.
     r.subject.keys = [
-      { id: "a", jwk: JWK as never, status: "rotated", rotatedTo: "b" },
-      { id: "b", jwk: JWK as never, status: "rotated", rotatedTo: "a" },
+      { id: "a", publicKeyJwk: JWK as never, status: "rotated", rotatedTo: "b" },
+      { id: "b", publicKeyJwk: JWK as never, status: "rotated", rotatedTo: "a" },
     ];
     expect(resolvePinnedKeys(r.subject, "a").map((k) => k.id)).toEqual(["a", "b"]);
   });
@@ -745,7 +865,7 @@ describe("auditActorRecord", () => {
     // A record computed before the fold learned a field is OUTDATED, not a lie: every value it
     // carries still matches. Recompute it; a verifier never authorizes from a stale one anyway.
     const older = structuredClone(record);
-    delete (older as unknown as Record<string, unknown>).genesisAt;
+    delete (older as unknown as Record<string, unknown>).existedSince;
     expect(auditActorRecord(older, c)).toMatchObject({ reason: "record_outdated" });
     // Missing a field AND lying about another is a mismatch — the missing field does not launder it.
     const olderAndLying = structuredClone(older);
@@ -807,7 +927,7 @@ describe("projectAgentContext (§9 / KYA A.3) — the agent.* CEL namespace", ()
       id: "did:web:humanos.tech:agent:abc",
       actorType: "agent",
       status: "active",
-      keys: [{ id: "did:web:humanos.tech:agent:abc#key-1", jwk: {} as never, status: "active" }],
+      keys: [{ id: "did:web:humanos.tech:agent:abc#key-1", publicKeyJwk: {} as never, status: "active" }],
       assurance: "hardware",
       binding: "attested",
       bootstrapAnchor: "api_key",
@@ -829,15 +949,13 @@ describe("projectAgentContext (§9 / KYA A.3) — the agent.* CEL namespace", ()
     expect(ctx).not.toHaveProperty("keys");
   });
 
-  it("operator and lineage project PRESENCE + DID, never the event", () => {
+  it("operator projects PRESENCE + DID, never the event", () => {
     const ctx = projectAgentContext(
       subject({
         operator: { org: "did:web:humanos.tech:org:acme", affiliationEvent: "sha256-xyz" },
-        lineage: { parent: "did:web:humanos.tech:agent:parent", event: "sha256-abc" },
       }),
     );
     expect(ctx.operator).toEqual({ org: "did:web:humanos.tech:org:acme" });
-    expect(ctx.lineage).toEqual({ parent: "did:web:humanos.tech:agent:parent" });
     // Reading the claim is the verifier's job, through the pointer — not a rule's.
     expect(JSON.stringify(ctx)).not.toContain("affiliationEvent");
     expect(JSON.stringify(ctx)).not.toContain("sha256-");
@@ -938,13 +1056,13 @@ describe("projectAgentContext (§9 / KYA A.3) — the agent.* CEL namespace", ()
   // @invariant §5: once an actor has an operator, only that operator writes a later AFFILIATION.
   it("refuses an AFFILIATION from an organization other than the current operator", () => {
     const g = genesis();
-    const first = { ...ev("AFFILIATION", {}, { prev: g }), issuer: "did:web:acme.example" } as ViaEvent;
+    const first = { ...ev("ACTOR_AFFILIATED", {}, { prev: g }), issuer: "did:web:acme.example" } as ViaEvent;
     (first.credentialSubject as Record<string, unknown>).operator = { org: "did:web:acme.example", relation: "operates" };
-    const hijack = { ...ev("AFFILIATION", {}, { prev: first }), issuer: "did:web:evil.example" } as ViaEvent;
+    const hijack = { ...ev("ACTOR_AFFILIATED", {}, { prev: first }), issuer: "did:web:evil.example" } as ViaEvent;
     (hijack.credentialSubject as Record<string, unknown>).operator = { org: "did:web:evil.example", relation: "operates" };
     expect(foldActorChain([g, first, hijack])).toMatchObject({ ok: false, reason: "affiliation_invalid" });
 
-    const renewal = { ...ev("AFFILIATION", {}, { prev: first }), issuer: "did:web:acme.example" } as ViaEvent;
+    const renewal = { ...ev("ACTOR_AFFILIATED", {}, { prev: first }), issuer: "did:web:acme.example" } as ViaEvent;
     (renewal.credentialSubject as Record<string, unknown>).operator = { org: "did:web:acme.example", relation: "vouches" };
     const r = foldActorChain([g, first, renewal]);
     if (!r.ok) throw new Error(r.reason);
@@ -1038,8 +1156,8 @@ describe("§3.6 aliases and succession", () => {
   });
 
   it("RETIRED carries succeededBy on a merge, and nothing when a party simply stops", () => {
-    const merged = foldActorChain(chain((p) => ev("RETIRED", { succeededBy: "did:survivor" }, { prev: p })));
-    const stopped = foldActorChain(chain((p) => ev("RETIRED", {}, { prev: p })));
+    const merged = foldActorChain(chain((p) => ev("ACTOR_RETIRED", { succeededBy: "did:survivor" }, { prev: p })));
+    const stopped = foldActorChain(chain((p) => ev("ACTOR_RETIRED", {}, { prev: p })));
     expect(merged.ok && merged.subject.succeededBy).toBe("did:survivor");
     expect(stopped.ok && stopped.subject.succeededBy).toBeUndefined();
     // absorbing either way
@@ -1048,7 +1166,7 @@ describe("§3.6 aliases and succession", () => {
 
   it("an absorbed actor accepts NO further events", () => {
     const c = chain(
-      (p) => ev("RETIRED", { succeededBy: "did:survivor" }, { prev: p }),
+      (p) => ev("ACTOR_RETIRED", { succeededBy: "did:survivor" }, { prev: p }),
       (p) => ev("KEY_ADDED", { keyId: "k2", jwk: {} }, { prev: p }),
     );
     const r = foldActorChain(c);
@@ -1093,10 +1211,10 @@ describe("§3.6 resolveSuccession — follow the pointer, or fail closed", () =>
 });
 
 describe("§3.6c chooseSurvivor — the older actor survives", () => {
-  const at = (id: string, genesisAt?: string) =>
+  const at = (id: string, existedSince?: string) =>
     ({ id, actorType: "user", status: "active", keys: [], assurance: "pop", binding: "self",
        bootstrapAnchor: "manual", verifiedAt: "2026-01-01T00:00:00.000Z",
-       ...(genesisAt ? { genesisAt } : {}) }) as never;
+       ...(existedSince ? { existedSince } : {}) }) as never;
 
   it("CASE 9 — the older actor survives, whichever order it is offered in", () => {
     const old = at("did:old", "2026-01-01T00:00:00.000Z");
@@ -1123,32 +1241,39 @@ describe("§3.6c chooseSurvivor — the older actor survives", () => {
     expect(chooseSurvivor(b, a).survivor.id).toBe("did:aaa");
   });
 
-  it("a missing genesisAt sorts YOUNGER — never win on absent data", () => {
+  it("a missing existedSince sorts YOUNGER — never win on absent data", () => {
     const known = at("did:known", "2026-06-01T00:00:00.000Z");
     const unknown = at("did:unknown");
     expect(chooseSurvivor(unknown, known).survivor.id).toBe("did:known");
   });
 
-  it("genesisAt comes from the chain and does not move as evidence is re-checked", () => {
+  it("existedSince comes from the chain and does not move as evidence is re-checked", () => {
     const r = foldActorChain(chain((p) => ev("ATTESTATION_RENEWED", { keyId: "k1", verifiedAt: "2027-01-01T00:00:00.000Z" }, { prev: p })));
     expect(r.ok).toBe(true);
     if (r.ok) {
       expect(r.subject.verifiedAt).toBe("2027-01-01T00:00:00.000Z"); // moves
-      expect(r.subject.genesisAt).not.toBe("2027-01-01T00:00:00.000Z"); // does not
-      expect(r.subject.genesisAt).toBeTruthy();
+      expect(r.subject.existedSince).toBe("2026-09-01T00:00:00.000Z"); // does not
     }
   });
 
-  // §3.6c ranks age by `existedSince`, falling back to `genesisAt`. A backfill registers every
-  // actor at the moment it runs, so without this a 2024 organization registered in 2026 sorts
+  // §3.1: one age. A genesis that states none is as old as its own signing — the fallback the
+  // merge rule used to make (`genesisAt`) is the fold's now, so the field is always present.
+  it("a genesis that states no existedSince is as old as its own validFrom", () => {
+    const r = foldActorChain([ev("ACTOR_REGISTERED", { keyId: "k1", jwk: JWK, actorType: "agent", assurance: "pop", binding: "self" }, { prev: null, at: "2026-07-04T00:00:00.000Z" })]);
+    expect(r.ok && r.subject.existedSince).toBe("2026-07-04T00:00:00.000Z");
+    expect(r.ok && r.subject).not.toHaveProperty("genesisAt");
+  });
+
+  // §3.6c ranks age by `existedSince` alone. A backfill registers every actor at the moment it
+  // runs, so ranking on when each chain began would make a 2024 organization registered in 2026
   // younger than a person who signed up natively last month — the exact population §3.5 backfills.
   it("genesis folds `existedSince` into the actor — the party's age, not its chain's", () => {
     const r = foldActorChain([genesis({ existedSince: "2024-03-01T00:00:00.000Z" })]);
     expect(r.ok && r.subject.existedSince).toBe("2024-03-01T00:00:00.000Z");
   });
 
-  it("ranks by existedSince before genesisAt — a backfilled old party beats a newer native one", () => {
-    const backfilled = { ...(at("did:backfilled", "2026-09-23T00:00:00.000Z") as object), existedSince: "2024-03-01T00:00:00.000Z" } as never;
+  it("ranks by existedSince — a backfilled old party beats a newer native one", () => {
+    const backfilled = at("did:backfilled", "2024-03-01T00:00:00.000Z");
     const native = at("did:native", "2026-08-01T00:00:00.000Z");
     expect(chooseSurvivor(native, backfilled).survivor.id).toBe("did:backfilled");
     expect(chooseSurvivor(backfilled, native).survivor.id).toBe("did:backfilled");
@@ -1160,7 +1285,7 @@ describe("§3.6c keySuccession — a mandate survives the merge, or fails closed
     ({ id, actorType: "user", status: succ ? "retired" : "active",
        keys: keys.map((k) => ({ id: k, status: "active" })),
        assurance: "pop", binding: "self", bootstrapAnchor: "manual",
-       verifiedAt: "2026-01-01T00:00:00.000Z", genesisAt: "2026-01-01T00:00:00.000Z",
+       verifiedAt: "2026-01-01T00:00:00.000Z", existedSince: "2026-01-01T00:00:00.000Z",
        ...(succ ? { succeededBy: succ.to, keySuccession: succ.map } : {}) }) as never;
 
   it("THE GAP — following the actor pointer alone finds nothing", () => {
@@ -1170,6 +1295,7 @@ describe("§3.6c keySuccession — a mandate survives the merge, or fails closed
     expect(resolvePinnedKeys(survivor, "did:B#key-2")).toEqual([]);
   });
 
+  // A key keeps its id since 2026-10-11 (§3.6c); a chain written when it could be renumbered still reads.
   it("translates the pinned id through the merge and resolves", () => {
     const survivor = actor("did:A", ["did:A#key-3"]);
     const absorbed = actor("did:B", ["did:B#key-2"], { to: "did:A", map: { "did:B#key-2": "did:A#key-3" } });
@@ -1214,7 +1340,7 @@ describe("§3.6c MERGED — the survivor's half of a merge, in one event", () =>
   const K = (n: number) => `${B}#key-${n}`;
   /** `MERGED` on the survivor (ACTOR): its claim rides in `credentialSubject.merge`. */
   const merged = (merge: Record<string, unknown>) => (p: ViaEvent) => {
-    const e = ev("MERGED", {}, { prev: p });
+    const e = ev("ACTOR_MERGED", {}, { prev: p });
     (e.credentialSubject as unknown as { merge: unknown }).merge = merge;
     return e;
   };
@@ -1281,7 +1407,7 @@ describe("§3.6c MERGED — the survivor's half of a merge, in one event", () =>
   });
 
   it("is refused on a retired actor, like every event (§4)", () => {
-    const r = foldActorChain(chain((p) => ev("RETIRED", {}, { prev: p }), merged({ absorbed: B })));
+    const r = foldActorChain(chain((p) => ev("ACTOR_RETIRED", {}, { prev: p }), merged({ absorbed: B })));
     expect(r).toMatchObject({ ok: false, reason: expect.stringContaining("event_after_retired") });
   });
 
@@ -1318,7 +1444,7 @@ describe("§3.6c MERGED — the survivor's half of a merge, in one event", () =>
       expect(keySuccession).toEqual({ [K(1)]: K(1), [K(2)]: K(2) });
       expect(merge.aliases).toEqual(["did:web:humanos.tech:agent:b2-old"]);
 
-      const retired = fold([...live, bEv("RETIRED", { succeededBy: ACTOR, keySuccession }, live.at(-1)!)]);
+      const retired = fold([...live, bEv("ACTOR_RETIRED", { succeededBy: ACTOR, keySuccession }, live.at(-1)!)]);
       const survivor = fold(chain(merged(merge as never)));
       expect(checkMergeClaim(merge, survivor, retired)).toEqual({ ok: true });
 
@@ -1331,11 +1457,13 @@ describe("§3.6c MERGED — the survivor's half of a merge, in one event", () =>
       expect(usable[1]).toMatchObject({ assurance: "hardware", binding: "attested", root: "aws-nitro" });
     });
 
-    it("re-ids keys when asked, and leaves out a key the survivor already holds", () => {
+    // @invariant v0.3 §3.6c (2026-10-11): a carried key keeps the id its own DID gave it — never
+    // renumbered under the survivor's DID — so `keySuccession` maps every surviving key to itself.
+    it("keeps every key's id, and leaves out a key the survivor already holds", () => {
       const absorbed = fold(absorbedChain());
-      const reId = buildMergeClaim(absorbed, { keyId: (id) => id.replace(B, ACTOR).replace("key-", "key-1") });
-      expect(reId.keySuccession).toEqual({ [K(1)]: `${ACTOR}#key-11`, [K(2)]: `${ACTOR}#key-12` });
-      expect(reId.merge.keys.map((k) => [k.keyId, k.rotatedTo])).toEqual([[`${ACTOR}#key-11`, `${ACTOR}#key-12`], [`${ACTOR}#key-12`, undefined]]);
+      const kept = buildMergeClaim(absorbed);
+      expect(kept.keySuccession).toEqual({ [K(1)]: K(1), [K(2)]: K(2) });
+      expect(kept.merge.keys.map((k) => [k.keyId, k.rotatedTo])).toEqual([[K(1), K(2)], [K(2), undefined]]);
       const held = buildMergeClaim(absorbed, { held: new Set([K(2)]) });
       // key-2 is mapped but not carried again; key-1's pointer to it is not carried either.
       expect(held.keySuccession[K(2)]).toBe(K(2));
@@ -1345,29 +1473,47 @@ describe("§3.6c MERGED — the survivor's half of a merge, in one event", () =>
     // @invariant §5.2: `MERGED` puts keys on an actor with no evidence of its own, so it carries
     // only what the absorbed actor's chain holds. Anything else is refused at append.
     it.each<[string, (m: ReturnType<typeof buildMergeClaim>["merge"]) => void]>([
-      ["smuggles a key the absorbed actor never had", (m) => m.keys.push({ keyId: `${B}#key-9`, jwk: { ...JWK, x: "evil" } as never, status: "active" })],
-      ["carries the revoked key", (m) => m.keys.push({ keyId: K(3), jwk: { ...JWK, x: "x3" } as never, status: "active", assurance: "pop", binding: "self", verifiedAt: "2026-04-02T00:00:00.000Z" })],
-      ["swaps a key's material", (m) => { m.keys[0]!.jwk = { ...JWK, x: "evil" } as never; }],
+      ["smuggles a key the absorbed actor never had", (m) => m.keys.push({ keyId: `${B}#key-9`, publicKeyJwk: { ...JWK, x: "evil" } as never, status: "active" })],
+      ["carries the revoked key", (m) => m.keys.push({ keyId: K(3), publicKeyJwk: { ...JWK, x: "x3" } as never, status: "active", assurance: "pop", binding: "self", verifiedAt: "2026-04-02T00:00:00.000Z" })],
+      ["swaps a key's material", (m) => { m.keys[0]!.publicKeyJwk = { ...JWK, x: "evil" } as never; }],
       ["raises a key's rung", (m) => { m.keys[0]!.assurance = "hardware"; }],
       ["un-rotates a rotated key", (m) => { m.keys[0]!.status = "active"; delete m.keys[0]!.rotatedTo; }],
       ["drops a rotated key's pointer to the successor it carries", (m) => { delete m.keys[0]!.rotatedTo; }],
-      ["points a rotated key at another carried key", (m) => { m.keys.push({ keyId: `${B}#key-9`, jwk: { ...JWK, x: "x9" } as never, status: "active" }); m.keys[0]!.rotatedTo = `${B}#key-9`; }],
+      ["points a rotated key at another carried key", (m) => { m.keys.push({ keyId: `${B}#key-9`, publicKeyJwk: { ...JWK, x: "x9" } as never, status: "active" }); m.keys[0]!.rotatedTo = `${B}#key-9`; }],
       ["names an alias the absorbed actor never had", (m) => m.aliases.push("did:web:humanos.tech:agent:stranger")],
     ])("checkMergeClaim refuses a claim that %s", (_case, tamper) => {
       const live = absorbedChain();
       const { merge, keySuccession } = buildMergeClaim(fold(live));
-      const retired = fold([...live, bEv("RETIRED", { succeededBy: ACTOR, keySuccession }, live.at(-1)!)]);
+      const retired = fold([...live, bEv("ACTOR_RETIRED", { succeededBy: ACTOR, keySuccession }, live.at(-1)!)]);
       tamper(merge);
       expect(checkMergeClaim(merge, { id: ACTOR, actorType: "agent" }, retired)).toEqual({ ok: false, reason: "merge_target_invalid" });
+    });
+
+    // v0.3 §3.1 (2026-10-11): a claim is written with `publicKeyJwk`; one signed before says `jwk`,
+    // and is checked the same way — the material must still be the absorbed key's own.
+    it("writes `publicKeyJwk` in the claim, and checks a claim that says `jwk` the same way", () => {
+      const live = absorbedChain();
+      const { merge, keySuccession } = buildMergeClaim(fold(live));
+      expect(merge.keys[0]).toHaveProperty("publicKeyJwk", { ...JWK, x: "x1" });
+      expect(merge.keys[0]).not.toHaveProperty("jwk");
+      const retired = fold([...live, bEv("ACTOR_RETIRED", { succeededBy: ACTOR, keySuccession }, live.at(-1)!)]);
+      const asWritten = (x1: string) => ({
+        ...merge,
+        keys: merge.keys.map(({ publicKeyJwk, ...k }) => ({ ...k, jwk: k.keyId === K(1) ? { ...JWK, x: x1 } : publicKeyJwk })),
+      }) as never;
+      const survivor = fold(chain(merged(asWritten("x1"))));
+      expect(survivor.keys.find((k) => k.id === K(1))).toHaveProperty("publicKeyJwk", { ...JWK, x: "x1" });
+      expect(checkMergeClaim(asWritten("x1"), survivor, retired)).toEqual({ ok: true });
+      expect(checkMergeClaim(asWritten("evil"), survivor, retired)).toEqual({ ok: false, reason: "merge_target_invalid" });
     });
 
     it("checkMergeClaim refuses an actor that is not retired into this one, or of another type", () => {
       const live = absorbedChain();
       const { merge, keySuccession } = buildMergeClaim(fold(live));
       expect(checkMergeClaim(merge, { id: ACTOR, actorType: "agent" }, fold(live))).toMatchObject({ ok: false, reason: "merge_target_invalid" });
-      const elsewhere = fold([...live, bEv("RETIRED", { succeededBy: "did:web:humanos.tech:agent:other", keySuccession }, live.at(-1)!)]);
+      const elsewhere = fold([...live, bEv("ACTOR_RETIRED", { succeededBy: "did:web:humanos.tech:agent:other", keySuccession }, live.at(-1)!)]);
       expect(checkMergeClaim(merge, { id: ACTOR, actorType: "agent" }, elsewhere)).toMatchObject({ ok: false, reason: "merge_target_invalid" });
-      const retired = fold([...live, bEv("RETIRED", { succeededBy: ACTOR, keySuccession }, live.at(-1)!)]);
+      const retired = fold([...live, bEv("ACTOR_RETIRED", { succeededBy: ACTOR, keySuccession }, live.at(-1)!)]);
       expect(checkMergeClaim(merge, { id: ACTOR, actorType: "user" }, retired)).toMatchObject({ ok: false, reason: "merge_target_invalid" });
     });
   });
@@ -1375,7 +1521,7 @@ describe("§3.6c MERGED — the survivor's half of a merge, in one event", () =>
 
 describe("§18 ACCREDITED — a registrar's claim, on the actor's own chain", () => {
   const accredited = (over: Record<string, unknown> = {}) =>
-    (p: ViaEvent) => ev("ACCREDITED", { accreditation: { level: "verified", method: "kyb-registry", registrar: "humanos", verifiedAt: "2026-07-08T11:00:00.000Z", ...over } }, { prev: p });
+    (p: ViaEvent) => ev("ACTOR_ACCREDITED", { accreditation: { level: "verified", method: "kyb-registry", registrar: "humanos", verifiedAt: "2026-07-08T11:00:00.000Z", ...over } }, { prev: p });
 
   /** `chain()` always starts from an AGENT genesis, and an agent may not be accredited — so these
    *  build their own chain from an organization. */
@@ -1415,11 +1561,41 @@ describe("§18 ACCREDITED — a registrar's claim, on the actor's own chain", ()
   // claim states about itself. A claim signed before 2026-10-08 may carry one; it is not read.
   it("records the event's signer as the registrar, whatever the claim names", () => {
     const stated = foldActorChain(orgChain(accredited({ registrar: "some-other-registrar" })));
-    const silent = foldActorChain(orgChain((p: ViaEvent) => ev("ACCREDITED", { accreditation: { level: "domain", method: "dns-challenge" } }, { prev: p })));
+    const silent = foldActorChain(orgChain((p: ViaEvent) => ev("ACTOR_ACCREDITED", { accreditation: { level: "domain", method: "dns-challenge" } }, { prev: p })));
     if (!stated.ok || !silent.ok) throw new Error("fold failed");
     const signer = orgChain()[0]!.issuer;
     expect(stated.subject.accreditation?.registrar).toBe(signer);
     expect(silent.subject.accreditation?.registrar).toBe(signer);
+  });
+
+  // v0.3 §3.1, §3.2: actor status lists are parked in v0.4 (2026-10-11) — a published `status` entry
+  // on the claim is read without it, and the record carries none.
+  it("does not fold a published `status` entry onto the record", () => {
+    const r = foldActorChain(orgChain(accredited({ status: { type: "BitstringStatusListEntry", statusPurpose: "revocation", statusListIndex: "42", statusListCredential: "https://status.humanos.tech/operator/list/1" } })));
+    if (!r.ok) throw new Error("fold failed");
+    expect(r.subject.accreditation).toBeDefined();
+    expect(r.subject.accreditation).not.toHaveProperty("status");
+  });
+
+  // v0.3 §18.2: a withdrawal for cause is a bottom-rung claim with a reason; a re-verification replaces it.
+  it("records a withdrawal for cause, and a re-verification replaces it", () => {
+    const withdraw = (p: ViaEvent) => ev("ACTOR_ACCREDITED", { accreditation: { level: "unverified", withdrawn: { reason: "sanctions" } } }, { prev: p });
+    const out = foldActorChain(orgChain(accredited(), withdraw));
+    if (!out.ok) throw new Error(out.reason);
+    expect(out.subject.accreditation).toMatchObject({ level: "unverified", withdrawn: { reason: "sanctions" } });
+    const back = foldActorChain(orgChain(accredited(), withdraw, accredited()));
+    if (!back.ok) throw new Error(back.reason);
+    expect(back.subject.accreditation?.level).toBe("verified");
+    expect(back.subject.accreditation).not.toHaveProperty("withdrawn");
+  });
+
+  it("refuses a withdrawal above the bottom rung, or with a reason off the list", () => {
+    const above = foldActorChain(orgChain(accredited({ withdrawn: { reason: "fraud" } })));
+    const odd = foldActorChain(orgChain((p: ViaEvent) => ev("ACTOR_ACCREDITED", { accreditation: { level: "unverified", withdrawn: { reason: "bored" } } }, { prev: p })));
+    expect(above.ok).toBe(false);
+    if (!above.ok) expect(above.reason).toBe("accreditation_invalid");
+    expect(odd.ok).toBe(false);
+    if (!odd.ok) expect(odd.reason).toBe("accreditation_invalid");
   });
 
   it("REPLACES wholesale — an accreditation is one coherent statement", () => {
@@ -1455,4 +1631,86 @@ describe("§18 ACCREDITED — a registrar's claim, on the actor's own chain", ()
     if (!r.ok) throw new Error("fold failed");
     expect(r.subject.accreditation?.credential?.id).toBe("urn:eidas:…");
   });
+});
+
+// ── v0.3 §2.0 / §3.4: one structure for every event, and signed history read as written ──────────
+
+describe("the event's own fields, and events written before 2026-10-11", () => {
+  // §2.0: the kind's fields sit directly in credentialSubject.
+  it("folds a key event whose fields sit directly in credentialSubject", () => {
+    const g = genesis();
+    const add = ev("KEY_ADDED", { keyId: "k2", publicKeyJwk: JWK, assurance: "device", binding: "self" }, { prev: g });
+    const r = foldActorChain([g, add]);
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.subject.keys.find((k) => k.id === "k2")).toMatchObject({ publicKeyJwk: JWK, assurance: "device", binding: "self" });
+  });
+
+  // §2.0: an event written before 2026-10-11 carries its fields under `agent`, and an `actor`.
+  it("folds the same chain written in the old `agent` shape to the same record", () => {
+    const flat = (() => {
+      const g = genesis();
+      return [g, ev("KEY_ADDED", { keyId: "k2", publicKeyJwk: JWK, assurance: "device", binding: "self" }, { prev: g })];
+    })();
+    const old = (() => {
+      const g = evOld("ACTOR_REGISTERED", { keyId: "k1", jwk: JWK, actorType: "agent", assurance: "hardware", binding: "attested", bootstrapAnchor: "api_key", verifiedAt: "2026-09-01T00:00:00.000Z" }, { prev: null });
+      return [g, evOld("KEY_ADDED", { keyId: "k2", jwk: JWK, assurance: "device", binding: "self" }, { prev: g })];
+    })();
+    const a = foldActorChain(flat);
+    const b = foldActorChain(old);
+    if (!a.ok || !b.ok) throw new Error("fold failed");
+    const { chain: _a, ...ra } = a.subject as unknown as Record<string, unknown>;
+    const { chain: _b, ...rb } = b.subject as unknown as Record<string, unknown>;
+    expect(rb).toEqual(ra);
+  });
+
+  // A field the event carries directly wins over the same field under `agent` (§2.0).
+  it("reads a field from `agent` only when the event does not carry it directly", () => {
+    const g = genesis();
+    const mixed = { ...ev("KEY_ADDED", { keyId: "k2", publicKeyJwk: JWK, assurance: "device" }, { prev: g }) } as unknown as ViaEvent;
+    (mixed.credentialSubject as Record<string, unknown>).agent = { assurance: "pop", binding: "self" };
+    const r = foldActorChain([g, mixed]);
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.subject.keys.find((k) => k.id === "k2")).toMatchObject({ assurance: "device", binding: "self" });
+  });
+
+  // §3.4: the eight old names are read as today's.
+  it.each([
+    ["SUSPENDED", "suspended"],
+    ["RETIRED", "retired"],
+  ])("folds a %s written under its old name as the renamed kind", (oldName, status) => {
+    const g = genesis();
+    const r = foldActorChain([g, evOld(oldName, {}, { prev: g })]);
+    expect(r.ok && r.subject.status).toBe(status);
+  });
+
+  it("folds an old AFFILIATION and FORK_EVIDENCE as ACTOR_AFFILIATED and FORK_DETECTED", () => {
+    const g = genesis();
+    const aff = evOld("AFFILIATION", { org: "did:web:acme.example", relation: "operates" }, { prev: g });
+    const fork = evOld("FORK_EVIDENCE", { keyId: "k1", evidence: { ref: "https://e" } }, { prev: aff });
+    const r = foldActorChain([g, aff, fork]);
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.subject.operator?.org).toBe("did:web:acme.example");
+  });
+
+  // §2.0: ALIAS_ADDED says why it aliases in `aliasReason` — `reason` is the event's general one.
+  it("reads an alias's reason from `aliasReason`, beside a general `reason`", () => {
+    const g = genesis();
+    const alias = ev("ALIAS_ADDED", { alias: "did:web:humanos.tech:user:old", aliasReason: "merge", reason: "consolidation" }, { prev: g });
+    const r = foldActorChain([g, alias]);
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.subject.aliases).toEqual([{ did: "did:web:humanos.tech:user:old", reason: "merge" }]);
+  });
+
+  // §2.0 binds the WRITER: an event written before a field became required still folds with the
+  // defaults the fold always applied — `existedSince` from the event's `validFrom`, `bootstrapAnchor`
+  // `manual` (e.g. an API-key agent registered before 2026-10-11 with no `existedSince`).
+  it.each([["the flat shape", ev], ["the old `agent` shape", evOld]])(
+    "folds an ACTOR_REGISTERED with neither existedSince nor bootstrapAnchor, in %s, with the defaults",
+    (_shape, build) => {
+      const g = (build as typeof ev)("ACTOR_REGISTERED", { keyId: "k1", publicKeyJwk: JWK, actorType: "agent" }, { prev: null, at: "2026-09-03T00:00:00.000Z" });
+      const r = foldActorChain([g]);
+      if (!r.ok) throw new Error(r.reason);
+      expect(r.subject).toMatchObject({ existedSince: "2026-09-03T00:00:00.000Z", bootstrapAnchor: "manual" });
+    },
+  );
 });

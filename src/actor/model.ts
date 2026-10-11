@@ -24,16 +24,17 @@
 //  - FORK_EVIDENCE is state-neutral in the fold: the evidence pointer is
 //    CHAIN-resident (the event itself), not a subject field — the kill arrives
 //    via the KEY_REVOKED / SUSPENDED events it triggers.
-//  - DELEGATED on the PARENT chain is state-neutral (it records the grant);
-//    the CHILD's lineage pointer is set at its own ACTOR_REGISTERED genesis.
+//  - DELEGATED is reserved and state-neutral: delegation (and the child's
+//    `lineage`) is parked in v0.4 §8 (2026-10-11); a v0.3 fold accepts a chain
+//    that carries it and changes nothing.
 import { canonicalizeRFC8785 } from "../crypto/canonicalize.js";
 import { eventChainLink } from "../event/build.js";
-import { EVENT_TYPES, type EventType } from "../crypto/proof.js";
+import { EVENT_TYPES, canonicalEventType, type EventType } from "../crypto/proof.js";
 import type { ViaEvent } from "../types.js";
 import type { Assurance, Binding, RuntimeAttestation } from "../agent/types.js";
 import { BINDINGS, assuranceRank, isAssurance, isBinding } from "../agent/types.js";
 import type { Jwk } from "../crypto/p256.js";
-import { claimValidUntil } from "../operator/types.js";
+import { claimValidUntil, WITHDRAWAL_REASONS, type AccreditationRevocationReason } from "../operator/types.js";
 
 // ── Types (v0.3 §3.1 — assurance fields FLAT, §16 tokens verbatim) ───────────
 
@@ -76,11 +77,14 @@ export interface ActorKeyState {
    * `publicKeyMultibase`; agent keys are P-256 published as `JsonWebKey` + `publicKeyJwk`. Ed25519
    * has no hardware-attestation ecosystem, which is the whole reason agent keys are P-256.
    *
-   * EXACTLY ONE is present, matching how that key is published. Carrying only `jwk` excluded every
+   * EXACTLY ONE is present, matching how that key is published. Carrying only a JWK excluded every
    * organization and person from the actor model — found while writing the §3.5 genesis backfill,
    * which had no way to name the key it was binding.
+   *
+   * One name for the JWK, `publicKeyJwk`, in the record, the DID document and new events (v0.3 §3.1,
+   * 2026-10-11). Events signed before then carry it as `jwk`; the fold reads either.
    */
-  jwk?: Jwk;
+  publicKeyJwk?: Jwk;
   publicKeyMultibase?: string;
   status: ActorKeyStatus;
   attestation?: AttestationRef;
@@ -132,8 +136,13 @@ export interface ViaActorSubject {
   bootstrapAnchor: BootstrapAnchor;
   verifiedAt?: string;
   root?: string;
-  /** Pointer to the org-signed AFFILIATION event — never an inline claim. */
-  operator?: { org: string; relation?: string; affiliationEvent: string };
+  /**
+   * Pointer to the org-signed AFFILIATION event — never an inline claim. `relation` and `validUntil`
+   * restate that event's own claim for readers of the record (v0.3 §3.1): `validUntil` is when the
+   * affiliation lapses, absent when the event states none. Nothing is recorded when it passes, so the
+   * pointer stays; a verifier compares the date with the time of the verification (§18.5 O2).
+   */
+  operator?: { org: string; relation?: string; validUntil?: string; affiliationEvent: string };
   /**
    * WHY this actor exists, when a PERSON is what let it through the door (v0.3 §3.1, §16.14).
    *
@@ -155,8 +164,6 @@ export interface ViaActorSubject {
     /** When the person authorized — an instant something happened, like `verifiedAt`; not a `validFrom`. */
     at: string;
   };
-  /** Pointer to the parent-signed DELEGATED event — set at genesis (delegated actors). */
-  lineage?: { parent: string; event: string };
   /**
    * The RUNTIME axis (v0.3 §9.4ter) — the latest attestation, NOT a folded value.
    *
@@ -196,8 +203,14 @@ export interface ViaActorSubject {
      * our chain, so the event points at their credential rather than re-typing it as ours.
      */
     credential?: { id: string; digestSRI?: string; location?: string };
-    /** Published revocation entry (O3) — checkable offline, no live registrar call. */
-    status?: Record<string, unknown>;
+    // No `status`: a published revocation entry is parked in v0.4 §9.3 with the actors' status
+    // lists (2026-10-11). A claim that carries one is read without it.
+    /**
+     * Withdrawn for cause (v0.3 §18.2) — struck off, fraud, sanctions. `level` is then `unverified`,
+     * and O3 denies every mandate that reads `accreditation.*` with this reason, even one whose floor
+     * is `unverified`, which a plain downgrade would pass.
+     */
+    withdrawn?: { reason: AccreditationRevocationReason };
   };
   /**
    * Prior identifiers that resolve to this actor (v0.3 §3.6). `merge` — an actor retired INTO this
@@ -221,22 +234,20 @@ export interface ViaActorSubject {
    */
   keySuccession?: Record<string, string>;
   /**
-   * When the PARTY came to exist on the platform — an organization's creation, a contact's —
-   * carried as content of `ACTOR_REGISTERED` (§3.1, §3.5). Equal to `genesisAt` for a natively
-   * registered actor, earlier for a backfilled one. The merge survivor rule ranks on this first
-   * (§3.6c): a backfill registers everyone on the day it runs, so `genesisAt` alone would make a
-   * 2024 party younger than one that signed up last month. Absent on chains written before genesis
-   * carried it; the rule then falls back to `genesisAt`.
+   * When the PARTY came to exist on the platform — an organization's creation, a contact's (v0.3
+   * §3.1, §3.5). The `existedSince` its `ACTOR_REGISTERED` carries as content, or that event's own
+   * `validFrom` when it states none, so it is always present on a registered actor. Equal to when the
+   * chain began for a natively registered actor; earlier for a backfilled one, which today is
+   * nearly every organization and person.
+   *
+   * The merge survivor rule ranks on it alone (§3.6c): a backfill registers everyone on the day it
+   * runs, so the date a chain began would make a 2024 party younger than one that signed up last
+   * month. It never moves — distinct from `verifiedAt`, which does — and a property that cannot
+   * change is the only kind that makes the outcome independent of when you look. (Until 2026-10-11
+   * the record also carried `genesisAt`, used only as this field's fallback; the fallback is now the
+   * fold's.)
    */
   existedSince?: string;
-  /**
-   * When this actor came into existence — the `validFrom` of its `ACTOR_REGISTERED` (§3.5).
-   *
-   * Distinct from `verifiedAt`, which moves whenever evidence is re-checked. This never moves, and
-   * that is why the merge survivor rule (§3.6c) is built on it: a property that cannot change is
-   * the only kind that makes the outcome independent of when you look.
-   */
-  genesisAt?: string;
 }
 
 /** Where on its chain a record was folded to (v0.3 §3.1 `chain`). */
@@ -285,7 +296,7 @@ export const EVENT_SCOPE = {
   STEP_UP_APPROVED: "credential",
   STEP_UP_DECLINED: "credential",
   AGENT_REGISTERED: "credential",
-  REGULATORY: "actor", // §3.4: a regulator's claim about THIS actor — actor-scoped, like AFFILIATION
+  ACTOR_REGULATED: "actor", // §3.4: a regulator's claim about THIS actor — reserved, parked in v0.4 §10
   // actor-scoped — about the actor itself
   ACTOR_REGISTERED: "actor",
   KEY_ADDED: "actor",
@@ -293,15 +304,15 @@ export const EVENT_SCOPE = {
   KEY_REVOKED: "actor",
   ATTESTATION_RENEWED: "actor",
   ASSURANCE_UPDATED: "actor",
-  FORK_EVIDENCE: "actor",
-  AFFILIATION: "actor",
+  FORK_DETECTED: "actor",
+  ACTOR_AFFILIATED: "actor",
   DELEGATED: "actor",
-  SUSPENDED: "actor",
-  RESUMED: "actor",
-  RETIRED: "actor",
-  ACCREDITED: "actor",
+  ACTOR_SUSPENDED: "actor",
+  ACTOR_RESUMED: "actor",
+  ACTOR_RETIRED: "actor",
+  ACTOR_ACCREDITED: "actor",
   ALIAS_ADDED: "actor",
-  MERGED: "actor",
+  ACTOR_MERGED: "actor",
   RUNTIME_ATTESTED: "actor",
   SNAPSHOT_ISSUED: "actor",
 } as const satisfies Record<EventType, "credential" | "actor">;
@@ -312,10 +323,20 @@ export type EventScope = (typeof EVENT_SCOPE)[EventType];
 /**
  * Read whichever published form the event carries (§3.1, §16.2). Neither is invented: an
  * event that names no key material yields none, and the fold's own validation is what rejects it.
+ *
+ * A JWK is `publicKeyJwk` in an event written from 2026-10-11 and `jwk` in one signed before
+ * (v0.3 §3.1): signed history is read as written, never renamed, and the record says `publicKeyJwk`.
  */
-function keyMaterial(detail: Record<string, unknown>): { jwk?: Jwk; publicKeyMultibase?: string } {
+function keyMaterial(detail: Record<string, unknown>): { publicKeyJwk?: Jwk; publicKeyMultibase?: string } {
   if (typeof detail.publicKeyMultibase === "string") return { publicKeyMultibase: detail.publicKeyMultibase };
-  return detail.jwk ? { jwk: detail.jwk as Jwk } : {};
+  const jwk = eventJwk(detail);
+  return jwk ? { publicKeyJwk: jwk } : {};
+}
+
+/** An event's JWK under either name — `publicKeyJwk` (2026-10-11 on) or `jwk` (signed before). */
+function eventJwk(detail: Record<string, unknown>): Jwk | undefined {
+  const jwk = detail.publicKeyJwk ?? detail.jwk;
+  return jwk && typeof jwk === "object" ? (jwk as Jwk) : undefined;
 }
 
 /** The four runtime classes (v0.3 §9.4ter). Categorical — deliberately a Set, not an array with
@@ -354,9 +375,19 @@ interface FoldSeed {
 
 const fail = (reason: string, at?: number): ActorFoldResult => ({ ok: false, reason, at });
 
-/** Event detail rides the §16.9 `agent` field of the actor-scoped VIAEvent. */
-const detailOf = (e: ViaEvent): Record<string, unknown> =>
-  (e.credentialSubject.agent as Record<string, unknown> | undefined) ?? {};
+/** The core fields of every event (v0.3 §2.0) — never part of a kind's own fields. */
+const CORE_FIELDS: ReadonlySet<string> = new Set(["id", "event", "previousEvent", "credentialDigest", "actor", "agent"]);
+
+/**
+ * An event's own fields (v0.3 §2.0): directly in `credentialSubject`, falling back to the `agent`
+ * wrapper actor events used before 2026-10-11 (and every `"0.2"` actor event) for a field the event
+ * does not carry directly. Read as written: nothing is renamed, nothing invented.
+ */
+const detailOf = (e: ViaEvent): Record<string, unknown> => {
+  const cs = e.credentialSubject as Record<string, unknown>;
+  const own = Object.fromEntries(Object.entries(cs).filter(([k]) => !CORE_FIELDS.has(k)));
+  return { ...((cs.agent as Record<string, unknown> | undefined) ?? {}), ...own };
+};
 
 /**
  * Fold an actor chain into its current subject (v0.3 §5). Chain order is
@@ -427,14 +458,19 @@ export function actorSummaryFloor(
  * 8 = `MERGED` folded — a merge's aliases and carried keys in one event; 9 = an accreditation's
  * `expiresAt` is recorded as `validUntil`; 10 = the aliases an absorbed actor held join the
  * survivor as `inherited`, not `channel`; 11 = an accreditation's `registrar` is the event's signer,
- * whatever the claim stated).
+ * whatever the claim stated; 12 = an agent key's JWK is `publicKeyJwk` in the record, read from
+ * `publicKeyJwk` or `jwk`, an affiliation's lapse is recorded as `operator.validUntil`, the record
+ * has one age — `existedSince`, the genesis's `validFrom` when it states none — and no `genesisAt`,
+ * `lineage` is no longer folded: delegation is parked in v0.4, and neither is an accreditation's
+ * published `status`: actor status lists are parked in v0.4; an accreditation withdrawn for cause
+ * carries `withdrawn`).
  *
  * A stored record (a checkpoint) is only as current as the fold that wrote it. Seeding a fold from
  * one written by an older version would silently omit whatever the newer fold adds, so a
  * checkpointed read MUST seed only from a record written by this version and replay the whole
  * chain otherwise.
  */
-export const ACTOR_FOLD_VERSION = 11;
+export const ACTOR_FOLD_VERSION = 12;
 
 /** §5 — a keyed `ASSURANCE_UPDATED` lowers or keeps every rung field; it never raises one or names a new root. */
 function regradeLowers(k: ActorKeyState, detail: Record<string, unknown>): boolean {
@@ -489,7 +525,8 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
   for (let i = 0; i < events.length; i++) {
     const e = events[i]!;
     const cs = e.credentialSubject;
-    const kind = cs.event as ActorEventType;
+    // Old names are read as today's (v0.3 §3.4): an event signed before the rename is read as written.
+    const kind = canonicalEventType(cs.event) as ActorEventType;
     const detail = detailOf(e);
 
     // §16.3 tokens only, checked once for every writer. An unknown rung ranks as NaN and every
@@ -529,14 +566,13 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
             ...keyRung(detail, e.validFrom),
           },
         ],
-        genesisAt: e.validFrom,
-        ...(typeof detail.existedSince === "string" ? { existedSince: detail.existedSince } : {}),
+        // §3.1: the party's age — what the genesis states (§3.5), else when the genesis was signed.
+        existedSince: typeof detail.existedSince === "string" ? detail.existedSince : e.validFrom,
         assurance: detail.assurance as Assurance,
         binding: detail.binding as Binding,
         bootstrapAnchor: (detail.bootstrapAnchor as BootstrapAnchor) ?? "manual",
         verifiedAt: (detail.verifiedAt as string) ?? e.validFrom,
         ...(detail.root ? { root: String(detail.root) } : {}),
-        ...(detail.lineage ? { lineage: detail.lineage as ViaActorSubject["lineage"] } : {}),
         ...(detail.anchoredBy ? { anchoredBy: detail.anchoredBy as ViaActorSubject["anchoredBy"] } : {}),
       };
       continue;
@@ -667,20 +703,24 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         deriveRuntimeSummary(subject);
         break;
       }
-      case "FORK_EVIDENCE":
-      case "DELEGATED":
+      case "FORK_DETECTED":
       case "SNAPSHOT_ISSUED":
-      case "REGULATORY":
-        // state-neutral: evidence/grant/audit events POINT (they live on the
+      case "ACTOR_REGULATED":
+        // state-neutral: evidence/audit events POINT (they live on the
         // chain); any state change arrives via the events they trigger
         break;
-      case "AFFILIATION": {
+      case "DELEGATED":
+        // reserved; delegation is parked in v0.4 §8 — accepted, nothing folded
+        break;
+      case "ACTOR_AFFILIATED": {
         // set the operator POINTER to this org-signed event — never inline. §18 names the claim's
         // field, `credentialSubject.operator`; events written before that was honoured carry it in
         // `agent`, and signed history is read as it was written.
         const op = (cs.operator ?? {}) as { org?: unknown; relation?: unknown };
         const org = op.org ?? detail.org ?? e.issuer;
         const relation = op.relation ?? detail.relation;
+        // §18.4: the lapse, `validUntil` (`expiresAt` on an affiliation signed before 2026-10-07).
+        const validUntil = claimValidUntil((cs.operator ?? detail) as { validUntil?: unknown; expiresAt?: unknown });
         // §5: once the actor has an operator, only that operator writes a later AFFILIATION — to renew
         // or change the relation. Naming, or being signed by, another organization re-points nothing.
         if (subject.operator && (String(org) !== subject.operator.org || e.issuer !== subject.operator.org)) {
@@ -689,22 +729,23 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         subject.operator = {
           org: String(org),
           ...(typeof relation === "string" ? { relation } : {}),
+          ...(validUntil ? { validUntil } : {}),
           affiliationEvent: eventChainLink(e),
         };
         break;
       }
       // ── status transitions (v0.3 §4 table; illegal → reject) ──
-      case "SUSPENDED": {
+      case "ACTOR_SUSPENDED": {
         if (subject.status !== "active") return fail("illegal_transition", i);
         subject.status = "suspended"; // preserves everything else
         break;
       }
-      case "RESUMED": {
+      case "ACTOR_RESUMED": {
         if (subject.status !== "suspended") return fail("illegal_transition", i);
         subject.status = "active"; // pure un-flip
         break;
       }
-      case "RETIRED": {
+      case "ACTOR_RETIRED": {
         subject.status = "retired"; // from active OR suspended; terminal
         // §3.6c — a merge retires the absorbed actor and points it at the survivor. Optional: an
         // ordinary retirement succeeds nobody, and inventing a pointer would claim a party
@@ -722,7 +763,7 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         }
         break;
       }
-      case "ACCREDITED": {
+      case "ACTOR_ACCREDITED": {
         // §18 — a registrar's claim about THIS actor. Replaces wholesale, like ASSURANCE_UPDATED:
         // an accreditation is a single coherent statement (level earned BY a method FROM a
         // registrar), and merging fields across two of them would invent a claim nobody made.
@@ -744,9 +785,21 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         // `validUntil` (v0.3 §18.2). The event is not touched; only the fold's output is normalized.
         // The registrar is who SIGNED the event — its issuer (v0.3 §18.2) — never a name the claim
         // states about itself: a claim signed before 2026-10-08 may carry one, and it is not read.
-        const { expiresAt: _legacy, validUntil: _stated, registrar: _named, ...claim } = a as typeof a & { expiresAt?: string };
+        // A withdrawal for cause (v0.3 §18.2) is a bottom-rung claim whose reason is from a fixed list.
+        const w = (a as { withdrawn?: { reason?: unknown } }).withdrawn;
+        if (w !== undefined && (a.level !== "unverified" || typeof w !== "object" || w === null || typeof w.reason !== "string" || !WITHDRAWAL_REASONS.has(w.reason))) {
+          return fail("accreditation_invalid", i);
+        }
+        // A published `status` entry is not folded: actor status lists are parked in v0.4 (2026-10-11).
+        const { expiresAt: _legacy, validUntil: _stated, registrar: _named, status: _published, withdrawn: _w, ...claim } = a as typeof a & { expiresAt?: string; status?: unknown };
         const until = claimValidUntil(a);
-        subject.accreditation = { ...claim, registrar: e.issuer, verifiedAt: a.verifiedAt ?? e.validFrom, ...(until ? { validUntil: until } : {}) };
+        subject.accreditation = {
+          ...claim,
+          registrar: e.issuer,
+          verifiedAt: a.verifiedAt ?? e.validFrom,
+          ...(until ? { validUntil: until } : {}),
+          ...(w ? { withdrawn: { reason: w.reason as AccreditationRevocationReason } } : {}),
+        };
         break;
       }
       case "ALIAS_ADDED": {
@@ -762,7 +815,7 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         if (!subject.aliases.some((a) => a.did === did)) subject.aliases.push({ did, reason });
         break;
       }
-      case "MERGED": {
+      case "ACTOR_MERGED": {
         // §3.6c — the survivor's half of a merge, as ONE fact: the absorbed actor's identifier
         // (`merge`), its own aliases (`channel`), and the keys of it that survive, each with its own
         // state. The absorbed chain is not replayed: what the survivor holds is stated here, on its
@@ -827,7 +880,7 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
 }
 
 /** The events after which the summary is re-derived. `ASSURANCE_UPDATED` derives inside its case. */
-const KEY_EVENTS: ReadonlySet<string> = new Set(["KEY_ADDED", "KEY_ROTATED", "KEY_REVOKED", "ATTESTATION_RENEWED", "MERGED"]);
+const KEY_EVENTS: ReadonlySet<string> = new Set(["KEY_ADDED", "KEY_ROTATED", "KEY_REVOKED", "ATTESTATION_RENEWED", "ACTOR_MERGED"]);
 
 // ── The merge claim (v0.3 §3.6c) — what `MERGED` carries ─────────────────────
 
@@ -835,7 +888,8 @@ const KEY_EVENTS: ReadonlySet<string> = new Set(["KEY_ADDED", "KEY_ROTATED", "KE
 export interface MergedKey {
   /** The id the key has on the SURVIVOR — the value of its `keySuccession` entry. */
   keyId: string;
-  jwk?: Jwk;
+  /** Written as `publicKeyJwk`; a claim signed before 2026-10-11 may say `jwk`, and is read as written. */
+  publicKeyJwk?: Jwk;
   publicKeyMultibase?: string;
   /** `active` or `rotated`: a revoked key does not survive a merge and is never carried. */
   status: "active" | "rotated";
@@ -872,7 +926,7 @@ function parseMergeClaim(raw: unknown): MergeClaim | null {
     // §3.6c rule 2: a revoked key does not survive a merge — it is left out, never carried dead.
     if (k.status !== "active" && k.status !== "rotated") return null;
     if (k.rotatedTo !== undefined && typeof k.rotatedTo !== "string") return null;
-    if (typeof k.publicKeyMultibase !== "string" && (!k.jwk || typeof k.jwk !== "object")) return null;
+    if (typeof k.publicKeyMultibase !== "string" && !eventJwk(k)) return null;
     const att = k.attestation as { event?: unknown; kind?: unknown } | undefined;
     if (att !== undefined && (typeof att !== "object" || att === null || typeof att.event !== "string" || typeof att.kind !== "string")) return null;
     if (k.runtime !== undefined && (typeof k.runtime !== "object" || k.runtime === null)) return null;
@@ -886,19 +940,19 @@ function parseMergeClaim(raw: unknown): MergeClaim | null {
  *
  * Every key that is not revoked survives, with the state it has — a `rotated` key stays rotated and
  * keeps its succession when its successor survives too. Nothing is re-graded and nothing is
- * invented: the claim is the absorbed actor's own keys under the ids they take on the survivor
- * (`keyId`, default: unchanged — a key keeps the id its own DID gave it).
+ * invented: the claim is the absorbed actor's own keys. A key keeps the id its own DID gave it
+ * (v0.3 §3.6c, 2026-10-11 — never renumbered under the survivor's DID), so `keySuccession` maps each
+ * surviving key to itself. A reader still translates through it, so a chain that renumbered reads.
  *
  * `held` names key ids the survivor already has: they are mapped in `keySuccession` and left out of
  * the claim, because the fold refuses a key id it already holds (`duplicate_key`).
  */
 export function buildMergeClaim(
   absorbed: ViaActorSubject,
-  opts: { keyId?: (absorbedKeyId: string) => string; held?: ReadonlySet<string> } = {},
+  opts: { held?: ReadonlySet<string> } = {},
 ): { merge: MergeClaim; keySuccession: Record<string, string> } {
-  const idOf = opts.keyId ?? ((id: string) => id);
   const keySuccession: Record<string, string> = {};
-  for (const k of absorbed.keys) if (k.status !== "revoked") keySuccession[k.id] = idOf(k.id);
+  for (const k of absorbed.keys) if (k.status !== "revoked") keySuccession[k.id] = k.id;
   const carried = absorbed.keys.filter((k) => k.status !== "revoked" && !opts.held?.has(keySuccession[k.id]!));
   const carriedIds = new Set(carried.map((k) => keySuccession[k.id]!));
   const keys = carried.map((k): MergedKey => {
@@ -906,7 +960,7 @@ export function buildMergeClaim(
     return {
       keyId: keySuccession[k.id]!,
       ...(k.publicKeyMultibase ? { publicKeyMultibase: k.publicKeyMultibase } : {}),
-      ...(k.jwk ? { jwk: k.jwk } : {}),
+      ...(k.publicKeyJwk ? { publicKeyJwk: k.publicKeyJwk } : {}),
       status: k.status as "active" | "rotated",
       // A successor that was revoked (or is already the survivor's) is not carried: the pointer ends.
       ...(k.status === "rotated" && successor && carriedIds.has(successor) ? { rotatedTo: successor } : {}),
@@ -952,7 +1006,8 @@ export function checkMergeClaim(
   for (const k of m.keys) {
     const source = absorbed.keys.find((x) => x.id === sourceOf.get(k.keyId));
     if (!source || source.status === "revoked" || source.status !== k.status) return bad;
-    if (!same(source.jwk, k.jwk) || source.publicKeyMultibase !== k.publicKeyMultibase) return bad;
+    // The claim's JWK under either name (a claim signed before 2026-10-11 says `jwk`, §3.1).
+    if (!same(source.publicKeyJwk, eventJwk(k as unknown as Record<string, unknown>)) || source.publicKeyMultibase !== k.publicKeyMultibase) return bad;
     if (source.assurance !== k.assurance || source.binding !== k.binding || source.root !== k.root) return bad;
     if (source.verifiedAt !== k.verifiedAt || !same(source.runtime, k.runtime) || !same(source.attestation, k.attestation)) return bad;
     // The succession it carries is the source's own, translated — never a new one, and never
@@ -1016,15 +1071,15 @@ export function resolvePinnedKeysAcrossMerge(
  * point at one terminal DID instead of accumulating hops.
  *
  * Ties break on the DID string — arbitrary, but total and auditable, which "earliest wins" alone is
- * not. An actor with no `genesisAt` (a chain folded from a checkpoint that predates the field)
- * sorts as younger: never silently win on missing data.
+ * not. An actor with no `existedSince` (a record computed before the fold always set it) sorts as
+ * younger: never silently win on missing data.
  */
 export function chooseSurvivor(
   a: ViaActorSubject,
   b: ViaActorSubject,
 ): { survivor: ViaActorSubject; absorbed: ViaActorSubject } {
-  // §3.6c: the party's age (`existedSince`) first, then when its chain began; missing sorts last.
-  const age = (s: ViaActorSubject) => s.existedSince ?? s.genesisAt ?? "\uffff";
+  // §3.6c: the party's age (`existedSince`); missing sorts last.
+  const age = (s: ViaActorSubject) => s.existedSince ?? "\uffff";
   const aAge = age(a);
   const bAge = age(b);
   if (aAge !== bAge) return aAge < bAge ? { survivor: a, absorbed: b } : { survivor: b, absorbed: a };
@@ -1117,7 +1172,7 @@ export function foldActorRecord(events: ViaEvent[]): ActorRecordResult {
  * FLAT, and deliberately WITHOUT `keys[]`: pinned-key resolution is v0.3 §7's job (`resolvePinnedKeys`),
  * not a rule's. A rule that could reach into keys would be writing its own D7, badly.
  *
- * `operator` and `lineage` project PRESENCE plus the DID, never the event — a rule may ask "is this
+ * `operator` projects PRESENCE plus the DID, never the event — a rule may ask "is this
  * agent affiliated, and to whom", never "what did the affiliation say". Reading the claim is the
  * verifier's job, through the pointer.
  *
@@ -1168,7 +1223,6 @@ export function projectAgentContext(
     status: subject.status,
     ...(root ? { root } : {}),
     ...(subject.operator ? { operator: { org: subject.operator.org } } : {}),
-    ...(subject.lineage ? { lineage: { parent: subject.lineage.parent } } : {}),
     // The RUNTIME axis (v0.3 §9.4ter). CATEGORICAL — a mandate writes `agent.runtime in ["tee"]`,
     // never a rank comparison, and there is no helper that would let it. Absent evidence projects
     // as the literal string "none": a rule must be able to say "I require an attested environment"
@@ -1211,7 +1265,7 @@ export function auditActorRecord(record: ViaActorRecord, events: ViaEvent[]): Ac
   const fresh = folded.subject as unknown as Record<string, unknown>;
   const kept = stored as unknown as Record<string, unknown>;
   if (canonicalizeRFC8785(fresh) === canonicalizeRFC8785(kept)) return { ok: true };
-  // The fold learns to derive new fields over time (`genesisAt`, `existedSince`, `runtime`…). A
+  // The fold learns to derive new fields over time (`existedSince`, `runtime`…). A
   // record computed before such a field existed still says nothing FALSE — every value it carries
   // matches — it is merely older than the fold. That is `record_outdated`: recompute it. A stored
   // value that disagrees with the chain is the lie this audit exists to catch.

@@ -1,8 +1,9 @@
 import { viaUrn } from "../urn.js";
 import { canonicalizeRFC8785 } from "../crypto/canonicalize.js";
 import { computeSRI } from "../crypto/digest.js";
-import { createDataIntegrityProof, verifyDataIntegrityProof, type EventType } from "../crypto/proof.js";
-import { VIA_PLATFORM_DID } from "../did/web.js";
+import { canonicalEventType, createDataIntegrityProof, verifyDataIntegrityProof, type EventType } from "../crypto/proof.js";
+import type { Jwk } from "../crypto/p256.js";
+import { VIA_PLATFORM_DID, didFromUrl } from "../did/web.js";
 import { stampMandate, type ResolvePublicKey } from "../mandate/build.js";
 import {
   TYPE_VC,
@@ -14,7 +15,77 @@ import {
   type ViaMandateCredential,
 } from "../types.js";
 
-export interface BuildEventInput {
+/**
+ * An event kind's own fields (v0.3 §2.0) — written directly in `credentialSubject`, beside the core,
+ * with no wrapper object. A value that is itself a structure (a claim, a pointer, a map) stays one
+ * object under its own name. §2.0's tables say which fields each kind carries; a writer writes only
+ * those. There is no `actor` (a `"0.2"` field: `issuer` is the signer, §2), no `agent` wrapper (written
+ * before 2026-10-11) and no `role` (never written).
+ */
+export interface EventFields {
+  /** Why the event was recorded, for the audit — any kind MAY carry it. */
+  reason?: string;
+  // ── about a mandate ──
+  evaluations?: unknown[];
+  executionParams?: Record<string, unknown>;
+  targetVerifier?: string;
+  /** §20.3 — which machinery governed a `VERIFICATION_*` decision. */
+  enforcement?: string;
+  /** §2.2/§17.4 — `{ id, method, termsDigest, tool }` on `STEP_UP_*`; the reference on a `VERIFICATION_*`. */
+  stepUp?: Record<string, unknown>;
+  /** §20.6 — `{ id, version, verdict }` of the reviewer that took part. */
+  review?: Record<string, unknown>;
+  /** §9.9 — what the presenting client declared itself to be: `{ declared: true, name, version }`. */
+  client?: Record<string, unknown>;
+  /** §2.1 — on `ACTION_*`: the `id` of the `VERIFICATION_APPROVED` the outcome closes. */
+  decision?: string;
+  /** §18.2/§18.5 — with `accreditation_revoked`: why the registrar withdrew it. */
+  revocationReason?: string;
+  /** §9.9/§16.9 — the rung relied on at presentation. */
+  keyIdEvaluated?: string;
+  assuranceEvaluated?: string;
+  bindingEvaluated?: string;
+  rootUsed?: string;
+  attestationFreshnessAt?: string;
+  popNonceRef?: string;
+  /** §18.7 — whose identity was relied on. */
+  levelEvaluated?: string;
+  methodEvaluated?: string;
+  registrarUsed?: string;
+  affiliationRef?: string;
+  // ── about an actor ──
+  actorType?: string;
+  keyId?: string;
+  publicKeyJwk?: Jwk;
+  publicKeyMultibase?: string;
+  assurance?: string;
+  binding?: string;
+  root?: string;
+  verifiedAt?: string;
+  bootstrapAnchor?: string;
+  existedSince?: string;
+  attestationKind?: string;
+  degradedFrom?: string;
+  anchoredBy?: Record<string, unknown>;
+  authorizedBy?: string;
+  predecessorId?: string;
+  runtime?: Record<string, unknown>;
+  evidence?: Record<string, unknown>;
+  alias?: string;
+  /** `ALIAS_ADDED` — why it aliases: `channel` | `merge` (§3.6). Not `reason`, which any event may carry. */
+  aliasReason?: string;
+  /** `ACTOR_AFFILIATED` — `{ org, relation, validUntil? }` (§18.4). */
+  operator?: Record<string, unknown>;
+  /** `ACTOR_ACCREDITED` — the registrar's claim (§18.2, §18.3bis). */
+  accreditation?: Record<string, unknown>;
+  /** `ACTOR_MERGED` — `{ absorbed, aliases, keys }` (§3.6c). */
+  merge?: Record<string, unknown>;
+  /** `ACTOR_RETIRED` on a merge (§3.6c). */
+  succeededBy?: string;
+  keySuccession?: Record<string, string>;
+}
+
+export interface BuildEventInput extends EventFields {
   eventId?: string;
   /**
    * What this event is ABOUT — becomes `credentialSubject.id`.
@@ -25,31 +96,11 @@ export interface BuildEventInput {
    */
   subject: string;
   event: EventType;
-  actor: string;
-  /** The asserting actor's DID; defaults to the platform. */
+  /** The signer's DID (v0.3 §2); defaults to the platform. */
   issuer?: string;
   validFrom?: string;
-  /** SRI of the prior event in the credential's chain (null at the root). */
+  /** SRI of the prior event in the chain (null at its first event). */
   previousEvent?: string | null;
-  role?: string;
-  reason?: string;
-  evaluations?: unknown[];
-  executionParams?: Record<string, unknown>;
-  targetVerifier?: string;
-  /** §16.9 — agent-binding detail (e.g. rung evidence on a `VERIFICATION_*` event). */
-  agent?: Record<string, unknown>;
-  /** §18 — operator detail (`AFFILIATION` org/relation, `REGULATORY` licence). */
-  operator?: Record<string, unknown>;
-  /** §18 — `ACCREDITED` detail: the registrar's claim about THIS actor's identity. */
-  accreditation?: Record<string, unknown>;
-  /** v0.3 §3.6 — `MERGED`'s claim: `{ absorbed, aliases, keys }`. */
-  merge?: Record<string, unknown>;
-  /** §17.4 — step-up detail: `{ id, method, termsDigest, tool }` on `STEP_UP_*`; the reference on a `VERIFICATION_*`. */
-  stepUp?: Record<string, unknown>;
-  /** §20.3 — which machinery governed this decision. */
-  enforcement?: string;
-  /** §20.6 — `{ id, version, verdict }` of the reviewer that took part. */
-  review?: Record<string, unknown>;
   /**
    * Content-bound: the credential to hash (e.g. a {@link ViaMandateCredential}), or a
    * precomputed digest. Any existing `proof` is stripped before hashing (spec §0.5.4).
@@ -57,6 +108,9 @@ export interface BuildEventInput {
   credential?: BindableCredential;
   credentialDigest?: string;
 }
+
+/** Fields a `"0.3"` event never carries (v0.3 §2.0). A builder refuses them rather than write them. */
+const NOT_V03_FIELDS = ["actor", "agent", "role"] as const;
 
 /** A credential to content-bind against — a mandate, an event, or any VC-shaped object. */
 export type BindableCredential = Record<string, unknown> | object;
@@ -75,33 +129,28 @@ export function credentialDigestOf(credential: BindableCredential): string {
  * Otherwise it is reference-bound (commits only to `credentialSubject.id`).
  */
 export function buildEvent(input: BuildEventInput): ViaEvent {
-  const credentialDigest =
-    input.credentialDigest ?? (input.credential ? credentialDigestOf(input.credential) : undefined);
+  const { eventId, subject, event, issuer, validFrom, previousEvent, credential, credentialDigest: given, ...fields } = input;
+  for (const name of NOT_V03_FIELDS) {
+    if (name in fields) throw new Error(`a "0.3" event carries no \`${name}\` (v0.3 §2.0)`);
+  }
+  const credentialDigest = given ?? (credential ? credentialDigestOf(credential) : undefined);
+  // The kind's own fields, directly in credentialSubject (§2.0); an absent or empty value is left out.
+  const detail = Object.fromEntries(
+    Object.entries(fields).filter(([, v]) => v !== undefined && v !== null && v !== ""),
+  );
   return {
     "@context": [...VIA_CONTEXTS],
-    id: input.eventId ?? viaUrn("event"),
+    id: eventId ?? viaUrn("event"),
     type: [TYPE_VC, TYPE_VIA_EVENT],
     specVersion: VIA_SPEC_VERSION as SpecVersion,
-    issuer: input.issuer ?? VIA_PLATFORM_DID,
-    validFrom: input.validFrom ?? new Date().toISOString(),
+    issuer: issuer ?? VIA_PLATFORM_DID,
+    validFrom: validFrom ?? new Date().toISOString(),
     credentialSubject: {
-      id: input.subject,
-      event: input.event,
-      actor: input.actor,
+      id: subject,
+      event,
       ...(credentialDigest ? { credentialDigest } : {}),
-      ...(input.previousEvent !== undefined ? { previousEvent: input.previousEvent } : {}),
-      ...(input.role ? { role: input.role } : {}),
-      ...(input.reason ? { reason: input.reason } : {}),
-      ...(input.evaluations ? { evaluations: input.evaluations } : {}),
-      ...(input.executionParams ? { executionParams: input.executionParams } : {}),
-      ...(input.targetVerifier ? { targetVerifier: input.targetVerifier } : {}),
-      ...(input.agent ? { agent: input.agent } : {}),
-      ...(input.stepUp ? { stepUp: input.stepUp } : {}),
-      ...(input.enforcement ? { enforcement: input.enforcement } : {}),
-      ...(input.review ? { review: input.review } : {}),
-      ...(input.operator ? { operator: input.operator } : {}),
-      ...(input.accreditation ? { accreditation: input.accreditation } : {}),
-      ...(input.merge ? { merge: input.merge } : {}),
+      ...(previousEvent !== undefined ? { previousEvent } : {}),
+      ...detail,
     },
   };
 }
@@ -171,6 +220,14 @@ export async function walkEventChain(events: ViaEvent[]): Promise<{ ok: boolean;
   return { ok: true };
 }
 
+/**
+ * Who signed an event (v0.3 §2): a `"0.2"` event's `actor`, else its `issuer`. On an event the platform
+ * signed before 2026-10-09 `issuer` may say Humanos while another party's key signed; those carry `actor`.
+ */
+export function signerOf(e: ViaEvent): string {
+  return e.credentialSubject.actor ?? e.issuer ?? (e.proof ? didFromUrl(e.proof.verificationMethod) : "");
+}
+
 /** The next event's `previousEvent` — `SRI(JCS(the whole prior signed event))` (spec §0.5.4). */
 export function eventChainLink(prior: ViaEvent): string {
   return computeSRI(canonicalizeRFC8785(prior));
@@ -178,7 +235,13 @@ export function eventChainLink(prior: ViaEvent): string {
 
 export interface EventAudit {
   urn: string;
+  /** The kind in today's vocabulary — an old name read as the new one (v0.3 §3.4). */
   event: EventType;
+  /**
+   * Who asserted the event — its signer. `issuer` on a `"0.3"` event, which carries no `actor`
+   * (v0.3 §2); the `actor` field on a `"0.2"` one, whose `issuer` may be the platform while another
+   * party's key signed. Kept under this name because readers (the platform's API) show it.
+   */
   actor: string;
   issuer: string;
   validFrom: string;
@@ -231,8 +294,8 @@ export async function auditEventChain(
 
     audited.push({
       urn: e.id,
-      event: cs.event as EventType,
-      actor: cs.actor,
+      event: canonicalEventType(cs.event) as EventType,
+      actor: signerOf(e),
       issuer: e.issuer,
       validFrom: e.validFrom,
       contentBound: cs.credentialDigest != null,
@@ -257,42 +320,22 @@ export async function auditEventChain(
 // the issuance consent ceremony (spec §0.9). Pure; the caller supplies keys.
 // ============================================================================
 
-export interface BuildChainedEventInput {
+export interface BuildChainedEventInput extends EventFields {
   /** What this event is about — a credential URN or an actor DID. See {@link BuildEventInput.subject}. */
   subject: string;
   /** The event's own `id` (URN); defaults to a fresh `urn:via:event:<uuid>`. Set to reuse a
    *  pre-generated URN (e.g. the response's receipt URN) so the emitted event stays referable. */
   eventId?: string;
   event: EventType;
-  actor: string;
+  /** The signer's DID (v0.3 §2); defaults to the DID of `signer.verificationMethod` — whoever signs. */
   issuer?: string;
   /** Content-bound (ISSUE/ACCEPT/REJECT): the proofless credential to hash, or a precomputed digest. */
   credential?: Record<string, unknown>;
   credentialDigest?: string;
-  /** The prior SIGNED event to chain from; `null` at the ISSUE root; omit to leave the chain link off. */
+  /** The prior SIGNED event to chain from; `null` at the chain's first event; omit to leave the link off. */
   previous?: ViaEvent | null;
   /** The event instant (`validFrom`); defaults to now. */
   validFrom?: string;
-  // reference-bound payload (operational events)
-  reason?: string;
-  evaluations?: unknown[];
-  executionParams?: Record<string, unknown>;
-  targetVerifier?: string;
-  role?: string;
-  /** §16.9 — agent-binding detail (v0.3: also actor-lifecycle event detail). */
-  agent?: Record<string, unknown>;
-  /** §18 — operator detail (`AFFILIATION` org/relation, `REGULATORY` licence). */
-  operator?: Record<string, unknown>;
-  /** §18 — `ACCREDITED` detail: the registrar's claim about THIS actor's identity. */
-  accreditation?: Record<string, unknown>;
-  /** v0.3 §3.6 — `MERGED`'s claim: `{ absorbed, aliases, keys }`. */
-  merge?: Record<string, unknown>;
-  /** §2.2/§17.4 — step-up detail: `{ id, method, termsDigest, tool }` on `STEP_UP_*`; the reference on a `VERIFICATION_*`. */
-  stepUp?: Record<string, unknown>;
-  /** §20.3 — which machinery governed this decision. */
-  enforcement?: string;
-  /** §20.6 — `{ id, version, verdict }` of the reviewer that took part. */
-  review?: Record<string, unknown>;
   signer: EventSigner;
 }
 
@@ -307,34 +350,23 @@ export function buildChainedEvent(input: BuildChainedEventInput): ViaEvent {
       : input.previous === null
         ? null
         : eventChainLink(input.previous);
+  const { previous: _previous, signer, issuer, eventId, validFrom, credential, credentialDigest, ...rest } = input;
   const unsigned = buildEvent({
-    subject: input.subject,
-    ...(input.eventId ? { eventId: input.eventId } : {}),
-    event: input.event,
-    actor: input.actor,
-    ...(input.validFrom ? { validFrom: input.validFrom } : {}),
-    ...(input.issuer ? { issuer: input.issuer } : {}),
-    ...(input.credential ? { credential: input.credential } : {}),
-    ...(input.credentialDigest ? { credentialDigest: input.credentialDigest } : {}),
+    ...rest,
+    ...(eventId ? { eventId } : {}),
+    // §2: the signer is the issuer — by default whoever's key signs.
+    issuer: issuer ?? didFromUrl(signer.verificationMethod),
+    ...(validFrom ? { validFrom } : {}),
+    ...(credential ? { credential } : {}),
+    ...(credentialDigest ? { credentialDigest } : {}),
     ...(previousEvent !== undefined ? { previousEvent } : {}),
-    ...(input.reason ? { reason: input.reason } : {}),
-    ...(input.evaluations ? { evaluations: input.evaluations } : {}),
-    ...(input.executionParams ? { executionParams: input.executionParams } : {}),
-    ...(input.targetVerifier ? { targetVerifier: input.targetVerifier } : {}),
-    ...(input.role ? { role: input.role } : {}),
-    ...(input.agent ? { agent: input.agent } : {}),
-    ...(input.operator ? { operator: input.operator } : {}),
-    ...(input.accreditation ? { accreditation: input.accreditation } : {}),
-    ...(input.merge ? { merge: input.merge } : {}),
-    ...(input.stepUp ? { stepUp: input.stepUp } : {}),
-    ...(input.enforcement ? { enforcement: input.enforcement } : {}),
-    ...(input.review ? { review: input.review } : {}),
   });
-  return signEvent(unsigned, input.signer);
+  return signEvent(unsigned, signer);
 }
 
-/** One signing party (issuer, grantor, or the Humanos stamp) — its actor + Ed25519 key. */
+/** One signing party (issuer or grantor) — its DID + Ed25519 key. */
 export interface IssuanceParty {
+  /** The party's DID: its event's `issuer`, since it signs (v0.3 §2). */
   actor: string;
   verificationMethod: string;
   privateKey: Uint8Array;
@@ -373,7 +405,7 @@ export function buildIssuanceEvents(input: IssuanceInput): IssuanceResult {
   const issue = buildChainedEvent({
     subject: urn,
     event: "ISSUE",
-    actor: input.issuer.actor,
+    issuer: input.issuer.actor,
     credential: input.mandate as unknown as Record<string, unknown>,
     previous: null,
     validFrom: input.issuer.at,
@@ -391,7 +423,7 @@ export function buildIssuanceEvents(input: IssuanceInput): IssuanceResult {
     const ev = buildChainedEvent({
       subject: urn,
       event: g.accepted ? "ACCEPT" : "REJECT",
-      actor: g.actor,
+      issuer: g.actor,
       credential: input.mandate as unknown as Record<string, unknown>,
       previous: prev,
       validFrom: g.at,

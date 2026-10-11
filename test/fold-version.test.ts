@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import {
   ACTOR_EVENT_TYPES,
   ACTOR_FOLD_VERSION,
+  canonicalEventType,
   canonicalizeRFC8785,
   eventChainLink,
   foldActorChain,
@@ -158,7 +159,8 @@ const same = (a: unknown, b: unknown) => canonicalizeRFC8785(a as Record<string,
 
 describe("ACTOR_FOLD_VERSION moves whenever the fold's output does", () => {
   it("the golden chains exercise every actor event kind", () => {
-    const used = new Set(Object.values(GOLDEN).flat().map((e) => e.credentialSubject.event as string));
+    // The golden chains are signed history: old kind names, read as today's (v0.3 §3.4).
+    const used = new Set(Object.values(GOLDEN).flat().map((e) => canonicalEventType(e.credentialSubject.event as string)));
     // A kind the golden chains never fold is a kind this guard cannot see change.
     expect(ACTOR_EVENT_TYPES.filter((k) => !used.has(k))).toEqual([]);
   });

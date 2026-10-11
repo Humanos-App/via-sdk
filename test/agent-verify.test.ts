@@ -613,6 +613,13 @@ describe("accreditation.* when the operator has none (§18.6)", () => {
     expect(projectAccreditation({ org: "did:web:acme.com" })).toEqual({ level: "unverified" });
   });
 
+  // §18.2, §18.5 O3: a withdrawal for cause denies before any rule runs — even the small call a floor at
+  // `unverified` would allow — and the result says why.
+  it("denies a withdrawal for cause with its reason, before any rule runs", async () => {
+    const withdrawn = () => ({ denied: true as const, reason: "accreditation_revoked", revocationReason: "struck_off" as const });
+    expect(await call(50, { loadAccreditation: withdrawn })).toMatchObject({ decision: "deny", reason: "accreditation_revoked", revocationReason: "struck_off" });
+  });
+
   // @invariant §16.10: a verifier that does not implement accreditation denies a rule that reads it.
   it("denies a rule that reads accreditation when the verifier has no loader at all", async () => {
     expect(await call(50, {})).toMatchObject({ decision: "deny" });

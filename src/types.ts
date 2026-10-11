@@ -1,4 +1,5 @@
-import type { DataIntegrityProof, EventType } from "./crypto/proof.js";
+import type { DataIntegrityProof, EventType, LegacyEventName } from "./crypto/proof.js";
+import type { EventFields } from "./event/build.js";
 import type { WrappedUserParam } from "./action/execution-params.js";
 import type { BoundKey } from "./agent/types.js";
 import type { GrantorBinding } from "./grantor/binding.js";
@@ -139,14 +140,6 @@ export interface Mandate {
   /** §17.4 — the mandate's own step-up declaration. */
   stepUp?: MandateStepUp;
   /**
-   * v0.3 delegation — present on a CHILD mandate minted by attenuation from
-   * `parent`. `tools` is the STAMPed narrowed subset (⊆ the parent's); `depth`
-   * counts from the root (issuance refuses past the platform's max). Verifiers
-   * MUST deny tools outside `tools` and MUST require every ancestor mandate to
-   * be ACTIVE (revocation cascades).
-   */
-  delegation?: { parent: string; depth: number; tools: string[] };
-  /**
    * Bounded-Use extension (§19.5) — the grant is usable at most N times; absent ⇒ unbounded.
    * Positive safe integer ≥ 1. The count (`executionsUsed`) is issuer state, never in the
    * credential. When present, `"maxExecutions"` is listed in `extensions`.
@@ -224,47 +217,36 @@ export interface ViaEvent {
   "@context": string[];
   id: string;
   type: string[];
-  /** Signed VIA spec-version marker (e.g. `"0.2"`). */
+  /** Signed VIA spec-version marker (`"0.3"` now; `"0.2"` on every event in production before it). */
   specVersion?: SpecVersion;
-  /** The actor asserting the event (org / grantor / Humanos / verifier). */
+  /** The signer: the DID whose key signs the event (v0.3 §2). */
   issuer: string;
   validFrom: string;
-  credentialSubject: {
-    /** The credential this event is about. */
+  /**
+   * The core fields, then the kind's own fields directly beside them (v0.3 §2.0) — see
+   * {@link EventFields} for every field a kind may carry. A reader ignores a field it does not know.
+   */
+  credentialSubject: EventFields & {
+    /** What the event is about: a mandate's URN, or an actor's DID on an actor-scoped event. */
     id: string;
-    event: EventType;
-    actor: string;
+    /** The kind — today's name, or on an older event the name of its day (v0.3 §3.4). */
+    event: EventType | LegacyEventName;
     /** Present iff content-bound: `SRI(canonicalizeRFC8785(credential-without-proof))`. */
     credentialDigest?: string;
-    /** SRI of the prior event in this credential's chain, or null at the root. */
+    /** SRI of the prior event in this chain, or null at its first event. */
     previousEvent?: string | null;
-    role?: string;
-    reason?: string;
-    evaluations?: unknown[];
-    executionParams?: Record<string, unknown>;
-    targetVerifier?: string;
-    /** §16.9 — agent-binding detail (`AGENT_REGISTERED` rung, or `VERIFICATION_*` evidence). */
+    /** @deprecated A `"0.2"` field naming the signer; a `"0.3"` event has none — `issuer` is the signer (v0.3 §2). */
+    actor?: string;
+    /**
+     * @deprecated The wrapper actor events carried their fields in before 2026-10-11 (and every `"0.2"`
+     * actor event). Read as a fallback, never written (v0.3 §2.0).
+     */
     agent?: Record<string, unknown>;
-    /** §18 — operator detail (`AFFILIATION` org/relation, `REGULATORY` licence). */
-    operator?: Record<string, unknown>;
-    /** §18.3bis — the registrar's claim on an `ACCREDITED` event: `{ level, method, registrar, verifiedAt }`. */
-    accreditation?: Record<string, unknown>;
-    /** v0.3 §3.6 — `MERGED`: what the survivor took from the absorbed actor (`{ absorbed, aliases, keys }`). */
-    merge?: Record<string, unknown>;
-    /** §17.4 — a step-up: the `STEP_UP_*` event's own detail, or on a `VERIFICATION_*` the co-sign it rested on. */
-    stepUp?: Record<string, unknown>;
-    /**
-     * §20.3 — which machinery governed a `VERIFICATION_*` decision (`rules` | `semantic` | `none`).
-     * Recorded rather than inferred: an `allow` with no evaluations means both "no rules ran" and
-     * "rules ran and matched nothing", and an audit cannot tell them apart afterwards.
-     */
-    enforcement?: string;
-    /**
-     * §20.6 — the reviewer that took part in a decision, and its version. The same words read by a
-     * different version is a different verdict, so a chain that does not name the reader cannot be
-     * re-checked. `{ id, version, verdict }`.
-     */
-    review?: Record<string, unknown>;
+    /** @deprecated A `"0.2"` term: approval policies that were never built. Not a v0.3 field. */
+    role?: string;
+    /** A JWK on an event written before 2026-10-11 — read as `publicKeyJwk` (v0.3 §3.1). */
+    jwk?: Record<string, unknown>;
+    [field: string]: unknown;
   };
   proof?: DataIntegrityProof;
 }

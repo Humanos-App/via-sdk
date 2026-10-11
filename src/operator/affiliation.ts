@@ -1,16 +1,18 @@
-// Affiliation + regulatory attestations (§18) — both ride the §0.5 `VIAEvent` primitive,
-// so signing, chaining and one verify routine come for free.
+// Affiliation and accreditation (§18) — both ride the §0.5 `VIAEvent` primitive, so signing,
+// chaining and one verify routine come for free. (A regulator's claim, `ACTOR_REGULATED`, is reserved
+// in v0.3 and parked in v0.4 §10 — its builder lives in sdk-v04.)
 //
-// AFFILIATION is the ∧ half of operator inheritance: the registrar says "Acme is
+// ACTOR_AFFILIATED is the ∧ half of operator inheritance: the registrar says "Acme is
 // KYB-verified", and the ORG says "agent X operates for us". Without the org's own
 // signature any agent could write `operator: acme` and inherit the green check — so
 // the link must be unforgeable, not merely asserted. `relation: "vouches"` is the same
 // act pointed at a third party (an org endorsing its vendor's operator).
 import { buildEvent, signEvent, verifyEvent } from "../event/build.js";
+import { canonicalEventType } from "../crypto/proof.js";
 import { didFromUrl } from "../did/web.js";
 import type { ViaEvent } from "../types.js";
 import { claimValidUntil } from "./types.js";
-import type { AffiliationRelation } from "./types.js";
+import type { AccreditationRevocationReason, AffiliationRelation } from "./types.js";
 
 export interface AffiliationSigner {
   /** Ed25519 private key of the ORG making the claim (never the registrar's). */
@@ -32,12 +34,11 @@ export interface BuildAffiliationInput {
   previousEvent?: string | null;
 }
 
-/** Build + sign an `AFFILIATION` event, signed by the org itself. */
+/** Build + sign an `ACTOR_AFFILIATED` event, signed by the org itself (its `issuer`, v0.3 §2). */
 export function buildAffiliation(input: BuildAffiliationInput, signer: AffiliationSigner): ViaEvent {
   const ev = buildEvent({
     subject: input.subject,
-    event: "AFFILIATION",
-    actor: input.org,
+    event: "ACTOR_AFFILIATED",
     issuer: input.org,
     eventId: input.eventId,
     validFrom: input.validFrom,
@@ -55,19 +56,18 @@ export interface BuildAccreditationInput {
   /** The organization or person being accredited — never an agent (§18.4). */
   subject: string;
   level: "unverified" | "domain" | "verified";
-  method: string;
-  subjectType?: "individual" | "organization";
+  /** Absent on the bottom rung, which no method earns (v0.3 §18.2). */
+  method?: string;
   verifiedAt?: string;
   /** When the claim lapses (v0.3 §18.2). */
   validUntil?: string;
   /** Pointer to an EXTERNAL credential, when the accreditation came from outside. */
   credential?: { id: string; digestSRI?: string; location?: string };
   /**
-   * Published, offline-checkable revocation (O3). An accreditation must be withdrawable without a
-   * live registrar call — a struck-off operator that kept trading until its mandate expired is the
-   * failure this exists to prevent.
+   * A withdrawal for cause (v0.3 §18.2): `level` MUST be `unverified`, and O3 then denies with the
+   * reason. (A published `status` entry is no longer written: actor status lists are parked in v0.4.)
    */
-  status?: Record<string, unknown>;
+  withdrawn?: { reason: AccreditationRevocationReason };
   previousEvent?: string | null;
   validFrom?: string;
 }
@@ -98,62 +98,26 @@ export function buildAccreditation(
   },
   signer: AffiliationSigner,
 ): ViaEvent {
+  if (input.withdrawn && input.level !== "unverified") {
+    throw new Error("a withdrawal for cause is an ACCREDITED at level unverified (v0.3 §18.2)");
+  }
   const at = input.validFrom ?? new Date().toISOString();
   const ev = buildEvent({
     subject: input.subject,
-    event: "ACCREDITED",
-    // The registrar asserts it and the registrar signs it. Humanos is the registrar today, so both
-    // are currently us — the separation is what lets an external registrar take over without a
-    // shape change, not a claim of independence today (§18.9).
-    actor: input.registrarDid,
+    event: "ACTOR_ACCREDITED",
+    // The registrar asserts it and the registrar signs it: its `issuer` (v0.3 §2). Humanos is the
+    // registrar today — the separation is what lets an external registrar take over without a shape
+    // change, not a claim of independence today (§18.9).
     issuer: input.registrarDid,
     previousEvent: input.previousEvent ?? null,
     validFrom: at,
     accreditation: {
       level: input.level,
-      method: input.method,
-      ...(input.subjectType ? { subjectType: input.subjectType } : {}),
+      ...(input.method ? { method: input.method } : {}),
       verifiedAt: input.verifiedAt ?? at,
       ...(input.validUntil ? { validUntil: input.validUntil } : {}),
       ...(input.credential ? { credential: input.credential } : {}),
-      ...(input.status ? { status: input.status } : {}),
-    },
-  });
-  return signEvent(ev, signer);
-}
-
-export interface BuildRegulatoryInput {
-  /** The operator holding the licence. */
-  subject: string;
-  /** Who attests it (a regulator, or the registrar acting on a register check). */
-  attestedBy: string;
-  /** e.g. `ASF` | `BdP` | `EBA`. */
-  regulator: string;
-  licence: { type: string; number?: string };
-  validUntil?: string;
-  eventId?: string;
-  validFrom?: string;
-  previousEvent?: string | null;
-}
-
-/**
- * Build + sign a `REGULATORY` attestation — "this operator holds licence L from
- * regulator R". Deliberately **not** a rung: regulation is domain-specific
- * ("regulated as *what*?") so it is matched categorically in CEL, never ranked.
- */
-export function buildRegulatory(input: BuildRegulatoryInput, signer: AffiliationSigner): ViaEvent {
-  const ev = buildEvent({
-    subject: input.subject,
-    event: "REGULATORY",
-    actor: input.attestedBy,
-    issuer: input.attestedBy,
-    eventId: input.eventId,
-    validFrom: input.validFrom,
-    previousEvent: input.previousEvent ?? null,
-    operator: {
-      regulator: input.regulator,
-      licence: input.licence,
-      ...(input.validUntil ? { validUntil: input.validUntil } : {}),
+      ...(input.withdrawn ? { withdrawn: { reason: input.withdrawn.reason } } : {}),
     },
   });
   return signEvent(ev, signer);
@@ -170,7 +134,8 @@ export async function verifyAffiliation(
   expected: { subject: string; org?: string; relation?: AffiliationRelation; now?: Date },
 ): Promise<{ valid: boolean; reason?: string }> {
   const cs = event.credentialSubject;
-  if (cs.event !== "AFFILIATION") return { valid: false, reason: "not an AFFILIATION event" };
+  // An affiliation signed before 2026-10-11 says `AFFILIATION`: read as `ACTOR_AFFILIATED` (v0.3 §3.4).
+  if (canonicalEventType(cs.event) !== "ACTOR_AFFILIATED") return { valid: false, reason: "not an ACTOR_AFFILIATED event" };
   if (cs.id !== expected.subject) return { valid: false, reason: "affiliation subject mismatch" };
 
   // §18 puts the claim in `operator`; affiliations written before that was honoured carry it in `agent`.
