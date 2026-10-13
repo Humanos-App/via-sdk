@@ -52,15 +52,21 @@ export interface VerifyResult {
   evaluations: RuleEvaluation[];
   /** The credential's detected spec version (`"0.2"` or `"unknown"`). */
   specVersion?: DetectedSpecVersion;
-  /** §20.3 — which machinery governed. Derived for artifacts issued before the field existed. */
+  /**
+   * §20.3 — which machinery governs the mandate, on every decision about a mandate this verifier has
+   * authenticated: an allow and a denial alike, whatever step denied. Derived for artifacts issued
+   * before the field existed. Absent only when no mandate was authenticated: the presentation's own
+   * signature does not verify, or its spec version is not one this SDK reads.
+   */
   enforcement?: Enforcement;
 }
 
-const deny = (reason: string, credentialId?: string): VerifyResult => ({
+const denied = (reason: string, credentialId?: string, enforcement?: Enforcement): VerifyResult => ({
   decision: "deny",
   reason,
   credentialId,
   evaluations: [],
+  ...(enforcement ? { enforcement } : {}),
 });
 
 /**
@@ -88,15 +94,20 @@ async function runChecks(
 ): Promise<VerifyResult> {
   const credential = vp.verifiableCredential;
   const urn = credential.id;
+  const mandate = credential.credentialSubject.mandate;
+  // §20.3 — what governs this mandate, carried on every result below, as on the agent-direct path:
+  // a decision says it whether it allowed or denied, and whichever step denied.
+  const enforcement = enforcementOf(mandate);
+  const deny = (reason: string): VerifyResult => denied(reason, urn, enforcement);
 
   // 2. status (trusted record)
   const record = await deps.loadCredentialRecord(urn);
-  if (record.status !== "ACTIVE") return deny(record.exhausted ? MAX_EXECUTIONS_REACHED : `credential_${record.status.toLowerCase()}`, urn);
+  if (record.status !== "ACTIVE") return deny(record.exhausted ? MAX_EXECUTIONS_REACHED : `credential_${record.status.toLowerCase()}`);
 
   // 3. validity window
   const now = deps.now ?? new Date();
-  if (record.validFrom && new Date(record.validFrom) > now) return deny("not_yet_valid", urn);
-  if (record.validUntil && new Date(record.validUntil) < now) return deny("expired", urn);
+  if (record.validFrom && new Date(record.validFrom) > now) return deny("not_yet_valid");
+  if (record.validUntil && new Date(record.validUntil) < now) return deny("expired");
 
   // 4. access check — the verifier DID must ALWAYS be on the mandate's authorizedDIDs.
   //    The platform enforces this unconditionally (its step 1), independent of any domain
@@ -104,45 +115,43 @@ async function runChecks(
   //    skip the access check entirely — the SDK would then ALLOW a verifier the platform
   //    rejects (`verifier_not_authorized`). authorizedDIDs is the access control; domain is
   //    an *additional* audience binding, not an alternative to it.
-  const mandate = credential.credentialSubject.mandate;
   // DB-current list wins over the VP's embedded snapshot (see CredentialRecord.authorizedDIDs).
   const authorizedDIDs = record.authorizedDIDs ?? mandate.context.authorizedDIDs;
   if (!authorizedDIDs.includes(deps.verifier.did)) {
-    return deny("verifier_not_authorized", urn);
+    return deny("verifier_not_authorized");
   }
   // 4b. audience binding — if the VP proof carries a domain it must match the verifier's
   //     domain, and the single-use challenge must validate. Binding is optional: a VP with
   //     no domain is unbound (but still gated by the access check above).
   if (vp.proof?.domain) {
     const verifierDomain = deps.verifier.domain ?? verifierDomainOf(deps.verifier.did);
-    if (!verifierDomain || !domainMatches(vp.proof.domain, verifierDomain)) return deny("vp_domain_mismatch", urn);
+    if (!verifierDomain || !domainMatches(vp.proof.domain, verifierDomain)) return deny("vp_domain_mismatch");
     if (deps.validateChallenge) {
       const res = await deps.validateChallenge(vp.proof.challenge, urn);
-      if (res !== "ok") return deny(res, urn);
+      if (res !== "ok") return deny(res);
     }
   }
 
   // 4c. agent binding (§16.10): this is the custodial presentation path — it carries no
   //     proof-of-possession. A mandate bound to agents verifies only with one (agent-direct,
   //     §16.11), so here it fails closed rather than falling back to `authorizedDIDs` alone.
-  if (mandate.context.authorizedAgents?.length) return deny("pop_invalid", urn);
+  if (mandate.context.authorizedAgents?.length) return deny("pop_invalid");
   // 4d. §19.2: this custodial path implements no critical extension — semantic review needs a reader
   //     it does not have — so a mandate that requires one is denied, never evaluated without it.
-  if (unsupportedCriticalExtension(mandate, new Set())) return deny("extension_unsupported", urn);
+  if (unsupportedCriticalExtension(mandate, new Set())) return deny("extension_unsupported");
   // 4e. §17.4: a mandate that asks the person on every call (`mandate` in `stepUp.triggers`) cannot be
   //     satisfied here — this path has no step-up ceremony and no `rechallenge` — so it is refused,
   //     never allowed without the co-sign it requires.
-  if (mandate.stepUp?.triggers?.includes("mandate")) return deny("stepup_required", urn);
+  if (mandate.stepUp?.triggers?.includes("mandate")) return deny("stepup_required");
 
   // 5. no action → the words govern, or nothing does (§20.3). `allow` says which.
-  const enforcement = enforcementOf(mandate);
-  if (!enforcementFitsShape(mandate)) return { ...deny("enforcement_invalid", urn), enforcement };
+  if (!enforcementFitsShape(mandate)) return deny("enforcement_invalid");
   if (!mandate.action) {
     // §20.6 — a `semantic` mandate is enforced by a READER, and this is the custodial
     // presentation path (§0.7.1), which has no reviewer to consult: semantic mandates
     // present agent-direct (§16.11). Failing closed is the only honest answer — allowing here
     // would let the one mode whose enforcement is a reader be verified by not reading.
-    if (enforcement === "semantic") return { ...deny("reviewer_unavailable", urn), enforcement };
+    if (enforcement === "semantic") return deny("reviewer_unavailable");
     return { decision: "allow", credentialId: urn, evaluations: [], enforcement };
   }
 
@@ -155,16 +164,16 @@ async function runChecks(
   //    present, recompute it and enforce the pin (N-?: this is a tamper check the
   //    platform verify lacks).
   const action = await deps.loadActionVersion(mandate.action.id);
-  if (!action) return deny("action_not_found", urn);
+  if (!action) return deny("action_not_found");
   if (mandate.action.digestSRI && actionDigestSRI(action) !== mandate.action.digestSRI) {
-    return deny("action_invalid", urn);
+    return deny("action_invalid");
   }
 
   // 7. validate executionParams
   try {
     validateExecutionParams(action, executionParams);
   } catch (e) {
-    return deny(`execution_params_invalid:${(e as Error).message}`, urn);
+    return deny(`execution_params_invalid:${(e as Error).message}`);
   }
 
   // 8. no rules → allow
@@ -205,7 +214,7 @@ async function finish(
 ): Promise<VerifyResult> {
   const specVersion = detectSpecVersion(vp);
   if (specVersion === "unknown") {
-    return { ...deny("unsupported_spec_version", vp.verifiableCredential?.id), specVersion };
+    return { ...denied("unsupported_spec_version", vp.verifiableCredential?.id), specVersion };
   }
   return { ...(await runChecks(vp, input.executionParams ?? {}, deps)), specVersion };
 }
@@ -214,6 +223,7 @@ async function finish(
 export async function verify(input: VerifyInput, deps: VerifyDeps): Promise<VerifyResult> {
   const vp = input.presentation;
   const sig = await verifyVpSignature(vp, deps);
-  if (sig !== "ok") return deny(sig, vp.verifiableCredential?.id);
+  // No `enforcement` here: nothing in a presentation that is not Humanos's is a mandate to speak for.
+  if (sig !== "ok") return denied(sig, vp.verifiableCredential?.id);
   return finish(vp, input, deps);
 }

@@ -209,7 +209,7 @@ describe("verify flow (§0.8)", () => {
     );
     const asks = buildPresentation({ credential: everyCall, holder: VIA_PLATFORM_DID, privateKey: platform.privateKey, verificationMethod: vm(VIA_PLATFORM_DID) });
     const r = await verify({ presentation: asks, executionParams: { amount: 1, category: "books" } }, deps());
-    expect(r).toMatchObject({ decision: "deny", reason: "stepup_required" });
+    expect(r).toMatchObject({ decision: "deny", reason: "stepup_required", enforcement: "rules" });
   });
   // @invariant §19.5: a spent grant was used exactly as agreed, not withdrawn — the issuer's record
   // says so, and the deny says so too.
@@ -239,7 +239,32 @@ describe("verify flow (§0.8)", () => {
     );
     const boundVp = buildPresentation({ credential: bound, holder: VIA_PLATFORM_DID, privateKey: platform.privateKey, verificationMethod: vm(VIA_PLATFORM_DID) });
     const r = await verify({ presentation: boundVp, executionParams: { amount: 1, category: "books" } }, deps());
-    expect(r).toMatchObject({ decision: "deny", reason: "pop_invalid" });
+    expect(r).toMatchObject({ decision: "deny", reason: "pop_invalid", enforcement: "rules" });
+  });
+
+  // @invariant §20.3: a verifier returns `enforcement` on its decision — a denial as much as an
+  // allow, and whichever step denied, so the signed VERIFICATION_DENIED can always record it (§2.0).
+  it.each([
+    ["an unauthorized verifier", "verifier_not_authorized", { verifier: { did: "did:web:intruder.tld" } }, {}],
+    ["a revoked credential", "credential_revoked", { loadCredentialRecord: async () => ({ status: "REVOKED" as const }) }, {}],
+    ["a spent grant", "max_executions_reached", { loadCredentialRecord: async () => ({ status: "REVOKED" as const, exhausted: true }) }, {}],
+    ["a mandate not yet valid", "not_yet_valid", { loadCredentialRecord: async () => ({ ...activeRecord, validFrom: "2027-01-01T00:00:00.000Z" }) }, {}],
+    ["an expired mandate", "expired", { loadCredentialRecord: async () => ({ ...activeRecord, validUntil: "2026-01-02T00:00:00.000Z" }) }, {}],
+    ["an action that cannot be loaded", "action_not_found", { loadActionVersion: async () => null }, {}],
+    ["invalid execution params", /^execution_params_invalid:/, {}, { amount: "lots" }],
+    ["a failed rule", "rule_failed", {}, { amount: 999 }],
+  ])("a denial states the mandate's enforcement — %s", async (_why, reason, over, params) => {
+    const r = await verify(
+      { presentation: vp, executionParams: { amount: 1, category: "books", ...params } },
+      { ...deps(), ...over },
+    );
+    expect(r.decision).toBe("deny");
+    expect(r.reason).toEqual(typeof reason === "string" ? reason : expect.stringMatching(reason));
+    expect(r.enforcement).toBe("rules");
+  });
+  it("an allow states the mandate's enforcement", async () => {
+    const r = await verify({ presentation: vp, executionParams: { amount: 1, category: "books" } }, deps());
+    expect(r).toMatchObject({ decision: "allow", enforcement: "rules" });
   });
 
   it("rejects a VP not signed by Humanos", async () => {
@@ -252,6 +277,8 @@ describe("verify flow (§0.8)", () => {
     const r = await verify({ presentation: forged, executionParams: { amount: 1, category: "books" } }, deps());
     expect(r.decision).toBe("deny");
     expect(r.reason).toBe("vp_signature_invalid");
+    // Nothing in a presentation that is not Humanos's is a mandate to speak for (§20.3).
+    expect(r.enforcement).toBeUndefined();
   });
 });
 
