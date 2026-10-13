@@ -109,6 +109,14 @@ describe("action build + CEL generation (N13)", () => {
     expect(verifyActionReference(content, { id: content.$id, digestSRI: sri })).toBe(true);
     expect(verifyActionReference(content, { id: content.$id, digestSRI: "sha256-bogus" })).toBe(false);
   });
+
+  // v0.3 §17.4: the action version declares which tools need the grantor's fresh co-sign.
+  it("carries the declared step-up tools, and writes none when there are none", () => {
+    const base = { $id: "urn:via:action:a", version: "1" };
+    expect(buildActionVersion({ ...base, stepUp: { tools: ["pay_claimant"] } }).stepUp).toEqual({ tools: ["pay_claimant"] });
+    expect(buildActionVersion({ ...base, stepUp: { tools: [] } })).not.toHaveProperty("stepUp");
+    expect(buildActionVersion(base)).not.toHaveProperty("stepUp");
+  });
 });
 
 describe("executionParams validation (N28/N29)", () => {

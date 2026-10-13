@@ -69,4 +69,6 @@ export interface ActionDetail {
   executionParams: Record<string, ParamDef>;
   rules: ActionRule[];
   mapper?: Record<string, string>;
+  /** v0.3 §17.4 — the tools whose calls need the grantor's fresh co-sign. */
+  stepUp?: { tools: string[] };
 }

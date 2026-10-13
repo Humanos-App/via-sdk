@@ -41,6 +41,34 @@ describe("resolveVerificationKey", () => {
   });
 });
 
+describe("buildMandate — authorizedDIDs", () => {
+  const ORG = "did:web:humanos.tech:org:o";
+  const build = (authorizedDIDs: string[]) =>
+    buildMandate({
+      subjectOrg: ORG,
+      grantor: "did:web:humanos.tech:user:u",
+      authorizedDIDs,
+      validFrom: "2026-01-01T00:00:00.000Z",
+      description: { text: "Act for this org within this scope.", lang: "en", author: "grantor" },
+      enforcement: "none",
+    }).credentialSubject.mandate.context.authorizedDIDs;
+
+  // @invariant v0.3 §12: the subject organization is always a member — the issuer appends it.
+  it("appends the subject organization when the list does not name it", () => {
+    expect(build(["did:web:v.example"])).toEqual(["did:web:v.example", ORG]);
+  });
+
+  it("keeps a list that already names it as given, in its order", () => {
+    expect(build([ORG, "did:web:v.example"])).toEqual([ORG, "did:web:v.example"]);
+  });
+
+  it("leaves the caller's own array untouched", () => {
+    const given = ["did:web:v.example"];
+    build(given);
+    expect(given).toEqual(["did:web:v.example"]);
+  });
+});
+
 describe("checkCredentialStatus", () => {
   const sl = new StatusList("https://status.humanos.tech/1", "revocation", 1024);
   const i = sl.allocateIndex();

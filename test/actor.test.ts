@@ -464,6 +464,48 @@ describe("foldActorChain — attestation and assurance", () => {
       expect(foldActorChain([g, up])).toMatchObject({ ok: false, reason: expect.stringContaining("regrade_raises") });
     }
   });
+
+  // @invariant §9.1bis rule 4: what a key does not state was never proven, so it is measured at the
+  // bottom — a regrade carries no evidence and must not hand a key the half of a rung it lacks.
+  it.each([
+    ["a key that states no binding", { assurance: "hardware", binding: undefined }, { binding: "attested" }, { binding: "self" }],
+    ["a key that states no assurance", { assurance: undefined, binding: "attested" }, { assurance: "hardware" }, { assurance: "pop" }],
+  ])("measures a regrade against the bottom for %s", (_name, rung, raise, keep) => {
+    const g = genesis(rung);
+    const before = foldActorChain([g]);
+    if (!before.ok) throw new Error(before.reason);
+    const keyId = before.subject.keys[0]!.id;
+
+    const up = ev("ASSURANCE_UPDATED", { keyId, ...raise }, { prev: g });
+    expect(foldActorChain([g, up])).toMatchObject({ ok: false, reason: "regrade_raises", at: 1 });
+
+    // Stating the bottom itself raises nothing: it folds, and the key now says what it was read as.
+    const same = foldActorChain([g, ev("ASSURANCE_UPDATED", { keyId, ...keep }, { prev: g })]);
+    if (!same.ok) throw new Error(same.reason);
+    expect(same.subject.keys[0]).toMatchObject(keep);
+  });
+
+  // @invariant §5: revocation is terminal per key — no later event grades a revoked key again.
+  it.each([
+    ["ATTESTATION_RENEWED", { verifiedAt: "2026-10-01T00:00:00.000Z", attestationKind: "attestation-eat" }],
+    ["ATTESTATION_RENEWED", { assurance: "pop", binding: "self" }],
+    ["ASSURANCE_UPDATED", { assurance: "pop", binding: "self" }],
+  ])("refuses %s naming a revoked key", (event, detail) => {
+    const revoked = chain(
+      (p) => ev("KEY_ADDED", { keyId: "k2", jwk: JWK }, { prev: p }),
+      (p) => ev("KEY_REVOKED", { keyId: "k1" }, { prev: p }),
+      (p) => ev(event, { keyId: "k1", ...detail }, { prev: p }),
+    );
+    expect(foldActorChain(revoked)).toMatchObject({ ok: false, reason: "key_already_revoked", at: 3 });
+
+    // The same event on the key still in use folds.
+    const live = chain(
+      (p) => ev("KEY_ADDED", { keyId: "k2", jwk: JWK }, { prev: p }),
+      (p) => ev("KEY_REVOKED", { keyId: "k1" }, { prev: p }),
+      (p) => ev(event, { keyId: "k2", ...detail }, { prev: p }),
+    );
+    expect(foldActorChain(live).ok).toBe(true);
+  });
 });
 
 // ── status (§4 transition table) ─────────────────────────────────────────────

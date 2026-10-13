@@ -144,6 +144,7 @@ const REGEN = !!process.env.REGEN_FIXTURES;
         eventId: "urn:via:event:fixture-verification",
         subject: mandate.id,
         event: "VERIFICATION_APPROVED",
+        issuer: VIA_PLATFORM_DID,
         previousEvent: computeSRI(canonicalizeRFC8785(acceptEvent)),
         evaluations: [{ rule: "amt", result: "pass" }],
         executionParams: { amount: 100 },
@@ -275,6 +276,7 @@ const REGEN = !!process.env.REGEN_FIXTURES;
         eventId: "urn:via:event:fixture-v03-verification",
         subject: policy.id,
         event: "VERIFICATION_APPROVED",
+        issuer: VIA_PLATFORM_DID,
         previousEvent: computeSRI(canonicalizeRFC8785(acceptV3)),
         evaluations: [
           { rule: "allowed_tools", result: "pass" },

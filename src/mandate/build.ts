@@ -33,6 +33,7 @@ export interface BuildMandateInput {
   /** §17 — the verified grantor passkey binding (from `buildGrantorBinding`). */
   grantorBinding?: GrantorBinding;
   scope?: string;
+  /** Who may present and verify. The subject organization is added when the list does not name it (v0.3 §12). */
   authorizedDIDs: string[];
   /** §16 — the bound agent key(s) (from registration). Present ⇒ verify requires a PoP. */
   authorizedAgents?: BoundKey[];
@@ -247,6 +248,11 @@ export function buildMandate(input: BuildMandateInput): ViaMandateCredential {
     extensions.push(EXT_SEMANTIC_REVIEW);
     criticalExtensions.push(EXT_SEMANTIC_REVIEW);
   }
+  // v0.3 §12 — the subject organization is always a member: the issuer appends it at issuance, so the
+  // organization that asked for a mandate can present and verify it. A list that names it is kept as given.
+  const authorizedDIDs = input.authorizedDIDs.includes(input.subjectOrg)
+    ? input.authorizedDIDs
+    : [...input.authorizedDIDs, input.subjectOrg];
   const credential: ViaMandateCredential = {
     "@context": [...VIA_CONTEXTS],
     id: input.credentialId ?? `urn:via:credential:${randomUUID()}`,
@@ -262,7 +268,7 @@ export function buildMandate(input: BuildMandateInput): ViaMandateCredential {
         ...(input.grantorBinding ? { grantorBinding: input.grantorBinding } : {}),
         scope: input.scope ?? DEFAULT_SCOPE,
         context: {
-          authorizedDIDs: input.authorizedDIDs,
+          authorizedDIDs,
           ...(input.authorizedAgents
             ? { authorizedAgents: input.authorizedAgents.map((bk, i) => normalizeBoundKey(bk, i, input.maxAttestationStaleness)) }
             : {}),

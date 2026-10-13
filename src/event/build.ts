@@ -3,7 +3,7 @@ import { canonicalizeRFC8785 } from "../crypto/canonicalize.js";
 import { computeSRI } from "../crypto/digest.js";
 import { canonicalEventType, createDataIntegrityProof, verifyDataIntegrityProof, type EventType } from "../crypto/proof.js";
 import type { Jwk } from "../crypto/p256.js";
-import { VIA_PLATFORM_DID, didFromUrl } from "../did/web.js";
+import { didFromUrl } from "../did/web.js";
 import { stampMandate, type ResolvePublicKey } from "../mandate/build.js";
 import {
   TYPE_VC,
@@ -96,8 +96,11 @@ export interface BuildEventInput extends EventFields {
    */
   subject: string;
   event: EventType;
-  /** The signer's DID (v0.3 §2); defaults to the platform. */
-  issuer?: string;
+  /**
+   * The DID that signs the event (v0.3 §2: an event's `issuer` is its signer). Required: this builder
+   * signs nothing, so it cannot know who will — `buildChainedEvent`, which signs, fills it in.
+   */
+  issuer: string;
   validFrom?: string;
   /** SRI of the prior event in the chain (null at its first event). */
   previousEvent?: string | null;
@@ -133,6 +136,8 @@ export function buildEvent(input: BuildEventInput): ViaEvent {
   for (const name of NOT_V03_FIELDS) {
     if (name in fields) throw new Error(`a "0.3" event carries no \`${name}\` (v0.3 §2.0)`);
   }
+  // Never defaulted: an event that says Humanos and is signed by someone else is refused by a verifier.
+  if (!issuer) throw new Error("an event states its issuer — the DID that signs it (v0.3 §2)");
   const credentialDigest = given ?? (credential ? credentialDigestOf(credential) : undefined);
   // The kind's own fields, directly in credentialSubject (§2.0); an absent or empty value is left out.
   const detail = Object.fromEntries(
@@ -143,7 +148,7 @@ export function buildEvent(input: BuildEventInput): ViaEvent {
     id: eventId ?? viaUrn("event"),
     type: [TYPE_VC, TYPE_VIA_EVENT],
     specVersion: VIA_SPEC_VERSION as SpecVersion,
-    issuer: issuer ?? VIA_PLATFORM_DID,
+    issuer,
     validFrom: validFrom ?? new Date().toISOString(),
     credentialSubject: {
       id: subject,

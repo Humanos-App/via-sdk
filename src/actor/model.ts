@@ -191,7 +191,8 @@ export interface ViaActorSubject {
    */
   accreditation?: {
     level: "unverified" | "domain" | "verified";
-    method: string;
+    /** How it was verified. Absent on `unverified`, which carries no method (v0.3 §18.2). */
+    method?: string;
     /** Who made the claim: the DID that signed the `ACCREDITED` event (v0.3 §18.2). */
     registrar: string;
     verifiedAt: string;
@@ -463,19 +464,25 @@ export function actorSummaryFloor(
  * has one age — `existedSince`, the genesis's `validFrom` when it states none — and no `genesisAt`,
  * `lineage` is no longer folded: delegation is parked in v0.4, and neither is an accreditation's
  * published `status`: actor status lists are parked in v0.4; an accreditation withdrawn for cause
- * carries `withdrawn`).
+ * carries `withdrawn`; 13 = a renewal or a keyed regrade naming a revoked key is refused,
+ * `key_already_revoked`, and a regrade measures a field the key does not state at the bottom —
+ * `pop`, `self` — so it cannot give a key half a rung no evidence earned).
  *
  * A stored record (a checkpoint) is only as current as the fold that wrote it. Seeding a fold from
  * one written by an older version would silently omit whatever the newer fold adds, so a
  * checkpointed read MUST seed only from a record written by this version and replay the whole
  * chain otherwise.
  */
-export const ACTOR_FOLD_VERSION = 12;
+export const ACTOR_FOLD_VERSION = 13;
 
-/** §5 — a keyed `ASSURANCE_UPDATED` lowers or keeps every rung field; it never raises one or names a new root. */
+/**
+ * §5 — a keyed `ASSURANCE_UPDATED` lowers or keeps every rung field; it never raises one or names a new root.
+ * A field the key does not state is measured at the bottom — `pop`, `self` (§9.1bis rule 4: possession
+ * is all that was proven) — so a regrade cannot hand a key a rung no evidence earned.
+ */
 function regradeLowers(k: ActorKeyState, detail: Record<string, unknown>): boolean {
-  if (detail.assurance !== undefined && k.assurance && assuranceRank(detail.assurance as Assurance) > assuranceRank(k.assurance)) return false;
-  if (detail.binding !== undefined && k.binding && BINDINGS.indexOf(detail.binding as Binding) > BINDINGS.indexOf(k.binding)) return false;
+  if (detail.assurance !== undefined && assuranceRank(detail.assurance as Assurance) > assuranceRank(k.assurance ?? "pop")) return false;
+  if (detail.binding !== undefined && BINDINGS.indexOf(detail.binding as Binding) > BINDINGS.indexOf(k.binding ?? "self")) return false;
   if (detail.root && String(detail.root) !== k.root) return false;
   return true;
 }
@@ -632,6 +639,8 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
       case "ATTESTATION_RENEWED": {
         const k = key(detail.keyId);
         if (!k) return fail("unknown_key", i);
+        // §5: revocation is terminal per key — a revoked key is never graded again.
+        if (k.status === "revoked") return fail("key_already_revoked", i);
         // pointer to THIS renewal event — computed by the fold (self-link pattern). The kind is what the
         // renewal presented; one that names none presented no quote, and must not claim one.
         k.attestation = { event: prevLink, kind: String(detail.attestationKind ?? "none") };
@@ -662,6 +671,7 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         if (detail.keyId) {
           const k = key(detail.keyId);
           if (!k) return fail("unknown_key", i);
+          if (k.status === "revoked") return fail("key_already_revoked", i);
           // DOWN only, on every field (§5): a rung is earned by evidence, and this event carries
           // none. Lower or equal assurance and binding; the root kept or dropped, never named anew.
           if (!regradeLowers(k, detail)) return fail("regrade_raises", i);

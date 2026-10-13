@@ -20,6 +20,8 @@ export interface BuildActionVersionInput {
     requires?: string[];
   }[];
   mapper?: Record<string, string>;
+  /** v0.3 §17.4 — the tools whose calls need the grantor's fresh co-sign. */
+  stepUp?: { tools: string[] };
 }
 
 /** Build an `ActionDetail` (ActionVersion content), generating each rule's CEL `expression` (N13). */
@@ -46,6 +48,7 @@ export function buildActionVersion(input: BuildActionVersionInput): ActionDetail
     executionParams,
     rules,
     ...(input.mapper ? { mapper: input.mapper } : {}),
+    ...(input.stepUp?.tools.length ? { stepUp: { tools: input.stepUp.tools } } : {}),
   };
 }
 

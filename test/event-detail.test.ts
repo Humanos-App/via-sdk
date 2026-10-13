@@ -11,6 +11,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import {
   generateEd25519Key,
+  buildEvent,
   buildChainedEvent,
   auditEventChain,
   signEvent,
@@ -102,6 +103,14 @@ describe("buildChainedEvent detail pass-through", () => {
     });
     expect(signed.issuer).toBe(SIGNER_DID);
     expect(signed.credentialSubject).not.toHaveProperty("actor");
+  });
+
+  // @refusal v0.3 §2: an event's `issuer` is its signer. `buildEvent` signs nothing, so it never
+  // guesses one — it used to write Humanos, which a verifier refuses when another party signs.
+  it("refuses to build an event with no issuer", () => {
+    const input = { subject: URN, event: "ACCEPT", previousEvent: null } as unknown as BuildEventInput;
+    expect(() => buildEvent(input)).toThrow(/issuer/);
+    expect(buildEvent({ ...input, issuer: "did:web:humanos.tech:user:ana" }).issuer).toBe("did:web:humanos.tech:user:ana");
   });
 
   // @refusal v0.3 §2.0: a "0.3" event carries no `actor`, no `agent` wrapper and no `role`.
