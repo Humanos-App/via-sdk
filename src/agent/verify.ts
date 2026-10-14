@@ -128,7 +128,7 @@ export interface CredentialRecordLike {
   status: CredentialStatus;
   /**
    * §19.5 — the issuer's record says the grant is SPENT: its `maxExecutions` bound was used up. An
-   * inactive record with this set denies `max_executions_reached`, not `credential_inactive` — used
+   * inactive record with this set denies `max_executions_reached`, not `credential_revoked` — used
    * exactly as agreed is not withdrawn. Only the issuer knows; a status bit alone cannot say why.
    */
   exhausted?: boolean;
