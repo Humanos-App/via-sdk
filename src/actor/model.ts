@@ -1186,12 +1186,11 @@ export function foldActorRecord(events: ViaEvent[]): ActorRecordResult {
  * agent affiliated, and to whom", never "what did the affiliation say". Reading the claim is the
  * verifier's job, through the pointer.
  *
- * FRESHNESS. This is what makes `agent.verifiedAt >= now - duration("720h")` evaluable, which is
- * how v0.3 bounds attestation age. With a `presentingKey` the bound applies to THAT key, so
- * renewing one key does not refresh a sibling's claim. §16's `maxAttestationStaleness` bounds a raw-pinned BoundKey's
- * re-attest window; on the actor path the rung is resolved THROUGH the actor, so the bound belongs
- * to the mandate that cares — per-mandate rather than global, and curable by `ATTESTATION_RENEWED`
- * or `ASSURANCE_UPDATED` moving `verifiedAt` forward.
+ * FRESHNESS. `verifiedAt` is projected for the record, not for a rule to compare with the clock:
+ * the CEL context has no `now`, and a rule that names it errors and denies (v0.3 §16.8). Attestation
+ * age is bounded only by the mandate entry's `maxAttestationStaleness`, enforced as A8 (§16.4, §16.7)
+ * against THIS key's `verifiedAt` when a `presentingKey` is given — so renewing one key does not
+ * refresh a sibling's claim — and curable by `ATTESTATION_RENEWED` moving it forward.
  */
 export function projectAgentContext(
   subject: ViaActorSubject,

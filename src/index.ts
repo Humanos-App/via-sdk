@@ -306,6 +306,12 @@ export {
   type RegisterAgentKeyInput,
   type RegisterAgentKeyDeps,
 } from "./agent/registration.js";
+export {
+  REG_PROOF_TYP,
+  buildRegistrationProof,
+  verifyRegistrationProof,
+  type RegProofPayload,
+} from "./agent/registration-proof.js";
 
 // Agent Binding (§16) — constraints (structured → CEL) + the verify path (A1–A8)
 export {

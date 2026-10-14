@@ -181,12 +181,18 @@ export interface RegistrationEvidenceRecord {
 }
 
 /** Confinement evidence submitted at REGISTRATION; establishes the rung (§16.5). */
+/**
+ * Registration evidence (§16.5). `proof` is a `via-reg+jwt` by the key being registered over the
+ * `regNonce` (`buildRegistrationProof`): every key the agent holds proves possession when it enters the
+ * chain. Attested evidence that reaches a pinned root proves it itself; attested evidence that degrades
+ * proves nothing, so it carries `proof` too (decided 2026-10-14).
+ */
 export type ConfinementEvidence =
-  | { type: "none" } // -> pop/self
-  | { type: "device-self"; nonExportable: true; note?: string } // -> pop/self (a CLAIM is not evidence)
-  | { type: "custody"; ref: CustodyRef } // -> pop/custodial (oracle upgrades the BINDING, not the rung)
-  | { type: "attestation-eat"; docB64: string } // COSE_Sign1 -> hardware/attested (nitro), pop/self unpinned
-  | { type: "webauthn"; attestationObjectB64: string; clientDataJSONB64: string }; // -> hardware/attested (fido), pop/self unpinned
+  | { type: "none" } // REFUSED since 2026-10-14 (`pop_invalid`): it proves nothing; chains that recorded it read as written
+  | { type: "device-self"; proof: string; nonExportable?: boolean; note?: string } // -> pop/self (a CLAIM is not evidence)
+  | { type: "custody"; ref: CustodyRef; proof: string } // -> pop/custodial (oracle upgrades the BINDING, not the rung)
+  | { type: "attestation-eat"; docB64: string; proof?: string } // COSE_Sign1 -> hardware/attested (nitro); unpinned -> pop/self, with `proof`
+  | { type: "webauthn"; attestationObjectB64: string; clientDataJSONB64: string; proof?: string }; // -> hardware/attested (fido); unpinned -> pop/self, with `proof`
 
 /** The output of validating evidence — a `BoundKey` on success, or a deny reason (§16.5). */
 export type ConfinementResult = ({ ok: true } & BoundKey) | { ok: false; reason: AgentReasonCode };

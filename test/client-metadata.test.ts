@@ -3,6 +3,7 @@ import {
   assertNoUnverifiedClientRefs,
   unverifiedClientRefs,
 } from "../src/agent/constraints.js";
+import { buildActionVersion } from "../src/action/build.js";
 
 // v0.3 §9.4ter / B6 — MCP and SDK client metadata is self-declared. It may be recorded as context
 // on an event; it may never gate authorization. These tests pin the boundary at authoring time,
@@ -36,6 +37,24 @@ describe("client metadata is not an axis", () => {
     expect(() =>
       assertNoUnverifiedClientRefs([{ name: "x", expression: "clientInfo.version > 2" }]),
     ).toThrow(/agent\.runtime/);
+  });
+
+  it("names the verified way to say \"only this app\": the agent's DID", () => {
+    expect(() =>
+      assertNoUnverifiedClientRefs([{ name: "x", expression: 'executionParams.client_id == "trusted-app"' }]),
+    ).toThrow(/agent\.did/);
+  });
+
+  // §9.4ter(c) (2026-10-14): an implementation MUST refuse it when the action is written — the SDK's builder is one.
+  it("buildActionVersion refuses an action whose rule reads client metadata", () => {
+    expect(() =>
+      buildActionVersion({
+        $id: "urn:via:action:x",
+        version: "1",
+        executionParams: { client_id: { type: "string" } },
+        rules: [{ name: "trusted_client", conditions: [{ left: "executionParams.client_id", operator: "==", right: "trusted-app" }] }],
+      } as never),
+    ).toThrow(/client_id/);
   });
 
   it("passes a clean rule set", () => {

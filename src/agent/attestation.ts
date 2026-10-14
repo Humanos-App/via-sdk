@@ -69,8 +69,13 @@ export async function validateCustody(
 ): Promise<ConfinementResult> {
   try {
     const desc = await describeKey(ref);
+    // No answer — the oracle cannot see that key, or is not there — is UNVERIFIABLE, not wrong: it
+    // degrades to pop/self (§16.5), and the key's own `proof` then shows it is held. An answer that
+    // names another key, or an exportable one, is wrong evidence and refuses (below).
+    if (desc === null) {
+      return { ok: true, cnf: { jwk: cnf }, assurance: "pop", binding: "self", verifiedAt: Date.now() };
+    }
     if (
-      desc &&
       desc.exportable === false &&
       (desc.keySpec === undefined || desc.keySpec === "ECC_NIST_P256") &&
       desc.publicJwk &&
@@ -169,8 +174,22 @@ export async function validateCoseAttestation(
     // The rung is WHICH list the reached root is in, not merely that one was reached. A TPM vendor
     // EK root and a Nitro root are both "a vendor I trust"; only one of them is a dedicated
     // environment, and one flat list made those the same statement (F10).
-    const graded = gradeChain(chain, pinnedRoots, Date.now());
-    if (!graded) return fail("attestation_chain_invalid");
+    const at = Date.now();
+    if (!chainSound(chain, at)) return fail("attestation_chain_invalid");
+    const graded = gradeChain(chain, pinnedRoots, at);
+    // A sound chain to a root nobody pinned — or a verifier that pins none — is UNVERIFIABLE, not
+    // wrong: it degrades to pop/self (§16.5). It proves nothing about who holds the key, so
+    // registration then asks for the key's own `proof`; its PCRs are unread, with no anchor behind them.
+    if (!graded) {
+      return {
+        ok: true,
+        cnf: { jwk: rawPointToJwk(payload.public_key) },
+        assurance: "pop",
+        binding: "self",
+        verifiedAt: at,
+        evidence: { rootFingerprint: null },
+      };
+    }
 
     // (3) PCR pinning — WHICH CODE is running in that enclave.
     //
@@ -241,10 +260,13 @@ export async function validateCoseAttestation(
  *     verifies AND whose x5c chains to a PINNED FIDO/vendor root → hardware/attested/fido.
  *   • a present-but-INVALID statement signature → attestation_chain_invalid (a genuine
  *     authenticator never emits one; a forgery signal).
+ *   • a chain that is itself broken — a certificate out of its window, a parent that is not a CA
+ *     or did not sign its child, a CA as the leaf → attestation_chain_invalid (wrong evidence).
  *   • anything we cannot fully verify — fmt "none"/self, no x5c, no pinned root, or a
  *     format we don't implement — → pop/self. We refuse to credit confinement we can't
  *     chain to a trust anchor. This is the §16.5 normative fail-safe: an unverifiable
- *     quote DEGRADES to pop/self, it never fails open.
+ *     quote DEGRADES to pop/self, it never fails open — and proves no possession, so
+ *     registration asks for the key's `proof`.
  */
 export async function validateWebauthnAttestation(
   attestationObjectB64: string,
@@ -298,7 +320,7 @@ export async function validateWebauthnAttestation(
     // carries the credential public key, so a valid signature by the batch cert binds
     // THAT cert's vouch to THIS exact credential key (the cnf).
     const leaf = new NodeX509Certificate(Buffer.from(x5c[0]!));
-    if (leaf.ca) return selfRung(); // a packed attestation leaf is an end-entity cert, never a CA
+    if (leaf.ca) return fail("attestation_chain_invalid"); // a packed attestation leaf is an end-entity cert, never a CA
     const hash = coseHashName(ao.attStmt?.alg);
     if (!hash) return selfRung();
     const verificationData = concat(ao.authData, sha256(fromBase64Url(clientDataJSONB64)));
@@ -307,6 +329,7 @@ export async function validateWebauthnAttestation(
     // (2) The batch cert must chain to a PINNED FIDO/vendor root. Without a pinned anchor
     // the authenticator's provenance is unverifiable → self/pop.
     const chain = x5c.map((der) => new NodeX509Certificate(Buffer.from(der)));
+    if (!chainSound(chain, Date.now())) return fail("attestation_chain_invalid"); // broken, not merely unanchored
     const graded = gradeChain(chain, pinnedRoots, Date.now());
     if (!graded) return selfRung();
     if (backupEligible) return selfRung(); // syncable credential — see the BE note above
@@ -560,7 +583,31 @@ function rootFingerprint(root: NodeX509Certificate): string {
 }
 
 /**
- * Validate the chain and return the rung the matched root earns, or `null` if it reaches none.
+ * The chain on its own terms (§16.5): every certificate inside its validity window, and every parent a
+ * CA that issued and signed its child. Says nothing about roots. A chain that fails here is WRONG
+ * evidence — refused as `attestation_chain_invalid` — where a sound chain that reaches no pinned root
+ * is only UNVERIFIABLE, and degrades. The two used to be one `null`, so a broken chain degraded in the
+ * WebAuthn check and an unpinned one was refused in the quote check (decided 2026-10-14).
+ */
+function chainSound(chain: NodeX509Certificate[], nowMs: number): boolean {
+  try {
+    if (chain.length === 0) return false;
+    for (const c of chain) if (!certValidAt(c, nowMs)) return false;
+    for (let i = 0; i < chain.length - 1; i++) {
+      const child = chain[i]!;
+      const parent = chain[i + 1]!;
+      if (!parent.ca) return false;
+      if (!(child.checkIssued(parent) && child.verify(parent.publicKey))) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The rung the matched root earns for a SOUND chain ({@link chainSound}), or `null` if it reaches no
+ * pinned root — unverifiable, which degrades.
  *
  * A root listed under BOTH rungs grades as the LOWER one. Duplication is a config mistake, and the
  * generous reading of a mistake is the one that over-claims.
@@ -577,22 +624,15 @@ function gradeChain(
   return null;
 }
 
-/** The pinned root this chain reaches, or null. Extracted so {@link gradeChain} can say WHICH. */
+/** The pinned root a sound chain's top reaches, or null. Extracted so {@link gradeChain} can say WHICH. */
 function matchRoot(
   chain: NodeX509Certificate[],
   pinnedRootsPem: string[],
   nowMs: number,
 ): NodeX509Certificate | null {
   try {
-    if (chain.length === 0 || pinnedRootsPem.length === 0) return null;
-    for (const c of chain) if (!certValidAt(c, nowMs)) return null;
-    for (let i = 0; i < chain.length - 1; i++) {
-      const child = chain[i]!;
-      const parent = chain[i + 1]!;
-      if (!parent.ca) return null;
-      if (!(child.checkIssued(parent) && child.verify(parent.publicKey))) return null;
-    }
-    const top = chain[chain.length - 1]!;
+    const top = chain[chain.length - 1];
+    if (!top) return null;
     for (const pem of pinnedRootsPem) {
       const root = new NodeX509Certificate(pem);
       if (!root.ca || !certValidAt(root, nowMs)) continue;
@@ -602,28 +642,6 @@ function matchRoot(
     return null;
   } catch {
     return null;
-  }
-}
-
-function validateCertChain(chain: NodeX509Certificate[], pinnedRootsPem: string[], nowMs: number): boolean {
-  try {
-    if (chain.length === 0 || pinnedRootsPem.length === 0) return false;
-    for (const c of chain) if (!certValidAt(c, nowMs)) return false;
-    for (let i = 0; i < chain.length - 1; i++) {
-      const child = chain[i]!;
-      const parent = chain[i + 1]!;
-      if (!parent.ca) return false; // issuer must be a CA
-      if (!(child.checkIssued(parent) && child.verify(parent.publicKey))) return false;
-    }
-    const top = chain[chain.length - 1]!;
-    const roots = pinnedRootsPem.map((pem) => new NodeX509Certificate(pem));
-    return roots.some((root) => {
-      if (!root.ca || !certValidAt(root, nowMs)) return false;
-      if (Buffer.compare(top.raw, root.raw) === 0) return true; // top IS the pinned root
-      return top.checkIssued(root) && top.verify(root.publicKey); // top issued by the pinned root
-    });
-  } catch {
-    return false;
   }
 }
 

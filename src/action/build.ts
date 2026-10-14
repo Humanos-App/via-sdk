@@ -1,6 +1,7 @@
 import { canonicalizeRFC8785 } from "../crypto/canonicalize.js";
 import { computeSRI } from "../crypto/digest.js";
 import { buildTypeResolver, generateCelExpression } from "./cel.js";
+import { assertNoUnverifiedClientRefs } from "../agent/constraints.js";
 import type { ActionDetail, ActionTarget, ParamDef, RuleCondition } from "./types.js";
 
 export interface BuildActionVersionInput {
@@ -39,6 +40,9 @@ export function buildActionVersion(input: BuildActionVersionInput): ActionDetail
     conditions: r.conditions,
     expression: generateCelExpression(r.conditions, typeOf),
   }));
+  // v0.3 §9.4ter(c): a rule MUST NOT read what a client says about itself, and an implementation MUST
+  // refuse it when the action is written — the last moment its hollowness is visible.
+  assertNoUnverifiedClientRefs(rules);
   return {
     $id: input.$id,
     type: input.type ?? "VIAAction",

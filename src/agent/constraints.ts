@@ -141,8 +141,9 @@ export function assertNoUnverifiedClientRefs(rules: { name?: string; expression:
     if (refs.length > 0) {
       throw new Error(
         `rule ${rule.name ?? "(unnamed)"} references self-declared client metadata (${refs.join(", ")}); ` +
-          "it is unverified and MUST NOT gate authorization (v0.3 §9.4ter). " +
-          "For an attested environment claim use `agent.runtime`.",
+          "any agent can send it, so it MUST NOT gate authorization (v0.3 §9.4ter(c)). " +
+          "To limit a mandate to one app, bind it to that app's agent (`authorizedAgents`, or `agent.did` in a rule); " +
+          "if the field is your own data, rename it; for an attested environment claim use `agent.runtime`.",
       );
     }
   }

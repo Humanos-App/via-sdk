@@ -21,6 +21,7 @@ import {
   readAttestationNonce,
   type DescribeKey,
 } from "./attestation.js";
+import { verifyRegistrationProof } from "./registration-proof.js";
 import type { BoundKey, ConfinementEvidence, ConfinementResult } from "./types.js";
 
 // ── Registration-nonce store (single-use) ────────────────────────────────────
@@ -103,12 +104,15 @@ export async function registerChallenge(deps: RegisterChallengeDeps = {}): Promi
 
 // ── registerAgentKey ───────────────────────────────────────────────────────────
 
+/** The evidence kinds registration grades (§16.5). `none` is not one: it is refused (2026-10-14). */
+const EVIDENCE_KINDS: ReadonlySet<string> = new Set(["device-self", "custody", "attestation-eat", "webauthn"]);
+
 export interface RegisterAgentKeyInput {
   /** The key being bound. For key-carrying evidence (webauthn / attestation-eat) the
    *  bound key is DERIVED from the evidence; if a `cnf` is still supplied it MUST match. */
   cnf: { jwk: Jwk };
   evidence: ConfinementEvidence;
-  /** The nonce issued by {@link registerChallenge}; required (and bound) for `attestation-eat`. */
+  /** The nonce issued by {@link registerChallenge}: outstanding, unexpired and single-use, whatever the evidence. */
   regNonce?: string;
 }
 
@@ -132,8 +136,13 @@ export interface RegisterAgentKeyDeps {
   fidoRoots?: PinnedRoots;
   /** Custody oracle (injected — replaces kya's HTTP DescribeKey) for the `custody` path. */
   describeKey?: DescribeKey;
-  /** Single-use registration-nonce store — required to bind the `attestation-eat` nonce. */
+  /** Single-use registration-nonce store — required: every registration binds its nonce (§16.5). */
   store?: RegChallengeStore;
+  /**
+   * The verifier's own DID — the `aud` a registration proof must name (§16.5). Without it no `proof`
+   * can be checked, so only anchored attested evidence registers.
+   */
+  audience?: string;
 }
 
 /**
@@ -143,9 +152,11 @@ export interface RegisterAgentKeyDeps {
  * on success, or `{ ok:false, reason }` on any failure (fail-closed).
  *
  * Reason codes: `attestation_nonce_invalid` (missing/expired/replayed/mismatched reg
- * nonce), `attestation_key_mismatch` (evidence-embedded key ≠ submitted cnf), plus
+ * nonce), `attestation_key_mismatch` (evidence-embedded key ≠ submitted cnf), `pop_invalid`
+ * (no proof that the registrant holds the key — `none`, or a missing or failing `proof`), plus
  * whatever the underlying validator returns (`custody_reference_invalid`,
- * `attestation_chain_invalid`, `pop_invalid`).
+ * `attestation_chain_invalid`). Wrong evidence refuses; only evidence that cannot be checked
+ * degrades (§16.5, decided 2026-10-14).
  */
 export async function registerAgentKey(
   input: RegisterAgentKeyInput,
@@ -168,17 +179,26 @@ export async function registerAgentKey(
     return { ok: false, reason: "custody_reference_invalid" };
   }
 
+  // `none` proves nothing about who holds the key, so it registers nothing (§16.5, 2026-10-14): anyone
+  // could otherwise register a public key they do not hold, and since a known key returns its agent,
+  // lock its owner out.
+  if (ev.type === "none") return { ok: false, reason: "pop_invalid" };
+  // A string `type` that is not one of ours is malformed, refused before anything is spent on it.
+  if (!EVIDENCE_KINDS.has(ev.type)) return { ok: false, reason: "custody_reference_invalid" };
+
+  // Freshness FIRST, for every kind: an outstanding, unexpired, single-use challenge (§16.5). The
+  // attested kinds also check that their quote echoes it, below.
+  const rc = input.regNonce ? await deps.store?.take(input.regNonce) : null;
+  if (!input.regNonce || !rc || now > rc.exp) return { ok: false, reason: "attestation_nonce_invalid" };
+  const regNonce = input.regNonce;
+
   switch (ev.type) {
-    case "none":
-      // No confinement evidence — freshness only. -> pop / self.
-      result = { ok: true, cnf: input.cnf, assurance: "pop", binding: "self", verifiedAt: now };
-      break;
     case "device-self":
       // Platform ASSERTS non-exportable and the RP cannot verify it — so `pop`, per §16.5's table.
-      // A claim is not evidence: this differs from `none` only in what the CHAIN records about what
-      // was asserted, never in what the verifier may credit. `device` is not "asserted a device";
-      // it is "chained to a platform-authenticator root", which is why webauthn's row reads
-      // `device`/`hardware` PER ROOT. The rung is which anchor you reached, not which claim you made.
+      // A claim is not evidence: what this kind proves is possession, through its `proof` below.
+      // `device` is not "asserted a device"; it is "chained to a platform-authenticator root", which
+      // is why webauthn's row reads `device`/`hardware` PER ROOT. The rung is which anchor you
+      // reached, not which claim you made.
       result = { ok: true, cnf: input.cnf, assurance: "pop", binding: "self", verifiedAt: now };
       break;
     case "custody":
@@ -187,54 +207,29 @@ export async function registerAgentKey(
       result = await validateCustody(ev.ref, input.cnf.jwk, deps.describeKey);
       break;
     case "attestation-eat": {
-      // Freshness FIRST: the quote must echo THIS registration's single-use nonce, and
-      // that nonce must be an outstanding, unexpired, unconsumed challenge. The nonce is
-      // covered by the COSE signature, so validateCoseAttestation makes the echoed value
-      // trustworthy — but gating on liveness here means a captured, still-valid quote
-      // cannot be replayed to bind a key the attacker never controlled.
-      const embedded = readAttestationNonce(ev.docB64);
-      const rc = input.regNonce ? await deps.store?.take(input.regNonce) : null;
-      if (
-        !embedded ||
-        !input.regNonce ||
-        embedded !== input.regNonce ||
-        !rc ||
-        now > rc.exp
-      ) {
-        return { ok: false, reason: "attestation_nonce_invalid" };
-      }
+      // The quote must echo THIS registration's nonce. The nonce is covered by the COSE signature,
+      // so validateCoseAttestation makes the echoed value trustworthy — and gating on liveness above
+      // means a captured, still-valid quote cannot be replayed to bind a key the attacker never
+      // controlled.
+      if (readAttestationNonce(ev.docB64) !== regNonce) return { ok: false, reason: "attestation_nonce_invalid" };
       result = await validateCoseAttestation(ev.docB64, deps.nitroRoots ?? NO_ROOTS, deps.expectedPcrs, deps.expectedMeasurements);
-      if (result.ok) await deps.store?.consume(input.regNonce);
       break;
     }
     case "webauthn": {
-      // Freshness FIRST, exactly as the COSE path does it (v0.3 §16.5: "the verifier MUST bind the
-      // attestation to the `regNonce` … outstanding, unexpired, and single-use").
-      //
-      // WHY THIS MATTERS HERE MORE THAN ANYWHERE. The bound key is DERIVED from the evidence
-      // (`authData` carries the credential public key), so possession is never proven by the
-      // submitter — the attestation IS the whole claim. Without this gate a captured
-      // {attestationObject, clientDataJSON} pair re-registers the same credential under a different
-      // actor, in a different organization, at the full attested rung.
+      // WHY THE NONCE MATTERS HERE MORE THAN ANYWHERE. The bound key is DERIVED from the evidence
+      // (`authData` carries the credential public key) — the attestation IS the whole claim. Without
+      // this gate a captured {attestationObject, clientDataJSON} pair re-registers the same credential
+      // under a different actor, in a different organization, at the full attested rung.
       //
       // `challenge` is inside `clientDataJSON`, which the attestation statement signs
       // (authData ‖ SHA-256(clientDataJSON)) — so a forged challenge breaks that signature and the
       // validator below rejects it. Checking `type` refuses an assertion (`webauthn.get`) replayed
       // as a registration.
       const client = readWebauthnClientData(ev.clientDataJSONB64);
-      const rc = input.regNonce ? await deps.store?.take(input.regNonce) : null;
-      if (
-        !client ||
-        client.type !== "webauthn.create" ||
-        !input.regNonce ||
-        client.challenge !== input.regNonce ||
-        !rc ||
-        now > rc.exp
-      ) {
+      if (!client || client.type !== "webauthn.create" || client.challenge !== regNonce) {
         return { ok: false, reason: "attestation_nonce_invalid" };
       }
       result = await validateWebauthnAttestation(ev.attestationObjectB64, ev.clientDataJSONB64, deps.fidoRoots ?? NO_ROOTS);
-      if (result.ok) await deps.store?.consume(input.regNonce);
       break;
     }
     default:
@@ -254,6 +249,19 @@ export async function registerAgentKey(
   if (submitted && submitted.x && submitted.y && jwkThumbprint(submitted) !== boundJkt) {
     return { ok: false, reason: "attestation_key_mismatch" };
   }
+
+  // §16.5 (2026-10-14) — every key the agent holds proves possession when it enters the chain.
+  // Attested evidence that reached a pinned root proves it itself: the root vouches for a quote bound
+  // to this nonce. Everything else — `device-self`, `custody`, and attested evidence that degraded,
+  // which anyone can mint naming any key — carries `proof`, signed by the bound key.
+  if (result.binding !== "attested") {
+    const proof = (ev as { proof?: unknown }).proof;
+    const held =
+      deps.audience !== undefined &&
+      (await verifyRegistrationProof(proof, { jwk: result.cnf.jwk, aud: deps.audience, nonce: regNonce }));
+    if (!held) return { ok: false, reason: "pop_invalid" };
+  }
+  await deps.store?.consume(regNonce);
 
   const bound: BoundKey = {
     cnf: result.cnf,
