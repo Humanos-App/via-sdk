@@ -176,4 +176,14 @@ Default is **`v0.2`** (spec-correct). A **`legacy`** mode (and the `compat` shim
 npm test          # vitest
 npm run typecheck # tsc --noEmit
 npm run build     # tsup → dist (ESM + d.ts)
+npm run platform-drift   # what the platform's copy holds that this SDK does not
 ```
+
+**The platform's copy.** `agent-mandate-protocol/packages/via-sdk` is a copy of `src/` and
+`tsup.config.ts`, written by its `pnpm sync:via-sdk`. Its `sync.json` records the version, the commit
+and every file's hash. The platform's CI fails on an edit there that a sync did not write, unless the
+edit is recorded as pending upstream. `npm run platform-drift` lists, for `origin/dev`, `origin/stage`
+and `origin/main` (or the refs given, or `-- --all`), the pending and unrecorded edits to bring here,
+and the files not synced yet. Run it before changing this SDK and before a release. A change here
+reaches the platform through `pnpm sync:via-sdk`, which refuses to erase an edit this SDK does not
+hold. It reaches agents through agent-sdk's `npm run vendor:sdk-v03`.

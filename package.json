@@ -31,6 +31,7 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
+    "platform-drift": "node scripts/platform-drift.mjs",
     "pretest": "tsup",
     "test": "vitest run",
     "test:watch": "vitest"
