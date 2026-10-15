@@ -44,8 +44,8 @@ describe("cel-js operator behavior (the forms generateCelExpression emits)", () 
   it("unknown identifier → error (engine throws, we catch)", () => {
     expect(evaluateRule(rule("missingThing == 1"), ctx).result).toBe("error");
   });
-  it("numeric datetime values: timestamp() is stripped, compared as raw epochs (N31)", () => {
-    // when/deadline are numbers here → timestamp(double) would throw, so we strip.
+  it("numeric datetime values compare as plain numbers (§0.6.3)", () => {
+    // when/deadline are numbers here: `timestamp()` is routed to `viaTimestamp(double)`, which keeps the number.
     expect(evaluateRule(rule("timestamp(executionParams.when) <= timestamp(userParams.deadline)"), ctx).result).toBe("pass");
   });
 });

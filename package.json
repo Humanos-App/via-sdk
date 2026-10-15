@@ -1,6 +1,6 @@
 {
   "name": "@humanos/via-sdk-v03",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "VIA Protocol SDK — create and verify VIA mandates, DIDs, actions, events, and presentations. Implements via-protocol-spec v0.3 (Ed25519 / eddsa-jcs-2022 / W3C VC 2.0).",
   "type": "module",
   "license": "Apache-2.0",
@@ -37,15 +37,15 @@
   },
   "dependencies": {
     "@marcbachmann/cel-js": "^8.0.0",
-    "@sd-jwt/core": "^0.20.1",
-    "@sd-jwt/sd-jwt-vc": "^0.20.1",
+    "@sd-jwt/core": "^0.22.0",
+    "@sd-jwt/sd-jwt-vc": "^0.22.0",
     "cbor-x": "^1.6.6",
     "jose": "^6.2.12"
   },
   "devDependencies": {
     "@peculiar/x509": "^1.14.3",
-    "@types/node": "^25.9.6",
-    "canonicalize": "^4.0.0",
+    "@types/node": "^25.9.9",
+    "canonicalize": "^5.1.0",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
     "vitest": "^4.1.9"

@@ -21,8 +21,10 @@ import * as x509 from "@peculiar/x509";
 import type { Jwk } from "../crypto/p256.js";
 import type { NitroCa } from "./types.js";
 
-// WebCrypto value/handle types (lib excludes DOM; these live in node's webcrypto namespace).
-type CryptoKeyPair = webcrypto.CryptoKeyPair;
+// These P-256 keys only sign/verify. Narrow their usages at the X.509 boundary: Node also
+// declares usages for algorithms absent from the DOM types used by browser-aware consumers.
+type SigningKey = webcrypto.CryptoKey & { usages: ("sign" | "verify")[] };
+type CryptoKeyPair = { privateKey: SigningKey; publicKey: SigningKey };
 
 // @peculiar needs a WebCrypto provider; set once at module load.
 //

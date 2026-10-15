@@ -84,7 +84,7 @@ function matchesScalar(type: ArrayItemType, value: unknown): boolean {
     case "boolean":
       return typeof value === "boolean";
     case "datetime":
-      return typeof value === "string" && Number.isFinite(Date.parse(value));
+      return typeof value === "number" ? Number.isFinite(value) : typeof value === "string" && Number.isFinite(Date.parse(value));
   }
 }
 

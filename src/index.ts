@@ -120,6 +120,7 @@ export {
   type RuleEvaluation,
   type EvaluationResult,
 } from "./cel/evaluate.js";
+export { rewriteCelTimestamps } from "./cel/timestamps.js";
 
 // Mandate
 export {

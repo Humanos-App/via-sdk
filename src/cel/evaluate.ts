@@ -1,5 +1,6 @@
-import { evaluate as celEvaluate, parse as celParse } from "@marcbachmann/cel-js";
+import { Environment, evaluate as celEvaluate, parse as celParse } from "@marcbachmann/cel-js";
 import type { ActionRule } from "../action/types.js";
+import { rewriteCelTimestamps } from "./timestamps.js";
 
 export interface CelContext {
   /** Issuer constants, unwrapped to `{ name: value }`. */
@@ -36,22 +37,25 @@ export interface EvaluationResult {
 }
 
 /**
- * N31: the rule generator emits `timestamp(ref)` around `datetime` refs.
- *
- * `@marcbachmann/cel-js` implements `timestamp()` natively over RFC-3339 strings
- * and int epochs, comparing by **instant** — so `…00Z` equals `…00.000Z`, and
- * `10:00+01:00` equals `09:00Z`, which a lexicographic string compare gets wrong.
- * That is the correct behaviour and what we want for the spec's ISO-8601 datetime
- * contract. But the engine **throws** on a JS number (`timestamp(double)`).
- *
- * So we resolve each wrapped ref against the runtime context and decide per call:
- *  - **string** value → keep native `timestamp()` (correct instant comparison);
- *  - **number** value → strip the wrapper, compare raw epochs (legacy behaviour,
- *    avoids the `timestamp(double)` throw);
- *  - **literal / missing path** → keep native and let the engine resolve it
- *    (e.g. `timestamp("2026-01-01T00:00:00Z")`).
+ * ISO datetimes use native instant semantics; finite JSON numbers keep their exact value.
+ * Return dyn for every overload: cel-js otherwise infers the first overload's timestamp type
+ * even for a numeric runtime argument and applies timestamp operators to a number.
+ * Equality needs an explicit refusal too: default cross-type != would allow a mixed pair.
  */
-const TIMESTAMP_RE = /timestamp\(([^()]*)\)/g;
+const CEL_ENVIRONMENT = new Environment({ unlistedVariablesAreDyn: true })
+  .registerFunction("viaTimestamp(string): dyn", nativeTimestamp)
+  .registerFunction("viaTimestamp(int): dyn", nativeTimestamp)
+  .registerFunction("viaTimestamp(double): dyn", (value: number) => {
+    if (!Number.isFinite(value)) throw new Error("numeric datetime must be finite");
+    return value;
+  })
+  .registerOperator("double == google.protobuf.Timestamp", () => {
+    throw new Error("datetime comparison must not mix string and numeric representations");
+  });
+
+function nativeTimestamp(value: unknown): unknown {
+  return celEvaluate("timestamp(value)", { value });
+}
 
 /**
  * §16.8 — `assuranceRank(x)` maps the ordinal assurance ladder to an int
@@ -112,10 +116,7 @@ const rank = (table: Record<string, number>, fn: string, inner: string, ctx: Cel
 function prepare(expression: string, ctx: CelContext): string {
   let withRanks = expression.replace(ASSURANCE_RANK_RE, (_whole, inner: string) => rank(ASSURANCE_RANK, "assuranceRank", inner, ctx));
   withRanks = withRanks.replace(OPERATOR_RANK_RE, (_whole, inner: string) => rank(ACCREDITATION_RANK, "accreditationRank", inner, ctx));
-  return withRanks.replace(TIMESTAMP_RE, (whole, inner: string) => {
-    const ref = inner.trim();
-    return typeof resolveRef(ref, ctx) === "number" ? ref : whole;
-  });
+  return rewriteCelTimestamps(withRanks);
 }
 
 /**
@@ -159,7 +160,7 @@ export function validateCelExpression(expression: string): { ok: true } | { ok: 
 
 export function evaluateRule(rule: Pick<ActionRule, "name" | "description" | "expression">, ctx: CelContext): RuleEvaluation {
   try {
-    const value = celEvaluate(prepare(rule.expression, ctx), ctx as unknown as Record<string, unknown>);
+    const value = CEL_ENVIRONMENT.evaluate(prepare(rule.expression, ctx), ctx as unknown as Record<string, unknown>);
     if (typeof value !== "boolean") {
       return { rule: rule.name, result: "error", reason: `rule did not return a boolean (got ${typeof value})` };
     }
