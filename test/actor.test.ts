@@ -597,6 +597,19 @@ describe("foldActorChain — pointer and evidence events", () => {
     expect(after.subject).toEqual(before.subject);
   });
 
+  // A person's affiliation is parked in v0.4 §12 (2026-10-15): on a person's chain the kind is
+  // reserved, so a chain written by an implementation that affiliates people still folds here — and
+  // no `operator` appears, which §18.5 would read as the person's operator.
+  it("an AFFILIATION on a person's chain is accepted and folds nothing", () => {
+    const g = genesis({ actorType: "user" });
+    const before = foldActorChain([g]);
+    const aff = evNamed("ACTOR_AFFILIATED", { operator: { org: "did:web:acme.example", relation: "operates" } }, g, "did:web:acme.example");
+    const after = foldActorChain([g, aff]);
+    if (!before.ok || !after.ok) throw new Error("fold failed");
+    expect(after.subject).toEqual(before.subject);
+    expect(after.subject).not.toHaveProperty("operator");
+  });
+
   it("AFFILIATION sets an operator POINTER, never an inline claim", () => {
     const g = genesis();
     const aff = ev("ACTOR_AFFILIATED", { org: "did:web:acme.example" }, { prev: g });

@@ -466,14 +466,15 @@ export function actorSummaryFloor(
  * published `status`: actor status lists are parked in v0.4; an accreditation withdrawn for cause
  * carries `withdrawn`; 13 = a renewal or a keyed regrade naming a revoked key is refused,
  * `key_already_revoked`, and a regrade measures a field the key does not state at the bottom —
- * `pop`, `self` — so it cannot give a key half a rung no evidence earned).
+ * `pop`, `self` — so it cannot give a key half a rung no evidence earned; 14 = an AFFILIATION on a
+ * person's chain folds nothing: a person's affiliation is parked in v0.4).
  *
  * A stored record (a checkpoint) is only as current as the fold that wrote it. Seeding a fold from
  * one written by an older version would silently omit whatever the newer fold adds, so a
  * checkpointed read MUST seed only from a record written by this version and replay the whole
  * chain otherwise.
  */
-export const ACTOR_FOLD_VERSION = 13;
+export const ACTOR_FOLD_VERSION = 14;
 
 /**
  * §5 — a keyed `ASSURANCE_UPDATED` lowers or keeps every rung field; it never raises one or names a new root.
@@ -723,6 +724,10 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         // reserved; delegation is parked in v0.4 §8 — accepted, nothing folded
         break;
       case "ACTOR_AFFILIATED": {
+        // §3.4: on a person's (`user`) chain it is reserved — a person's affiliation is parked in
+        // v0.4 §12 — and folds nothing. An `operator` here would make §18.5 project the org's
+        // accreditation as the person's own.
+        if (subject.actorType === "user") break;
         // set the operator POINTER to this org-signed event — never inline. §18 names the claim's
         // field, `credentialSubject.operator`; events written before that was honoured carry it in
         // `agent`, and signed history is read as it was written.

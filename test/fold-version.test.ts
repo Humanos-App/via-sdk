@@ -106,6 +106,8 @@ const GOLDEN: Record<string, ViaEvent[]> = {
     ["KEY_ADDED", { agent: { keyId: `${PERSON}#key-2`, jwk: JWK("pk"), assurance: "device", binding: "self", webauthId: "wa-golden" } }],
     ["KEY_ADDED", { agent: { keyId: `${PERSON}#key-3`, publicKeyMultibase: "z6MkChannel", assurance: "pop", binding: "custodial", carriedFrom: `${CHANNEL}#key-1` } }],
     ["ALIAS_ADDED", { agent: { alias: CHANNEL, aliasReason: "merge" } }],
+    // Reserved on a person's chain (v0.3 §3.4): a person's affiliation is parked in v0.4 §12.
+    ["ACTOR_AFFILIATED", { operator: { org: ORG, relation: "operates" } }],
   ]),
   // Its only key revoked: no usable key carries a rung, so the actor has none (§9.1bis rule 5).
   noUsableKey: chain("did:web:humanos.tech:agent:golden-revoked", HUMANOS, [
