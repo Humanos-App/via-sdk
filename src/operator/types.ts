@@ -41,9 +41,13 @@ export const ACCREDITATION_METHODS: AccreditationMethod[] = ["dns-challenge", "k
 
 export type SubjectType = "individual" | "organization";
 
-/** `operates` = the ∧ link that lets an agent inherit its org's level; `vouches` = endorsement. */
-/** §18: `operates` / `vouches`; `sandbox_of` — a production organization accountable for its sandbox (§3.6f). */
-export type AffiliationRelation = "operates" | "vouches" | "sandbox_of";
+/**
+ * §18.4: `operates` — the ∧ link that lets an agent inherit its organization's standing; `vouches` — an
+ * endorsement, inherits nothing. Organizations carry no affiliation to each other by hierarchy or
+ * graduation (§3.6f): `sandbox_of` was removed on 2026-10-15. An event written with it is still read
+ * as written, so the fold carries whatever relation a signed event names.
+ */
+export type AffiliationRelation = "operates" | "vouches";
 
 /** §18 deny reasons (the O1–O5 gate). */
 export type AccreditationReasonCode =

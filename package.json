@@ -1,6 +1,6 @@
 {
   "name": "@humanos/via-sdk-v03",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "VIA Protocol SDK — create and verify VIA mandates, DIDs, actions, events, and presentations. Implements via-protocol-spec v0.3 (Ed25519 / eddsa-jcs-2022 / W3C VC 2.0).",
   "type": "module",
   "license": "Apache-2.0",

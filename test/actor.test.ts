@@ -645,6 +645,8 @@ describe("detail fields — each event kind reads the field the spec names", () 
   });
 
   // Signed history cannot be rewritten: events written with the org in `agent` must keep folding.
+  // The sample is what graduation wrote on dev and stage before 2026-10-15 — `sandbox_of`, a relation
+  // v0.3 no longer has (§3.6f) — and it is still read as written.
   it("an AFFILIATION written with its org in `agent` still folds", () => {
     const g = genesis();
     const aff = ev("ACTOR_AFFILIATED", { org: "did:web:acme.example", relation: "sandbox_of" }, { prev: g });

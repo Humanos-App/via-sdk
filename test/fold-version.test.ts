@@ -73,6 +73,7 @@ const GOLDEN: Record<string, ViaEvent[]> = {
   organization: chain(ORG, HUMANOS, [
     ["ACTOR_REGISTERED", { agent: { actorType: "organization", keyId: `${ORG}#key-1`, publicKeyMultibase: "z6MkGolden", assurance: "pop", binding: "custodial", bootstrapAnchor: "manual", verifiedAt: "2025-05-01T00:00:00.000Z", existedSince: "2024-03-01T00:00:00.000Z" } }],
     ["ACCREDITED", { accreditation: { level: "verified", method: "kyb-registry", registrar: HUMANOS, verifiedAt: "2026-01-02T00:00:00.000Z", validUntil: "2028-01-02T00:00:00.000Z" } }],
+    // Graduation's link, written on dev and stage until 2026-10-15; v0.3 no longer has it (§3.6f).
     ["AFFILIATION", { operator: { org: "did:web:golden-prod.example", relation: "sandbox_of" } }],
     ["REGULATORY", { agent: { licence: "PT-GOLDEN-1" } }],
     ["SUSPENDED", { reason: "review" }],
