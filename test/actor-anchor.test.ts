@@ -71,6 +71,15 @@ describe("bootstrapAnchor: person (v0.3 §3.1/§16.14)", () => {
     expect(withPasskey.subject.anchoredBy).toMatchObject({ method: "passkey", event: "sha256-KeyAdded" });
   });
 
+  // v0.3 removed the signed snapshot (parked in v0.4); a genesis written before it still names one.
+  it("leaves out of the record the actorSnapshot reference a genesis signed before v0.3 carries", () => {
+    const g = genesis({ bootstrapAnchor: "person", anchoredBy: { ...ANCHORED_BY, actorSnapshot: "urn:via:snapshot:1" } });
+    const folded = foldActorChain([g]);
+    if (!folded.ok) throw new Error(folded.reason);
+    expect(folded.subject.anchoredBy).toEqual(ANCHORED_BY);
+    expect((g.credentialSubject as { anchoredBy: object }).anchoredBy).toHaveProperty("actorSnapshot");
+  });
+
   it("stays out of the rule environment — policy compares the TOKEN (§9.2)", () => {
     const folded = foldActorChain([genesis({ bootstrapAnchor: "person", anchoredBy: ANCHORED_BY })]);
     if (!folded.ok) throw new Error(folded.reason);

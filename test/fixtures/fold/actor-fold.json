@@ -1,5 +1,5 @@
 {
-  "version": 15,
+  "version": 16,
   "chains": {
     "organization": {
       "accreditation": {
@@ -26,7 +26,7 @@
         }
       ],
       "operator": {
-        "affiliationEvent": "sha256-ByL+mzLXabMes50jOTItZfoddN2NKOXoaETS0IgeGEw=",
+        "affiliationEvent": "sha256-A/NkHGyRXiZVxfNsWJqh3QUNix+F08WdBId7LohiDZU=",
         "org": "did:web:golden-prod.example",
         "relation": "sandbox_of"
       },
@@ -82,7 +82,7 @@
         {
           "assurance": "hardware",
           "attestation": {
-            "event": "sha256-3kjdBpzAB6QIy5vBcKBRb7y3j8Dpz/71fg7Hwu8RHSk=",
+            "event": "sha256-snLNeAN6E2oHeBtayaHEi0sjnfgGed3DMendbmchcx8=",
             "kind": "attestation-eat"
           },
           "binding": "attested",
@@ -98,7 +98,7 @@
         }
       ],
       "operator": {
-        "affiliationEvent": "sha256-KIOLhiXPLXG25ZPjAo2nd3iEHaE4Z+fdKoNDc1jAOMU=",
+        "affiliationEvent": "sha256-ACMIBn7LoP9473h0oKUNeBML9TpyqHR/ELQpI7kFIZs=",
         "org": "did:web:golden.example",
         "relation": "operates"
       },
@@ -128,7 +128,7 @@
         }
       ],
       "operator": {
-        "affiliationEvent": "sha256-KRfZXUXMNjmy0oQePT6dkra+SXKaz6saf+aXK6rxEgA=",
+        "affiliationEvent": "sha256-CtdOOeFwoNtrDzBJyO7Dnme1SISm7ZMSLdWRuMr6hw8=",
         "org": "did:web:golden.example",
         "relation": "operates"
       },

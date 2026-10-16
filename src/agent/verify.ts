@@ -158,7 +158,8 @@ export interface AgentDirectDeps {
   resolvePublicKey: ResolvePublicKey;
   /**
    * §16.7 step 0 — the candidate key set the caller resolved from the mandate's `authorizedAgents`
-   * through each entry's CURRENT actor (merge followed, status gated, pinned key walked). Passed
+   * through each entry's CURRENT actor (merge followed, status gated, operator checked — an agent
+   * acts only for the mandate's subject organization, §8 step 3 — pinned key walked). Passed
    * BESIDE the mandate, never written into it: the mandate must stay the body its STAMP signs.
    * REQUIRED when the mandate binds agents (0.3.6): there is no offline profile (§8), so a mandate
    * with `authorizedAgents` and no candidates is denied `actor_unresolvable` — read as written, a
@@ -300,7 +301,7 @@ const AGENT_DIRECT_EXTENSIONS: ReadonlySet<string> = new Set([EXT_SEMANTIC_REVIE
  * - `mandate` is the body the verifier LOADED by its id (§8 step 1), untouched — never a copy the
  *   agent sent, and never edited by the caller. Its STAMP is checked here, so any edit is refused.
  * - Step 0 (§16.7) is the caller's: resolve every `authorizedAgents` entry through its CURRENT
- *   actor (§8 steps 2–4 — follow a merge, gate on status, walk the pinned key) and pass the
+ *   actor (§8 steps 2–4 — follow a merge, gate on status and operator, walk the pinned key) and pass the
  *   resulting set as `deps.candidates`. This function does not resolve actors.
  */
 export async function verifyAgentDirect(
@@ -432,7 +433,10 @@ export async function verifyAgentDirect(
     : wantsAccreditation && deps.loadAccreditation ? { level: "unverified" } : undefined;
   const { decision, evaluations } = evaluateRules(action.rules, {
     userParams: unwrapUserParamValues(m.userParams),
-    executionParams: req.params,
+    // §16.6: the tool is the action presented — the PoP signs it, and a different `params.tool` was
+    // refused above. Read from the params alone, a call that left `tool` out skipped every
+    // `appliesTo` rule, so a missing input widened authority.
+    executionParams: { ...req.params, tool: req.action },
     agent: { ...(deps.agentEnvExtras ?? {}), ...pop.agent },
     ...(accreditation ? { accreditation } : {}),
   });

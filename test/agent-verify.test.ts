@@ -192,6 +192,33 @@ it("denies a call whose params name a different tool than the one presented", as
   expect(r).toMatchObject({ decision: "deny", reason: "action_mismatch" });
 });
 
+// @invariant §16.6: the tool a rule governs is the tool presented — the one the PoP signs. Read from the
+// params alone, a call that left `tool` out skipped every `appliesTo` rule: a missing input widening
+// authority, the S13 hole again.
+it("holds a call to the per-tool rules of the tool presented when its params leave `tool` out", async () => {
+  const scoped = {
+    ...ACTION,
+    userParams: { channels: { type: "array", items: "string", required: true } },
+    executionParams: { channel_id: { type: "string" } },
+    rules: [{
+      name: "channel_in", appliesTo: ["slack_send_message"], requires: ["channel_id"],
+      conditions: [{ left: "executionParams.channel_id", operator: "in", right: "userParams.channels" }],
+      expression: "executionParams.channel_id in userParams.channels",
+    }],
+  } as unknown as ActionDetail;
+  const granted = structuredClone(mandate);
+  granted.credentialSubject.mandate.userParams = { channels: { description: "the channels allowed", value: ["C-support"] } };
+  const call = async (params: Record<string, unknown>) =>
+    verifyAgentDirect(
+      granted,
+      { pop: await pop(attested, "slack_send_message", params), action: "slack_send_message", params },
+      deps({ loadActionVersion: async () => scoped }),
+    );
+  expect(await call({ channel_id: "C-general" })).toMatchObject({ decision: "deny", reason: "rule_failed" });
+  expect(await call({})).toMatchObject({ decision: "deny", reason: "required_param_missing" });
+  expect(await call({ channel_id: "C-support" })).toMatchObject({ decision: "allow" });
+});
+
 it("denies a mandate whose enforcement does not fit its shape", async () => {
   const mismatched = structuredClone(mandate);
   (mismatched.credentialSubject.mandate as { enforcement?: string }).enforcement = "semantic"; // it has an action

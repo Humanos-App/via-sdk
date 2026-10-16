@@ -475,14 +475,17 @@ export function actorSummaryFloor(
  * `pop`, `self` — so it cannot give a key half a rung no evidence earned; 14 = an AFFILIATION on a
  * person's chain folds nothing: a person's affiliation is parked in v0.4; 15 = a key stating one half
  * of its rung votes in the summary floor, read at the bottom for the other, and a renewal stating one
- * half sets the other at the bottom rather than keeping it — §9.1bis rule 4).
+ * half sets the other at the bottom rather than keeping it — §9.1bis rule 4 (the platform's copy used
+ * 15 on 2026-10-16 for the first half of 16 alone); 16 = `anchoredBy` drops the removed
+ * `actorSnapshot` reference, and an AFFILIATION naming an organization other than its signer is
+ * refused, `affiliation_invalid`, the first one too).
  *
  * A stored record (a checkpoint) is only as current as the fold that wrote it. Seeding a fold from
  * one written by an older version would silently omit whatever the newer fold adds, so a
  * checkpointed read MUST seed only from a record written by this version and replay the whole
  * chain otherwise.
  */
-export const ACTOR_FOLD_VERSION = 15;
+export const ACTOR_FOLD_VERSION = 16;
 
 /**
  * §5 — a keyed `ASSURANCE_UPDATED` lowers or keeps every rung field; it never raises one or names a new root.
@@ -589,7 +592,14 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         bootstrapAnchor: (detail.bootstrapAnchor as BootstrapAnchor) ?? "manual",
         verifiedAt: (detail.verifiedAt as string) ?? e.validFrom,
         ...(detail.root ? { root: String(detail.root) } : {}),
-        ...(detail.anchoredBy ? { anchoredBy: detail.anchoredBy as ViaActorSubject["anchoredBy"] } : {}),
+        ...(detail.anchoredBy ? {
+          // v0.3 removed the snapshot reference from the folded record. Keep the signed
+          // genesis untouched: old chains still carry it and retain their original links.
+          anchoredBy: Object.fromEntries(
+            Object.entries(detail.anchoredBy as Record<string, unknown>)
+              .filter(([name]) => name !== "actorSnapshot"),
+          ) as ViaActorSubject["anchoredBy"],
+        } : {}),
       };
       continue;
     }
@@ -745,9 +755,11 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         const relation = op.relation ?? detail.relation;
         // §18.4: the lapse, `validUntil` (`expiresAt` on an affiliation signed before 2026-10-07).
         const validUntil = claimValidUntil((cs.operator ?? detail) as { validUntil?: unknown; expiresAt?: unknown });
-        // §5: once the actor has an operator, only that operator writes a later AFFILIATION — to renew
-        // or change the relation. Naming, or being signed by, another organization re-points nothing.
-        if (subject.operator && (String(org) !== subject.operator.org || e.issuer !== subject.operator.org)) {
+        // §5: an organization claims an actor for itself only — the org it names is its signer, the
+        // first time too, or the actor would inherit a standing nobody granted it (§18.4). Once the
+        // actor has an operator, only that operator writes a later AFFILIATION, to renew or change
+        // the relation.
+        if (String(org) !== e.issuer || (subject.operator && e.issuer !== subject.operator.org)) {
           return fail("affiliation_invalid", i);
         }
         subject.operator = {

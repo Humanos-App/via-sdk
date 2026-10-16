@@ -630,7 +630,7 @@ describe("foldActorChain — pointer and evidence events", () => {
 
   it("AFFILIATION sets an operator POINTER, never an inline claim", () => {
     const g = genesis();
-    const aff = ev("ACTOR_AFFILIATED", { org: "did:web:acme.example" }, { prev: g });
+    const aff = { ...ev("ACTOR_AFFILIATED", { org: "did:web:acme.example" }, { prev: g }), issuer: "did:web:acme.example" } as ViaEvent;
     const r = foldActorChain([g, aff]);
     if (!r.ok) throw new Error(r.reason);
     expect(r.subject.operator).toEqual({
@@ -655,10 +655,9 @@ describe("detail fields — each event kind reads the field the spec names", () 
   // §18: the org-signed AFFILIATION carries its claim in `credentialSubject.operator`.
   it("AFFILIATION reads the org and relation from `operator`", () => {
     const g = genesis();
-    const aff = evNamed("ACTOR_AFFILIATED", { operator: { org: "did:web:acme.example", relation: "operates" } }, g, "did:web:other.example");
+    const aff = evNamed("ACTOR_AFFILIATED", { operator: { org: "did:web:acme.example", relation: "operates" } }, g, "did:web:acme.example");
     const r = foldActorChain([g, aff]);
     if (!r.ok) throw new Error(r.reason);
-    // The org the EVENT names, not whoever the envelope says issued it.
     expect(r.subject.operator).toEqual({ org: "did:web:acme.example", relation: "operates", affiliationEvent: eventChainLink(aff) });
   });
 
@@ -667,7 +666,7 @@ describe("detail fields — each event kind reads the field the spec names", () 
   // v0.3 no longer has (§3.6f) — and it is still read as written.
   it("an AFFILIATION written with its org in `agent` still folds", () => {
     const g = genesis();
-    const aff = ev("ACTOR_AFFILIATED", { org: "did:web:acme.example", relation: "sandbox_of" }, { prev: g });
+    const aff = { ...ev("ACTOR_AFFILIATED", { org: "did:web:acme.example", relation: "sandbox_of" }, { prev: g }), issuer: "did:web:acme.example" } as ViaEvent;
     const r = foldActorChain([g, aff]);
     expect(r.ok && r.subject.operator).toEqual({ org: "did:web:acme.example", relation: "sandbox_of", affiliationEvent: eventChainLink(aff) });
   });
@@ -1126,6 +1125,15 @@ describe("projectAgentContext (§9 / KYA A.3) — the agent.* CEL namespace", ()
     expect(folded.subject.keys[1]).toMatchObject({ assurance: "pop", binding: "self" });
     expect(folded.subject.keys[1]!.root).toBeUndefined();
     expect(folded.subject.assurance).toBe("pop"); // the floor follows the weakest usable key
+  });
+
+  // §5: an organization claims an actor for itself only — the agent would otherwise inherit the
+  // standing of an organization that never signed for it (§18.4).
+  it("refuses a first AFFILIATION naming an organization other than its signer", () => {
+    const g = genesis();
+    const forged = { ...ev("ACTOR_AFFILIATED", {}, { prev: g }), issuer: "did:web:evil.example" } as ViaEvent;
+    (forged.credentialSubject as Record<string, unknown>).operator = { org: "did:web:acme.example", relation: "operates" };
+    expect(foldActorChain([g, forged])).toMatchObject({ ok: false, reason: "affiliation_invalid" });
   });
 
   // @invariant §5: once an actor has an operator, only that operator writes a later AFFILIATION.
@@ -1760,7 +1768,7 @@ describe("the event's own fields, and events written before 2026-10-11", () => {
 
   it("folds an old AFFILIATION and FORK_EVIDENCE as ACTOR_AFFILIATED and FORK_DETECTED", () => {
     const g = genesis();
-    const aff = evOld("AFFILIATION", { org: "did:web:acme.example", relation: "operates" }, { prev: g });
+    const aff = { ...evOld("AFFILIATION", { org: "did:web:acme.example", relation: "operates" }, { prev: g }), issuer: "did:web:acme.example" } as ViaEvent;
     const fork = evOld("FORK_EVIDENCE", { keyId: "k1", evidence: { ref: "https://e" } }, { prev: aff });
     const r = foldActorChain([g, aff, fork]);
     if (!r.ok) throw new Error(r.reason);

@@ -43,21 +43,22 @@ const ABSORBED = "did:web:humanos.tech:agent:golden-absorbed";
 const JWK = (x: string) => ({ kty: "EC", crv: "P-256", x, y: `${x}-y` });
 
 /** A chain of UNSIGNED events with fixed ids and instants — the fold reads content, not proofs. */
-function chain(subject: string, issuer: string, steps: [string, Record<string, unknown>][]): ViaEvent[] {
+function chain(subject: string, issuer: string, steps: [string, Record<string, unknown>, string?][]): ViaEvent[] {
   const out: ViaEvent[] = [];
-  steps.forEach(([event, fields], i) => {
+  // A step's third element is its own signer — an affiliation is the organization's (§5).
+  steps.forEach(([event, fields, signer = issuer], i) => {
     const prev = out[out.length - 1];
     out.push({
       "@context": ["https://www.w3.org/ns/credentials/v2", "https://via.humanos.tech/ns/v1"],
       id: `urn:via:event:golden-${subject.split(":").pop()}-${i + 1}`,
       type: ["VerifiableCredential", "VIAEvent"],
       specVersion: "0.3",
-      issuer,
+      issuer: signer,
       validFrom: `2026-01-${String(i + 1).padStart(2, "0")}T00:00:00.000Z`,
       credentialSubject: {
         id: subject,
         event,
-        actor: issuer,
+        actor: signer,
         previousEvent: prev ? eventChainLink(prev) : null,
         ...fields,
       },
@@ -74,7 +75,7 @@ const GOLDEN: Record<string, ViaEvent[]> = {
     ["ACTOR_REGISTERED", { agent: { actorType: "organization", keyId: `${ORG}#key-1`, publicKeyMultibase: "z6MkGolden", assurance: "pop", binding: "custodial", bootstrapAnchor: "manual", verifiedAt: "2025-05-01T00:00:00.000Z", existedSince: "2024-03-01T00:00:00.000Z" } }],
     ["ACCREDITED", { accreditation: { level: "verified", method: "kyb-registry", registrar: HUMANOS, verifiedAt: "2026-01-02T00:00:00.000Z", validUntil: "2028-01-02T00:00:00.000Z" } }],
     // Graduation's link, written on dev and stage until 2026-10-15; v0.3 no longer has it (§3.6f).
-    ["AFFILIATION", { operator: { org: "did:web:golden-prod.example", relation: "sandbox_of" } }],
+    ["AFFILIATION", { operator: { org: "did:web:golden-prod.example", relation: "sandbox_of" } }, "did:web:golden-prod.example"],
     ["REGULATORY", { agent: { licence: "PT-GOLDEN-1" } }],
     ["SUSPENDED", { reason: "review" }],
     ["RESUMED", { reason: "cleared" }],
@@ -82,7 +83,7 @@ const GOLDEN: Record<string, ViaEvent[]> = {
   ]),
   agent: chain(AGENT, HUMANOS, [
     ["ACTOR_REGISTERED", { agent: { actorType: "agent", keyId: `${AGENT}#key-1`, jwk: JWK("k1"), assurance: "hardware", binding: "attested", bootstrapAnchor: "api_key", attestationKind: "attestation-eat", root: "aws-nitro", verifiedAt: "2026-01-01T00:00:00.000Z", existedSince: "2026-01-01T00:00:00.000Z", lineage: { parent: "did:web:humanos.tech:agent:golden-parent", event: "sha256-delegated" } } }],
-    ["AFFILIATION", { operator: { org: ORG, relation: "operates" } }],
+    ["AFFILIATION", { operator: { org: ORG, relation: "operates" } }, ORG],
     ["KEY_ADDED", { agent: { keyId: `${AGENT}#key-2`, jwk: JWK("k2"), assurance: "device", binding: "custodial" } }],
     ["KEY_ROTATED", { agent: { predecessorId: `${AGENT}#key-1`, keyId: `${AGENT}#key-3`, jwk: JWK("k3"), assurance: "hardware", binding: "attested", attestationKind: "attestation-eat" } }],
     ["ATTESTATION_RENEWED", { agent: { keyId: `${AGENT}#key-3`, attestationKind: "attestation-eat", verifiedAt: "2026-01-05T00:00:00.000Z" } }],
@@ -95,7 +96,7 @@ const GOLDEN: Record<string, ViaEvent[]> = {
   // Written before 2026-09-28: the affiliation's claim in `agent`, still read from there.
   legacyAgentAffiliation: chain(LEGACY_AGENT, HUMANOS, [
     ["ACTOR_REGISTERED", { agent: { actorType: "agent", keyId: `${LEGACY_AGENT}#key-1`, jwk: JWK("kl"), assurance: "pop", binding: "self", bootstrapAnchor: "api_key" } }],
-    ["AFFILIATION", { agent: { org: ORG, relation: "operates" } }],
+    ["AFFILIATION", { agent: { org: ORG, relation: "operates" } }, ORG],
   ]),
   legacyOrgAccreditation: chain(LEGACY_ORG, HUMANOS, [
     ["ACTOR_REGISTERED", { agent: { actorType: "organization", keyId: `${LEGACY_ORG}#key-1`, publicKeyMultibase: "z6MkLegacy", assurance: "pop", binding: "custodial", bootstrapAnchor: "manual" } }],
@@ -108,7 +109,7 @@ const GOLDEN: Record<string, ViaEvent[]> = {
     ["KEY_ADDED", { agent: { keyId: `${PERSON}#key-3`, publicKeyMultibase: "z6MkChannel", assurance: "pop", binding: "custodial", carriedFrom: `${CHANNEL}#key-1` } }],
     ["ALIAS_ADDED", { agent: { alias: CHANNEL, aliasReason: "merge" } }],
     // Reserved on a person's chain (v0.3 §3.4): a person's affiliation is parked in v0.4 §12.
-    ["ACTOR_AFFILIATED", { operator: { org: ORG, relation: "operates" } }],
+    ["ACTOR_AFFILIATED", { operator: { org: ORG, relation: "operates" } }, ORG],
   ]),
   // Its only key revoked: no usable key carries a rung, so the actor has none (§9.1bis rule 5).
   noUsableKey: chain("did:web:humanos.tech:agent:golden-revoked", HUMANOS, [
