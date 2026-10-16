@@ -429,19 +429,25 @@ const BINDING_RANK: Record<Binding, number> = { self: 0, custodial: 1, attested:
  * an attacker can choose. `assurance` the lowest rung, `binding` the weakest by
  * self < custodial < attested, `root` only when every usable key shares one, `verifiedAt` the
  * oldest. Keys with no rung of their own (chains written before per-key rungs) do not vote; when
- * no usable key carries a rung the summary is whatever was asserted, and `null` says so.
+ * no usable key carries a rung the summary is whatever was asserted, and `null` says so. A key that
+ * states one half of its rung votes, read at the bottom — `pop`, `self` — for the half it does not
+ * (§9.1bis rule 4): leaving it out would let the floor read higher than the weakest key.
  */
 export function actorSummaryFloor(
   keys: ActorKeyState[],
 ): Pick<ViaActorSubject, "assurance" | "binding" | "verifiedAt" | "root"> | null {
-  const voting = keys.filter((k) => k.status !== "revoked" && k.assurance && k.binding);
+  const voting = keys.filter((k) => k.status !== "revoked" && (k.assurance || k.binding));
   if (voting.length === 0) return null;
-  let assurance = voting[0]!.assurance!;
-  let binding = voting[0]!.binding!;
+  const rungOf = (k: ActorKeyState) => ({
+    assurance: k.assurance ?? ("pop" as Assurance),
+    binding: k.binding ?? ("self" as Binding),
+  });
+  let { assurance, binding } = rungOf(voting[0]!);
   let verifiedAt = voting[0]!.verifiedAt ?? "";
   for (const k of voting) {
-    if (assuranceRank(k.assurance!) < assuranceRank(assurance)) assurance = k.assurance!;
-    if (BINDING_RANK[k.binding!] < BINDING_RANK[binding]) binding = k.binding!;
+    const rung = rungOf(k);
+    if (assuranceRank(rung.assurance) < assuranceRank(assurance)) assurance = rung.assurance;
+    if (BINDING_RANK[rung.binding] < BINDING_RANK[binding]) binding = rung.binding;
     if (k.verifiedAt && (!verifiedAt || k.verifiedAt < verifiedAt)) verifiedAt = k.verifiedAt;
   }
   const roots = new Set(voting.map((k) => k.root ?? ""));
@@ -467,14 +473,16 @@ export function actorSummaryFloor(
  * carries `withdrawn`; 13 = a renewal or a keyed regrade naming a revoked key is refused,
  * `key_already_revoked`, and a regrade measures a field the key does not state at the bottom —
  * `pop`, `self` — so it cannot give a key half a rung no evidence earned; 14 = an AFFILIATION on a
- * person's chain folds nothing: a person's affiliation is parked in v0.4).
+ * person's chain folds nothing: a person's affiliation is parked in v0.4; 15 = a key stating one half
+ * of its rung votes in the summary floor, read at the bottom for the other, and a renewal stating one
+ * half sets the other at the bottom rather than keeping it — §9.1bis rule 4).
  *
  * A stored record (a checkpoint) is only as current as the fold that wrote it. Seeding a fold from
  * one written by an older version would silently omit whatever the newer fold adds, so a
  * checkpointed read MUST seed only from a record written by this version and replay the whole
  * chain otherwise.
  */
-export const ACTOR_FOLD_VERSION = 14;
+export const ACTOR_FOLD_VERSION = 15;
 
 /**
  * §5 — a keyed `ASSURANCE_UPDATED` lowers or keeps every rung field; it never raises one or names a new root.
@@ -652,10 +660,11 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         k.verifiedAt = at;
         // A renewal RE-GRADES the key from the evidence it just presented (§9.1bis rule 2), which the
         // writer MUST have checked proves THIS key (§5.2). It states the whole rung: a root it does not
-        // name is gone — weaker evidence must not keep the anchor the stronger one earned.
-        if (detail.assurance) k.assurance = detail.assurance as Assurance;
-        if (detail.binding) k.binding = detail.binding as Binding;
+        // name is gone — weaker evidence must not keep the anchor the stronger one earned. So is a half
+        // it does not state: read at the bottom, `pop` or `self` (§9.1bis rule 4).
         if (detail.assurance || detail.binding) {
+          k.assurance = detail.assurance ? (detail.assurance as Assurance) : "pop";
+          k.binding = detail.binding ? (detail.binding as Binding) : "self";
           if (detail.root) k.root = String(detail.root);
           else delete k.root;
           deriveSummary(subject);

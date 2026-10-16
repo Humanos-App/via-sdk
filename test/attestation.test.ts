@@ -561,6 +561,20 @@ describe("registerChallenge / registerAgentKey (§16.5)", () => {
     if (res.ok) expect(jwkThumbprint(res.cnf.jwk)).toBe(jwkThumbprint(key.publicJwk));
   });
 
+  // @invariant §16.2 — the bound key is signed into the chain and published: its private half, sent by
+  // mistake, and WebCrypto's export members are not.
+  it("binds the public half of the key only, whatever else the client sent", async () => {
+    const key = await generateP256Key();
+    const store = createRegChallengeStore();
+    const { regNonce } = await registerChallenge({ store });
+    const sent = { ...key.privateJwk, ext: true, key_ops: ["sign"] };
+    const res = await registerAgentKey(
+      { cnf: { jwk: sent }, evidence: { type: "device-self", proof: await proofBy(key, regNonce) }, regNonce },
+      { store, audience: AUD },
+    );
+    expect(res.ok && res.cnf.jwk).toEqual({ kty: "EC", crv: "P-256", x: key.publicJwk.x, y: key.publicJwk.y });
+  });
+
   // @refusal — the proof must be the registered key's own signature over THIS verifier's nonce.
   it.each([
     ["no proof", async () => undefined],
@@ -897,6 +911,20 @@ describe("runtime: tee — measurement pinning on its own axis", () => {
       expect(res.assurance).toBe("hardware"); // the key IS in a trusted enclave
       expect(res.runtime).toBeUndefined();    // we just don't know it runs our image
     }
+  });
+
+  // @invariant §9.4ter(d) — `tee` needs a hardware-list root AND a measurement match: a device-list root
+  // (a general-purpose host's secure element) earns its rung and no runtime, whatever its PCRs.
+  it("withholds tee on a device-list root, however the measurements match", async () => {
+    const ca = await mintNitroCa();
+    const { publicJwk } = await generateP256Key();
+    const pcrs = { 0: new Uint8Array(48).fill(0x11) };
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: publicJwk, pcrs });
+    const res = await validateCoseAttestation(doc, { device: [ca.rootPem], hardware: [] }, undefined, {
+      "release-2026-09": { "0": hex(pcrs[0]) },
+    });
+    expect(res.ok && res.assurance).toBe("device");
+    expect(res.ok && res.runtime).toBeUndefined();
   });
 
   it("matches ANY pinned image, so a fleet can run several releases", async () => {

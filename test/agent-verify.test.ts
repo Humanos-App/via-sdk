@@ -11,6 +11,7 @@ import {
   generateEd25519Key,
   stampMandate,
   verifyAgentDirect as verifyStamped,
+  verifyAgentBinding,
   type P256KeyPair,
   type BoundKey,
   type Constraint,
@@ -93,6 +94,42 @@ it("denies a mandate that lists a critical extension this verifier does not impl
   expect(r).toMatchObject({ decision: "deny", reason: "extension_unsupported" });
 });
 
+// @invariant §0.13 / §16.10: a version this SDK does not understand fails closed on the agent-direct path,
+// as on the presentation path.
+it("denies a mandate of a spec version this SDK does not understand", async () => {
+  const future = structuredClone(mandate);
+  (future as { specVersion: string }).specVersion = "9.9";
+  const params = { amount: 10, action: "transfer" };
+  const r = await verifyAgentDirect(future, { pop: await pop(attested, "transfer", params), action: "transfer", params }, deps());
+  expect(r).toMatchObject({ decision: "deny", reason: "unsupported_spec_version" });
+});
+
+// @invariant §8 / §16.7 step 0: there is no offline profile — a mandate binding agents, verified with no
+// candidates resolved through their current actors, is denied rather than read as written.
+it("denies a mandate binding agents when the caller resolved no candidates", async () => {
+  const params = { amount: 10, action: "transfer" };
+  const r = await verifyAgentDirect(
+    mandate,
+    { pop: await pop(attested, "transfer", params), action: "transfer", params },
+    deps({ candidates: undefined }),
+  );
+  expect(r).toMatchObject({ decision: "deny", reason: "actor_unresolvable" });
+});
+
+// §16.7 A5: a verifier with no nonce check is misconfigured — thrown, never recorded as the agent's deny.
+it.each([
+  ["verifyAgentDirect", async (call: { pop: string; action: string; params: Record<string, unknown> }) =>
+    verifyAgentDirect(mandate, call, deps({ validateNonce: undefined as never }))],
+  ["verifyAgentBinding", async (call: { pop: string; action: string; params: Record<string, unknown> }) =>
+    verifyAgentBinding(
+      { authorizedAgents: mandate.credentialSubject.mandate.context.authorizedAgents!, pop: call.pop, verifier: `did:web:${RP}`, mandateId: mandate.id, action: call.action, params: call.params },
+      {} as never,
+    )],
+])("refuses to check a PoP with no nonce check wired — %s", async (_fn, check) => {
+  const params = { amount: 10, action: "transfer" };
+  await expect(check({ pop: await pop(attested, "transfer", params), action: "transfer", params })).rejects.toThrow(/validateNonce/);
+});
+
 // @invariant §20.3: a mismatched enforcement is denied at verify too, before any rule or reviewer —
 // a mandate from an issuer that did not refuse it must not fail open here.
 // @invariant §8 step 1: the mandate is checked against its own STAMP before anything else — a body
@@ -171,6 +208,10 @@ const deps = (over: Partial<AgentDirectDeps> = {}): AgentDirectDeps => ({
   },
   loadCredentialRecord: async () => ({ status: "ACTIVE", validFrom: "2026-01-01T00:00:00.000Z" }),
   loadActionVersion: async (id) => (id === ACTION.$id ? ACTION : null),
+  validateNonce: () => "ok",
+  // §16.7 step 0, as a caller that resolved every entry of the test mandate to itself: no actor here
+  // was suspended, merged or rotated, so the candidates are the signed entries.
+  candidates: mandate.credentialSubject.mandate.context.authorizedAgents,
   now,
   ...over,
 });
@@ -536,7 +577,7 @@ describe("§16.4 binding entry — the wire shape and the two verifiedAt encodin
     entry.verifiedAt = now.getTime() - 1000; // number, as v0.2 wrote it
     entry.maxAttestationStaleness = 60;      // one minute window; 1 s old → fresh
     const params = { amount: 10, action: "transfer" };
-    const fresh = await verifyAgentDirect(legacy, { pop: await pop(attested, "transfer", params), action: "transfer", params }, deps());
+    const fresh = await verifyAgentDirect(legacy, { pop: await pop(attested, "transfer", params), action: "transfer", params }, deps({ candidates: legacy.credentialSubject.mandate.context.authorizedAgents }));
     expect(fresh.decision).toBe("allow");
     expect(fresh.agent?.verifiedAt).toBe(now.getTime() - 1000);
     expect(fresh.agent?.did).toBe(AGENT_DID);
@@ -546,12 +587,12 @@ describe("§16.4 binding entry — the wire shape and the two verifiedAt encodin
     const e2 = iso.credentialSubject.mandate.context.authorizedAgents![0]!;
     e2.verifiedAt = new Date(now.getTime() - 120_000).toISOString();
     e2.maxAttestationStaleness = 60;
-    const stale = await verifyAgentDirect(iso, { pop: await pop(attested, "transfer", params), action: "transfer", params }, deps());
+    const stale = await verifyAgentDirect(iso, { pop: await pop(attested, "transfer", params), action: "transfer", params }, deps({ candidates: iso.credentialSubject.mandate.context.authorizedAgents }));
     expect(stale).toMatchObject({ decision: "deny", reason: "attestation_stale" });
 
     // An unreadable instant on an entry WITH a window fails closed.
     e2.verifiedAt = "not-a-date";
-    const bad = await verifyAgentDirect(iso, { pop: await pop(attested, "transfer", params), action: "transfer", params }, deps());
+    const bad = await verifyAgentDirect(iso, { pop: await pop(attested, "transfer", params), action: "transfer", params }, deps({ candidates: iso.credentialSubject.mandate.context.authorizedAgents }));
     expect(bad).toMatchObject({ decision: "deny", reason: "attestation_stale" });
   });
 });

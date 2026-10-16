@@ -224,7 +224,9 @@ export async function validateCoseAttestation(
     // so the rung stands. What the actor does not get is `tee` — and a mandate that cares says
     // `agent.runtime in ["tee"]`. `expectedPcrs` above stays a hard gate for deployments that
     // already rely on it.
-    const runtime = matchMeasurement(payload.pcrs ?? {}, expectedMeasurements);
+    // §9.4ter(d): `tee` needs BOTH a hardware-list root and a measurement match — a device-list root is a
+    // general-purpose host's secure element, not an enclave, whatever its quote's PCRs say.
+    const runtime = graded.rung === "hardware" ? matchMeasurement(payload.pcrs ?? {}, expectedMeasurements) : null;
 
     // (4) attested cnf = the embedded public_key (raw uncompressed EC point).
     const jwk = rawPointToJwk(payload.public_key);

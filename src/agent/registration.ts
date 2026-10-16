@@ -263,8 +263,12 @@ export async function registerAgentKey(
   }
   await deps.store?.consume(regNonce);
 
+  // §16.2: what is bound is a public key and nothing else. It is signed into the chain and published in
+  // the DID document, both permanent: a private half (`d`) a client sent, or WebCrypto's `ext` and
+  // `key_ops`, are not written there. The thumbprint reads these four members only, so it is unchanged.
+  const { kty, crv, x, y } = result.cnf.jwk;
   const bound: BoundKey = {
-    cnf: result.cnf,
+    cnf: { jwk: { kty, crv, x, y } },
     assurance: result.assurance,
     binding: result.binding,
     root: result.root,

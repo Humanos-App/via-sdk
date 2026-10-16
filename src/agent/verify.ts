@@ -23,6 +23,7 @@ import type {
 } from "../types.js";
 import { enforcementFitsShape, enforcementOf, mayWidenAuthority } from "../mandate/description.js";
 import { EXT_SEMANTIC_REVIEW, MAX_EXECUTIONS_REACHED, unsupportedCriticalExtension, verifyStamp, type ResolvePublicKey } from "../mandate/build.js";
+import { detectSpecVersion } from "../version.js";
 
 /** The validated rung, surfaced into the CEL context as `agent.*` (§16.8). */
 export interface AgentEnv {
@@ -52,9 +53,19 @@ export interface PopCheckInput {
   params: Record<string, unknown>;
 }
 export interface PopCheckDeps {
-  /** A5 — single-use/freshness of the PoP nonce; returns 'ok' or a deny reason. */
-  validateNonce?: (nonce: string, mandateId: string) => string | Promise<string>;
+  /**
+   * A5 — single-use/freshness of the PoP nonce; returns 'ok' or a deny reason. REQUIRED (0.3.6): without
+   * it a captured PoP replays for as long as its other checks hold, and the verifier would not know.
+   */
+  validateNonce: (nonce: string, mandateId: string) => string | Promise<string>;
   now?: Date;
+}
+
+/** A verifier wired without A5 is misconfigured, not presented a bad call: thrown, never a deny on the agent. */
+function requireNonceCheck(deps: { validateNonce?: unknown }): void {
+  if (typeof deps.validateNonce !== "function") {
+    throw new TypeError("VIA: verifying a PoP requires deps.validateNonce (v0.3 §16.7 A5) — no nonce check is wired");
+  }
 }
 export interface PopCheckResult {
   ok: boolean;
@@ -64,7 +75,8 @@ export interface PopCheckResult {
 }
 
 /** §16.7 A1–A6 + A8 — decode, select the bound key, verify the signature, aud, nonce, action_hash, staleness. */
-export async function verifyAgentBinding(input: PopCheckInput, deps: PopCheckDeps = {}): Promise<PopCheckResult> {
+export async function verifyAgentBinding(input: PopCheckInput, deps: PopCheckDeps): Promise<PopCheckResult> {
+  requireNonceCheck(deps ?? {});
   const d = decodePoP(input.pop); // A1: typ/alg/structure
   if (!d.ok || !d.payload || !d.jkt) return { ok: false, reason: d.reason ?? "pop_invalid" };
 
@@ -74,10 +86,8 @@ export async function verifyAgentBinding(input: PopCheckInput, deps: PopCheckDep
   if (!(await verifyPoPSignature(input.pop, bk.cnf.jwk))) return { ok: false, reason: "pop_invalid" }; // A3
   if (d.payload.aud !== input.verifier) return { ok: false, reason: "aud_mismatch" }; // A4
 
-  if (deps.validateNonce) {
-    const r = await deps.validateNonce(d.payload.nonce, input.mandateId); // A5
-    if (r !== "ok") return { ok: false, reason: r as AgentReasonCode };
-  }
+  const nonce = await deps.validateNonce(d.payload.nonce, input.mandateId); // A5
+  if (nonce !== "ok") return { ok: false, reason: nonce as AgentReasonCode };
 
   if (d.payload.action_hash !== actionHash(input.mandateId, input.action, input.params)) {
     return { ok: false, reason: "action_hash_mismatch" }; // A6
@@ -150,12 +160,16 @@ export interface AgentDirectDeps {
    * §16.7 step 0 — the candidate key set the caller resolved from the mandate's `authorizedAgents`
    * through each entry's CURRENT actor (merge followed, status gated, pinned key walked). Passed
    * BESIDE the mandate, never written into it: the mandate must stay the body its STAMP signs.
-   * Absent, the entries are read as written (raw pins, or a caller with no actor access).
+   * REQUIRED when the mandate binds agents (0.3.6): there is no offline profile (§8), so a mandate
+   * with `authorizedAgents` and no candidates is denied `actor_unresolvable` — read as written, a
+   * suspended agent or a revoked key would pass. A verifier with no actor access resolves each entry
+   * from its DID document.
    */
   candidates?: BoundKey[];
   loadCredentialRecord: (urn: string) => CredentialRecordLike | Promise<CredentialRecordLike>;
   loadActionVersion: (actionId: string) => ActionDetail | null | Promise<ActionDetail | null>;
-  validateNonce?: (nonce: string, mandateId: string) => string | Promise<string>;
+  /** §16.7 A5 — required, as for {@link verifyAgentBinding}. */
+  validateNonce: (nonce: string, mandateId: string) => string | Promise<string>;
   /** §17.4 — does this action/amount require a fresh grantor step-up? */
   requiresStepUp?: (action: string, params: Record<string, unknown>) => boolean | Promise<boolean>;
   /**
@@ -294,6 +308,7 @@ export async function verifyAgentDirect(
   req: { pop: string; action: string; params: Record<string, unknown> },
   deps: AgentDirectDeps,
 ): Promise<AgentDirectResult> {
+  requireNonceCheck(deps);
   const urn = mandate.id;
   const m = mandate.credentialSubject.mandate;
   const now = deps.now ?? new Date();
@@ -303,6 +318,8 @@ export async function verifyAgentDirect(
   // §8 step 1: the mandate's own STAMP, first. A copy edited after issuance verifies nothing.
   const stamp = await verifyStamp(mandate, deps.resolvePublicKey);
   if (!stamp.valid) return deny("credential_stamp_invalid", urn, enforcement);
+  // §0.13 / §16.10: a version this SDK does not understand fails closed, as on the presentation path.
+  if (detectSpecVersion(mandate) === "unknown") return deny("unsupported_spec_version", urn, enforcement);
   // §19.2: a critical extension this verifier does not implement is denied, never ignored. Agent-direct
   // implements semantic review (with a reviewer wired — without one §20.6 denies on its own).
   if (unsupportedCriticalExtension(m, AGENT_DIRECT_EXTENSIONS)) return deny("extension_unsupported", urn, enforcement);
@@ -324,7 +341,9 @@ export async function verifyAgentDirect(
   // 5. agent binding is REQUIRED when the mandate carries authorizedAgents (§16.4)
   // Bound or not is the SIGNED mandate's question; which keys may sign is step 0's answer.
   const signed = m.context.authorizedAgents;
-  const boundKeys = signed?.length ? (deps.candidates ? withSignedWindow(deps.candidates, signed) : signed) : signed;
+  // §16.7 step 0 is the caller's, and not optional: entries read as written skip the actor gate.
+  if (signed?.length && !deps.candidates) return deny("actor_unresolvable", urn, enforcement);
+  const boundKeys = signed?.length ? withSignedWindow(deps.candidates!, signed) : signed;
   if (!boundKeys || boundKeys.length === 0) return deny("agent_not_bound", urn, enforcement);
   const pop = await verifyAgentBinding(
     { authorizedAgents: boundKeys, pop: req.pop, verifier: deps.verifier.did, mandateId: urn, action: req.action, params: req.params },

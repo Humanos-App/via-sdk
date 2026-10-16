@@ -299,6 +299,24 @@ describe("foldActorChain — attestation and assurance", () => {
     expect(k.attestation?.kind).toBe("none");
   });
 
+  // @invariant §9.1bis rule 4: a renewal states the key's whole rung — a half it does not state is read at
+  // the bottom, not kept from the evidence before.
+  it("a renewal stating one half of the rung sets the other at the bottom", () => {
+    const r = foldActorChain(
+      chain((p) => ev("ATTESTATION_RENEWED", { keyId: "k1", assurance: "hardware", verifiedAt: "2026-10-01T00:00:00.000Z" }, { prev: p })),
+    );
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.subject.keys[0]).toMatchObject({ assurance: "hardware", binding: "self" });
+  });
+
+  // @invariant §9.1bis rules 4 and 5: the summary is the floor across usable keys, and a key that states
+  // one half of its rung votes, read at the bottom for the other — or the floor reads above the weakest key.
+  it("counts a key stating half its rung in the summary floor", () => {
+    const r = foldActorChain(chain((p) => ev("KEY_ADDED", { keyId: "k2", jwk: JWK, assurance: "hardware" }, { prev: p })));
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.subject).toMatchObject({ assurance: "hardware", binding: "self" });
+  });
+
   // @invariant §9.3/§9.4ter: runtime is per key. A software key added beside an enclave key does not
   // inherit `tee` — the hole §9.1bis closed for the rung, closed here for the runtime.
   it("a key added beside an attested one does not inherit its runtime", () => {
