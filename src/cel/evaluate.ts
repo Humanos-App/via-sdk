@@ -158,6 +158,39 @@ export function validateCelExpression(expression: string): { ok: true } | { ok: 
   }
 }
 
+/**
+ * The `executionParams` fields an expression reads, from its parse tree — `executionParams.amount` and
+ * `executionParams["max-results"]`, never the same words inside a string. Null when it does not parse.
+ * v0.3 §21.1: an `everyCall` rule is `skip` on a call that carries none of one of them.
+ */
+export function executionParamsRead(expression: string): string[] | null {
+  let ast: unknown;
+  try {
+    ast = celParse(expression).ast;
+  } catch {
+    return null;
+  }
+  const read = new Set<string>();
+  const isScope = (n: unknown) => (n as { op?: unknown; args?: unknown })?.op === "id" && (n as { args?: unknown }).args === "executionParams";
+  const visit = (node: unknown): void => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      node.forEach(visit);
+      return;
+    }
+    const { op, args } = node as { op?: unknown; args?: unknown };
+    if (typeof op !== "string") return;
+    if ((op === "." || op === ".?") && Array.isArray(args) && isScope(args[0]) && typeof args[1] === "string") read.add(args[1]);
+    if (op === "[]" && Array.isArray(args) && isScope(args[0])) {
+      const key = args[1] as { op?: unknown; args?: unknown };
+      if (key?.op === "value" && typeof key.args === "string") read.add(key.args);
+    }
+    visit(args);
+  };
+  visit(ast);
+  return [...read];
+}
+
 export function evaluateRule(rule: Pick<ActionRule, "name" | "description" | "expression">, ctx: CelContext): RuleEvaluation {
   try {
     const value = CEL_ENVIRONMENT.evaluate(prepare(rule.expression, ctx), ctx as unknown as Record<string, unknown>);

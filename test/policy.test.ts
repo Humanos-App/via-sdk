@@ -10,6 +10,7 @@ import {
   eventChainLink,
   eventScopeOf,
   evaluatePolicy,
+  executionParamsRead,
   foldActorChain,
   generateEd25519Key,
   generateP256Key,
@@ -407,6 +408,35 @@ describe("POLICY_PUBLISHED in the fold (§5, §21.2)", () => {
 });
 
 describe("evaluatePolicy (§21.3)", () => {
+  // @invariant §21.1: a rule for every call that reads a parameter is `skip` on a call without it — a
+  // payment cap never denies a search.
+  it("skips a rule for every call on a call that lacks the parameter it reads", async () => {
+    const CAP: ActionDetail = {
+      $id: "urn:via:action:cap",
+      type: "VIAAction",
+      version: "1",
+      userParams: {},
+      executionParams: {},
+      rules: [{ name: "payment_cap", description: "No payment over €5,000", conditions: [], expression: "executionParams.amount <= 5000" }],
+    };
+    const capped: ViaPolicy = { $id: POLICY_URN, type: "VIAPolicy", version: 1, everyCall: ref(CAP), entries: [{ tool: "kb_search", effect: "allow" }, { tool: "pay", effect: "allow" }] };
+    const run = (tool: string, params: Record<string, unknown>) =>
+      evaluatePolicy(capped, { tool, params, agent: { did: SUPPORT } }, { loadActionVersion: (id) => (id === CAP.$id ? CAP : null) });
+    expect(await run("kb_search", { query: "refund policy" })).toMatchObject({
+      outcome: "allow",
+      evaluations: [{ rule: "payment_cap", result: "skip", reason: "the call carries no amount" }],
+    });
+    expect(await run("pay", { amount: 9000 })).toMatchObject({ outcome: "deny", reason: "policy_denied" });
+    expect(await run("pay", { amount: 40 })).toMatchObject({ outcome: "allow", evaluations: [{ rule: "payment_cap", result: "pass" }] });
+  });
+
+  it("reads the parameters an expression uses from its parse tree, not its text", () => {
+    expect(executionParamsRead('executionParams.amount <= 5000 && executionParams["max-results"] < 10')?.sort()).toEqual(["amount", "max-results"]);
+    expect(executionParamsRead('executionParams.note == "executionParams.secret"')).toEqual(["note"]);
+    expect(executionParamsRead('assuranceRank(agent.assurance) >= assuranceRank("device")')).toEqual([]);
+    expect(executionParamsRead("executionParams.amount <=")).toBeNull();
+  });
+
   it("reads the action at its pinned digest, never a changed one", async () => {
     const changed = { ...REFUNDS, rules: [{ ...REFUNDS.rules[0]!, expression: "true" }] };
     const r = await evaluatePolicy(POLICY, { tool: "refund_order", params: { amount: 400 }, agent: { did: SUPPORT, assurance: "device" } }, {

@@ -1,7 +1,7 @@
 import { actionDigestSRI } from "../action/build.js";
 import { validateExecutionParams } from "../action/execution-params.js";
 import type { ActionDetail } from "../action/types.js";
-import { evaluateRules, type RuleEvaluation } from "../cel/evaluate.js";
+import { evaluateRules, executionParamsRead, type RuleEvaluation } from "../cel/evaluate.js";
 import { policyEntryFor } from "./build.js";
 import type { PolicyActionRef, PolicyEntry, ViaPolicy } from "./types.js";
 
@@ -78,15 +78,24 @@ export async function evaluatePolicy(policy: ViaPolicy, call: PolicyCall, deps: 
     return actionDigestSRI(action) === ref.digestSRI ? action : "action_invalid";
   };
 
-  // 1. Rules for every call. The params' shape is not checked: they govern calls of every shape.
+  // 1. Rules for every call. The params' shape is not checked: they govern calls of every shape. A rule
+  // reading a parameter the call does not carry is `skip` (§21.1) — `amount <= 5000` holds for the calls
+  // that state an amount and leaves a search alone. One that does not parse runs, and errors: a deny.
   if (policy.everyCall) {
     const action = await load(policy.everyCall);
     if (typeof action === "string") return deny(action);
     const ctx = await env(action);
     if ("denied" in ctx) return deny(ctx.denied as string);
-    const r = evaluateRules(action.rules, ctx);
-    evaluations.push(...r.evaluations);
-    if (!passed(r.evaluations)) return deny("policy_denied");
+    const carried: Record<string, unknown> = { ...call.params, tool: call.tool };
+    for (const rule of action.rules) {
+      const lacking = (executionParamsRead(rule.expression) ?? []).find((p) => carried[p] === undefined);
+      evaluations.push(
+        lacking !== undefined
+          ? { rule: rule.name, result: "skip", reason: `the call carries no ${lacking}` }
+          : evaluateRules([rule], ctx).evaluations[0]!,
+      );
+    }
+    if (!passed(evaluations)) return deny("policy_denied");
   }
 
   // 2. The entry for the tool and the agent.

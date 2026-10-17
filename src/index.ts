@@ -116,6 +116,7 @@ export {
 export {
   evaluateRule,
   evaluateRules,
+  executionParamsRead,
   validateCelExpression,
   CEL_EXPRESSION_MAX_LENGTH,
   type CelContext,
