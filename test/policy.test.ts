@@ -230,7 +230,7 @@ describe("a call with no mandate (§21.3, §21.4)", () => {
   // @invariant §21.3: the step-up an entry's action asks for goes to the entry's approvers — the
   // policy's when it names none — and with no approver named is refused.
   it("takes a step-up to the policy's approvers, and refuses it with none named", async () => {
-    expect(await underPolicy("refund_order", { amount: 40 })).toMatchObject({ decision: "rechallenge", approvers: [ANA, RUI] });
+    expect(await underPolicy("refund_order", { amount: 40 })).toMatchObject({ decision: "rechallenge", stepUp: { trigger: "policy" }, approvers: [ANA, RUI] });
     expect(await underPolicy("refund_order", { amount: 40 }, { stepUpSatisfied: true })).toMatchObject({ decision: "allow" });
     expect(await underPolicy("refund_order", { amount: 400 })).toMatchObject({ decision: "deny", reason: "policy_denied" });
 
@@ -270,10 +270,10 @@ describe("the policy under a mandate (§21.3 step 4)", () => {
     $id: "urn:via:action:messages",
     type: "VIAAction",
     version: "1",
-    tools: ["slack_send_message", "slack_delete_channel"],
-    unrestricted: ["slack_send_message", "slack_delete_channel"],
+    tools: ["slack_send_message", "slack_delete_channel", "refund_order"],
+    unrestricted: ["slack_send_message", "slack_delete_channel", "refund_order"],
     userParams: {},
-    executionParams: { channel_id: { type: "string" } },
+    executionParams: { channel_id: { type: "string" }, amount: { type: "number" } },
     rules: [],
   };
 
@@ -293,7 +293,7 @@ describe("the policy under a mandate (§21.3 step 4)", () => {
     );
   });
 
-  const call = async (tool: string, params: Record<string, unknown>) =>
+  const call = async (tool: string, params: Record<string, unknown>, over: Partial<Parameters<typeof verifyAgentDirect>[2]> = {}) =>
     verifyAgentDirect(
       mandate,
       { pop: await popFor(supportKey, actionHash(mandate.id, tool, params)), action: tool, params },
@@ -306,6 +306,7 @@ describe("the policy under a mandate (§21.3 step 4)", () => {
         validateNonce: () => "ok",
         now,
         policy: VERSION,
+        ...over,
       },
     );
 
@@ -319,6 +320,25 @@ describe("the policy under a mandate (§21.3 step 4)", () => {
       enforcement: "rules",
       policyDigest: VERSION.policyDigest,
     });
+  });
+
+  // @invariant §21.3: a confirmation goes to whoever wrote the rule that asks for it — the policy's to its
+  // approvers, under a customer's mandate too; the mandate's to its grantor, first.
+  it("takes the policy's confirmation to its approvers under a mandate, after the grantor's own", async () => {
+    expect(await call("refund_order", { amount: 40 })).toMatchObject({
+      decision: "rechallenge",
+      stepUp: { trigger: "policy" },
+      approvers: [ANA, RUI],
+    });
+    expect(await call("refund_order", { amount: 40 }, { policyStepUpSatisfied: true })).toMatchObject({ decision: "allow" });
+    // The mandate asks too: its grantor first, then the approvers, then the call runs.
+    const asks = { requiresStepUp: (tool: string) => tool === "refund_order" };
+    expect(await call("refund_order", { amount: 40 }, asks)).toMatchObject({ decision: "rechallenge", stepUp: { trigger: "action" } });
+    expect(await call("refund_order", { amount: 40 }, { ...asks, stepUpSatisfied: true })).toMatchObject({
+      decision: "rechallenge",
+      stepUp: { trigger: "policy" },
+    });
+    expect(await call("refund_order", { amount: 40 }, { ...asks, stepUpSatisfied: true, policyStepUpSatisfied: true })).toMatchObject({ decision: "allow" });
   });
 });
 

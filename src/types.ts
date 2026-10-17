@@ -98,7 +98,7 @@ export type Enforcement = "rules" | "semantic" | "none";
 export type DecisionEnforcement = Enforcement | "policy";
 
 /** §17.4 — who may demand a fresh grantor co-sign for a call under this mandate. */
-export type StepUpTrigger = "action" | "mandate" | "verifier";
+export type StepUpTrigger = "action" | "mandate" | "verifier" | "policy";
 
 /**
  * §17.4 — the mandate's own step-up declaration. The ONLY way an action-less mandate can ask for a

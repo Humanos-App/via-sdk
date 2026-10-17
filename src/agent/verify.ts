@@ -203,6 +203,11 @@ export interface AgentDirectDeps {
   review?: (input: SemanticReviewInput) => SemanticReviewVerdict | Promise<SemanticReviewVerdict>;
   /** Whether a fresh grantor step-up assertion accompanied this request (verified elsewhere, §17.4). */
   stepUpSatisfied?: boolean;
+  /**
+   * §21.3 — whether one of the policy's approvers confirmed this call (verified elsewhere). A step-up the
+   * policy asks for is theirs, not the grantor's, under a mandate too.
+   */
+  policyStepUpSatisfied?: boolean;
   now?: Date;
   /**
    * v0.3 §9.3 — EXTENDED `agent.*` fields (bootstrapAnchor, status, …) merged
@@ -405,7 +410,7 @@ export async function verifyAgentDirect(
   // A `deny` or a failing `rules` entry refuses; `allow`, `mandate` and no entry leave the mandate's
   // decision standing, since an allow cannot widen a mandate. A step-up its action asks for is the grantor's.
   const policyMark = deps.policy ? { policyDigest: deps.policy.policyDigest } : {};
-  let policyAsks = false;
+  let policyApprovers: string[] | undefined;
   const capped = async (): Promise<AgentDirectResult | null> => {
     if (!deps.policy) return null;
     const verdict = await evaluatePolicy(
@@ -416,8 +421,25 @@ export async function verifyAgentDirect(
     if (verdict.outcome === "deny") {
       return { ...deny(verdict.reason ?? "policy_denied", urn, enforcement), evaluations: verdict.evaluations, agent: pop.agent, ...policyMark };
     }
-    policyAsks = verdict.stepUp !== undefined;
+    policyApprovers = verdict.stepUp?.approvers;
     return null;
+  };
+  // §21.3 — a confirmation goes to whoever wrote the rule that asks for it: the policy's to its approvers,
+  // after the grantor's. With no approver named it cannot be asked: `stepup_required`.
+  const askApprovers = (evaluations: RuleEvaluation[] = []): AgentDirectResult | null => {
+    if (!policyApprovers || deps.policyStepUpSatisfied) return null;
+    if (policyApprovers.length === 0) return { ...deny("stepup_required", urn, enforcement), evaluations, agent: pop.agent, ...policyMark };
+    return {
+      decision: "rechallenge",
+      credentialId: urn,
+      reason: "stepup_required",
+      evaluations,
+      agent: pop.agent,
+      enforcement,
+      stepUp: { trigger: "policy", reason: "stepup_required" },
+      approvers: policyApprovers,
+      ...policyMark,
+    };
   };
   const askStepUp = (trigger: StepUpTrigger, reason: string, evaluations: RuleEvaluation[] = []): AgentDirectResult => ({
     decision: "rechallenge",
@@ -448,9 +470,11 @@ export async function verifyAgentDirect(
     }
     const refused = await capped();
     if (refused) return { ...refused, ...(reviewer ? { reviewer } : {}) };
-    if ((mandateAsks || actionAsks || policyAsks) && !deps.stepUpSatisfied) {
+    if ((mandateAsks || actionAsks) && !deps.stepUpSatisfied) {
       return { ...askStepUp(mandateAsks ? "mandate" : "action", "stepup_required"), ...(reviewer ? { reviewer } : {}) };
     }
+    const staff = askApprovers();
+    if (staff) return { ...staff, ...(reviewer ? { reviewer } : {}) };
     return { decision: "allow", credentialId: urn, evaluations: [], agent: pop.agent, enforcement, ...policyMark, ...(reviewer ? { reviewer } : {}) };
   }
 
@@ -476,7 +500,9 @@ export async function verifyAgentDirect(
   if (!action.rules || action.rules.length === 0) {
     const refused = await capped();
     if (refused) return refused;
-    if ((mandateAsks || actionAsks || policyAsks) && !deps.stepUpSatisfied) return askStepUp(mandateAsks ? "mandate" : "action", "stepup_required");
+    if ((mandateAsks || actionAsks) && !deps.stepUpSatisfied) return askStepUp(mandateAsks ? "mandate" : "action", "stepup_required");
+    const staff = askApprovers();
+    if (staff) return staff;
     return { decision: "allow", credentialId: urn, evaluations: [], agent: pop.agent, enforcement, ...unrestricted, ...policyMark };
   }
 
@@ -510,9 +536,11 @@ export async function verifyAgentDirect(
     const refused = await capped();
     if (refused) return { ...refused, evaluations: [...evaluations, ...refused.evaluations] };
     // Authority passed — NOW a step-up is worth a person's attention (S7).
-    if ((mandateAsks || actionAsks || policyAsks) && !deps.stepUpSatisfied) {
+    if ((mandateAsks || actionAsks) && !deps.stepUpSatisfied) {
       return askStepUp(mandateAsks ? "mandate" : "action", "stepup_required", evaluations);
     }
+    const staff = askApprovers(evaluations);
+    if (staff) return staff;
     return { decision: "allow", credentialId: urn, evaluations, agent: pop.agent, enforcement, ...unrestricted, ...policyMark };
   }
 
@@ -620,7 +648,7 @@ export async function verifyAgentUnderPolicy(
       reason: "stepup_required",
       evaluations,
       ...mark,
-      stepUp: { trigger: "action", reason: "stepup_required" },
+      stepUp: { trigger: "policy", reason: "stepup_required" },
       approvers: verdict.stepUp.approvers,
     });
   }
