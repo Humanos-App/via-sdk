@@ -1,5 +1,5 @@
 {
-  "version": 16,
+  "version": 17,
   "chains": {
     "organization": {
       "accreditation": {
@@ -29,6 +29,13 @@
         "affiliationEvent": "sha256-A/NkHGyRXiZVxfNsWJqh3QUNix+F08WdBId7LohiDZU=",
         "org": "did:web:golden-prod.example",
         "relation": "sandbox_of"
+      },
+      "policy": {
+        "event": "sha256-R/fg6lEiI/7mEd3AmNf5ddqPAbzafOX4WrdUhFhJaSg=",
+        "id": "urn:via:policy:golden",
+        "policyDigest": "sha256-golden-policy",
+        "publishedBy": "did:web:humanos.tech:user:golden-email",
+        "version": 1
       },
       "status": "active",
       "verifiedAt": "2025-05-01T00:00:00.000Z"

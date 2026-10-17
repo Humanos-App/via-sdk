@@ -214,6 +214,12 @@ export interface ViaActorSubject {
     withdrawn?: { reason: AccreditationRevocationReason };
   };
   /**
+   * ORGANIZATIONS only — the current version of its `VIAPolicy` (v0.3 §21.2): the one the last
+   * `POLICY_PUBLISHED` names, `event` pointing at that event. The policy's content is served apart and
+   * checked against `policyDigest`; the chain says which version is in force and who accepted it.
+   */
+  policy?: { id: string; version: number; policyDigest: string; publishedBy: string; event: string };
+  /**
    * Prior identifiers that resolve to this actor (v0.3 §3.6). `merge` — an actor retired INTO this
    * one (its chain ends pointing here); `inherited` — an alias such an actor held, which came with
    * it; `channel` — a contact identifier that never had a chain of its own.
@@ -316,9 +322,20 @@ export const EVENT_SCOPE = {
   ACTOR_MERGED: "actor",
   RUNTIME_ATTESTED: "actor",
   SNAPSHOT_ISSUED: "actor",
+  POLICY_PUBLISHED: "actor",
 } as const satisfies Record<EventType, "credential" | "actor">;
 
 export type EventScope = (typeof EVENT_SCOPE)[EventType];
+
+/**
+ * §2.0, §21.5 — the scope of ONE event. Its kind's, except that a decision, an outcome or a step-up about
+ * an organization's policy — a call with no mandate — is `policy`-scoped: the same kinds as on a mandate,
+ * about another subject. Read from the subject, since a kind alone no longer says which.
+ */
+export function eventScopeOf(e: Pick<ViaEvent, "credentialSubject">): EventScope | "policy" {
+  if (String(e.credentialSubject?.id ?? "").startsWith("urn:via:policy:")) return "policy";
+  return EVENT_SCOPE[canonicalEventType(e.credentialSubject.event) as EventType];
+}
 
 /** The actor-scoped event kinds (v0.3 §3.4) — DERIVED, never a second list. */
 /**
@@ -478,14 +495,16 @@ export function actorSummaryFloor(
  * half sets the other at the bottom rather than keeping it — §9.1bis rule 4 (the platform's copy used
  * 15 on 2026-10-16 for the first half of 16 alone); 16 = `anchoredBy` drops the removed
  * `actorSnapshot` reference, and an AFFILIATION naming an organization other than its signer is
- * refused, `affiliation_invalid`, the first one too).
+ * refused, `affiliation_invalid`, the first one too; 17 = `POLICY_PUBLISHED` folded into an
+ * organization's `policy`, refused on another actor, `policy_on_non_organization`, or out of sequence,
+ * `policy_invalid`).
  *
  * A stored record (a checkpoint) is only as current as the fold that wrote it. Seeding a fold from
  * one written by an older version would silently omit whatever the newer fold adds, so a
  * checkpointed read MUST seed only from a record written by this version and replay the whole
  * chain otherwise.
  */
-export const ACTOR_FOLD_VERSION = 16;
+export const ACTOR_FOLD_VERSION = 17;
 
 /**
  * §5 — a keyed `ASSURANCE_UPDATED` lowers or keeps every rung field; it never raises one or names a new root.
@@ -742,6 +761,28 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
       case "DELEGATED":
         // reserved; delegation is parked in v0.4 §8 — accepted, nothing folded
         break;
+      case "POLICY_PUBLISHED": {
+        // §21.2 — only an organization has a policy, and only it publishes one: signed by the
+        // organization the chain is about, accepted by a member, numbered in sequence, one policy URN.
+        if (subject.actorType !== "organization") return fail("policy_on_non_organization", i);
+        const { policy, version, policyDigest, publishedBy } = detail as {
+          policy?: unknown; version?: unknown; policyDigest?: unknown; publishedBy?: unknown;
+        };
+        const ownSigner = e.issuer === subject.id || (subject.aliases ?? []).some((a) => a.did === e.issuer);
+        const current = subject.policy;
+        const inSequence = current ? version === current.version + 1 && policy === current.id : version === 1;
+        if (
+          typeof policy !== "string" || !policy.startsWith("urn:via:policy:") ||
+          typeof version !== "number" || !Number.isInteger(version) ||
+          typeof policyDigest !== "string" || policyDigest.length === 0 ||
+          typeof publishedBy !== "string" || publishedBy.length === 0 ||
+          !ownSigner || !inSequence
+        ) {
+          return fail("policy_invalid", i);
+        }
+        subject.policy = { id: policy, version, policyDigest, publishedBy, event: eventChainLink(e) };
+        break;
+      }
       case "ACTOR_AFFILIATED": {
         // §3.4: on a person's (`user`) chain it is reserved — a person's affiliation is parked in
         // v0.4 §12 — and folds nothing. An `operator` here would make §18.5 project the org's

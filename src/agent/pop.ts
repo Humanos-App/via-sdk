@@ -57,6 +57,15 @@ export function actionHash(mandateId: string, action: string, params: Record<str
 }
 
 /**
+ * v0.3 §21.4 — `action_hash` for a call with no mandate: `JCS({ policy, action, params })`, the policy's
+ * URN in place of the mandate's id. The PoP binds the authority the agent claims, and with no mandate
+ * that is its organization's policy.
+ */
+export function policyActionHash(policy: string, action: string, params: Record<string, unknown>): string {
+  return computeSRI(canonicalizeRFC8785({ policy, action, params }));
+}
+
+/**
  * The algorithm a key can sign with — derived from the KEY, never read from a header (§16.6).
  *
  * This is the whole of RFC 8725 §3.1 in one function. If a verifier selects its verification

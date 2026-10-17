@@ -43,6 +43,14 @@ export interface EventFields {
   revocationReason?: string;
   /** §0.6.1 — on a `VERIFICATION_APPROVED`: the call's tool is one the version marks unrestricted. */
   unrestricted?: boolean;
+  /** §21.3 — the organization's policy version a decision was checked against. */
+  policyDigest?: string;
+  /** §21.5 — on a policy-scoped event: the agent whose chain it is on (not `agent`, a legacy container). */
+  agentDid?: string;
+  // ── about an organization's policy (`POLICY_PUBLISHED`, §21.2) ──
+  policy?: string;
+  version?: number;
+  publishedBy?: string;
   /** §9.9/§16.9 — the rung relied on at presentation. */
   keyIdEvaluated?: string;
   assuranceEvaluated?: string;

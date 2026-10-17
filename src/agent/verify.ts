@@ -4,7 +4,7 @@
 //    at step 8, not a separate check (§16.8 / C1).
 //  • verifyAgentDirect — the full §16.11 flow: status/validity/audience + A1–A8 +
 //    the action CEL (with the rung env) + step-up → `rechallenge` (D7).
-import { actionHash, decodePoP, verifyPoPSignature } from "./pop.js";
+import { actionHash, decodePoP, policyActionHash, verifyPoPSignature } from "./pop.js";
 import { jwkThumbprint } from "../crypto/p256.js";
 import { evaluateRules, type RuleEvaluation } from "../cel/evaluate.js";
 import { agentReasonForRule } from "./constraints.js";
@@ -15,6 +15,7 @@ import type { ActionDetail } from "../action/types.js";
 import { boundKeyVerifiedAtMs, type AgentReasonCode, type Assurance, type Binding, type BoundKey, type Root } from "./types.js";
 import type {
   CredentialStatus,
+  DecisionEnforcement,
   Enforcement,
   MandateDescription,
   MandateStepUp,
@@ -24,6 +25,8 @@ import type {
 import { enforcementFitsShape, enforcementOf, mayWidenAuthority } from "../mandate/description.js";
 import { EXT_SEMANTIC_REVIEW, MAX_EXECUTIONS_REACHED, unsupportedCriticalExtension, verifyStamp, type ResolvePublicKey } from "../mandate/build.js";
 import { detectSpecVersion } from "../version.js";
+import { evaluatePolicy, type PolicyEvaluationDeps } from "../policy/evaluate.js";
+import type { PolicyVersion } from "../policy/types.js";
 
 /** The validated rung, surfaced into the CEL context as `agent.*` (§16.8). */
 export interface AgentEnv {
@@ -48,7 +51,10 @@ export interface PopCheckInput {
   authorizedAgents: BoundKey[];
   pop: string; // the via-pop+jwt JWS
   verifier: string; // aud
-  mandateId: string;
+  /** The mandate the call is made under — or, with no mandate, `policy` (§21.4). Exactly one. */
+  mandateId?: string;
+  /** §21.4 — the organization's policy, by URN, for a call with no mandate. */
+  policy?: string;
   action: string;
   params: Record<string, unknown>;
 }
@@ -59,6 +65,15 @@ export interface PopCheckDeps {
    */
   validateNonce: (nonce: string, mandateId: string) => string | Promise<string>;
   now?: Date;
+}
+
+/** The authority a PoP is bound to: the mandate's id, or with no mandate the policy's URN (§21.4). */
+function boundAuthority(input: Pick<PopCheckInput, "mandateId" | "policy">): string {
+  const authority = input.mandateId ?? input.policy;
+  if (!authority || (input.mandateId && input.policy)) {
+    throw new TypeError("VIA: a PoP is bound to a mandate or, with no mandate, to a policy — exactly one (v0.3 §21.4)");
+  }
+  return authority;
 }
 
 /** A verifier wired without A5 is misconfigured, not presented a bad call: thrown, never a deny on the agent. */
@@ -86,10 +101,14 @@ export async function verifyAgentBinding(input: PopCheckInput, deps: PopCheckDep
   if (!(await verifyPoPSignature(input.pop, bk.cnf.jwk))) return { ok: false, reason: "pop_invalid" }; // A3
   if (d.payload.aud !== input.verifier) return { ok: false, reason: "aud_mismatch" }; // A4
 
-  const nonce = await deps.validateNonce(d.payload.nonce, input.mandateId); // A5
+  const authority = boundAuthority(input);
+  const nonce = await deps.validateNonce(d.payload.nonce, authority); // A5
   if (nonce !== "ok") return { ok: false, reason: nonce as AgentReasonCode };
 
-  if (d.payload.action_hash !== actionHash(input.mandateId, input.action, input.params)) {
+  const expected = input.policy
+    ? policyActionHash(input.policy, input.action, input.params)
+    : actionHash(input.mandateId!, input.action, input.params);
+  if (d.payload.action_hash !== expected) {
     return { ok: false, reason: "action_hash_mismatch" }; // A6
   }
 
@@ -203,6 +222,12 @@ export interface AgentDirectDeps {
    * it while no loader is supplied errors in CEL and therefore denies (fail closed, §16.8).
    */
   loadAccreditation?: () => AccreditationLoad | Promise<AccreditationLoad>;
+  /**
+   * v0.3 §21.3 — the current version of the policy of the agent's operator, the organization the §8
+   * step 3 walk ends at. It caps the call after the mandate's rules and before the step-up. Absent when
+   * the organization has published none.
+   */
+  policy?: PolicyVersion;
 }
 
 /** The fields of `accreditation.*` a rule may read — v0.3 §18.6, a closed list. */
@@ -271,7 +296,7 @@ export interface AgentDirectResult {
    * §20.3 — which machinery actually governed this decision. Present on EVERY result: without it
    * an `allow` with no evaluations means both "no rules ran" and "rules ran and matched nothing".
    */
-  enforcement?: Enforcement;
+  enforcement?: DecisionEnforcement;
   /** §17.4 — set on a `rechallenge`: who demanded the co-sign, and why. Recorded on the event (§9.9). */
   stepUp?: { trigger: StepUpTrigger; reason: string };
   /** §20.6 — the reviewer that took part, for the audit record (§9.9). */
@@ -283,6 +308,13 @@ export interface AgentDirectResult {
    * the decision says so rather than reading like a call the rules checked.
    */
   unrestricted?: true;
+  /** §21.3 — the organization's policy version the call was checked against, under a mandate or not. */
+  policyDigest?: string;
+  /** §21.4–§21.5 — a call with no mandate: the policy's URN and the agent's DID, which name its chain. */
+  policy?: string;
+  agentDid?: string;
+  /** §21.3 — on a `rechallenge` under the policy: the members who may confirm the call. */
+  approvers?: string[];
 }
 
 const deny = (reason: string, credentialId?: string, enforcement?: Enforcement): AgentDirectResult => ({
@@ -369,6 +401,24 @@ export async function verifyAgentDirect(
   // `requiresStepUp`) and the mandate itself (`mandate` in `mandate.stepUp.triggers` — every call).
   const actionAsks = deps.requiresStepUp ? await deps.requiresStepUp(req.action, req.params) : false;
   const mandateAsks = m.stepUp?.triggers?.includes("mandate") ?? false;
+  // §21.3 step 4 — the organization's policy caps the call: after the mandate's rules, before the step-up.
+  // A `deny` or a failing `rules` entry refuses; `allow`, `mandate` and no entry leave the mandate's
+  // decision standing, since an allow cannot widen a mandate. A step-up its action asks for is the grantor's.
+  const policyMark = deps.policy ? { policyDigest: deps.policy.policyDigest } : {};
+  let policyAsks = false;
+  const capped = async (): Promise<AgentDirectResult | null> => {
+    if (!deps.policy) return null;
+    const verdict = await evaluatePolicy(
+      deps.policy.content,
+      { tool: req.action, params: req.params, agent: { ...(deps.agentEnvExtras ?? {}), ...pop.agent } },
+      { loadActionVersion: deps.loadActionVersion, ...(deps.loadAccreditation ? { loadAccreditation: projectedLoader(deps.loadAccreditation) } : {}) },
+    );
+    if (verdict.outcome === "deny") {
+      return { ...deny(verdict.reason ?? "policy_denied", urn, enforcement), evaluations: verdict.evaluations, agent: pop.agent, ...policyMark };
+    }
+    policyAsks = verdict.stepUp !== undefined;
+    return null;
+  };
   const askStepUp = (trigger: StepUpTrigger, reason: string, evaluations: RuleEvaluation[] = []): AgentDirectResult => ({
     decision: "rechallenge",
     credentialId: urn,
@@ -377,6 +427,7 @@ export async function verifyAgentDirect(
     agent: pop.agent,
     enforcement,
     stepUp: { trigger, reason },
+    ...policyMark,
   });
 
   // 6. no action → the words govern, or nothing does (§20.3). `allow` now SAYS which.
@@ -395,10 +446,12 @@ export async function verifyAgentDirect(
         return { ...askStepUp("verifier", "semantic_review"), ...named };
       }
     }
-    if ((mandateAsks || actionAsks) && !deps.stepUpSatisfied) {
-      return { ...askStepUp("mandate", "stepup_required"), ...(reviewer ? { reviewer } : {}) };
+    const refused = await capped();
+    if (refused) return { ...refused, ...(reviewer ? { reviewer } : {}) };
+    if ((mandateAsks || actionAsks || policyAsks) && !deps.stepUpSatisfied) {
+      return { ...askStepUp(mandateAsks ? "mandate" : "action", "stepup_required"), ...(reviewer ? { reviewer } : {}) };
     }
-    return { decision: "allow", credentialId: urn, evaluations: [], agent: pop.agent, enforcement, ...(reviewer ? { reviewer } : {}) };
+    return { decision: "allow", credentialId: urn, evaluations: [], agent: pop.agent, enforcement, ...policyMark, ...(reviewer ? { reviewer } : {}) };
   }
 
   // 6b. load + pin-check the ActionVersion
@@ -421,8 +474,10 @@ export async function verifyAgentDirect(
 
   // 8. no rules → allow
   if (!action.rules || action.rules.length === 0) {
-    if ((mandateAsks || actionAsks) && !deps.stepUpSatisfied) return askStepUp(mandateAsks ? "mandate" : "action", "stepup_required");
-    return { decision: "allow", credentialId: urn, evaluations: [], agent: pop.agent, enforcement, ...unrestricted };
+    const refused = await capped();
+    if (refused) return refused;
+    if ((mandateAsks || actionAsks || policyAsks) && !deps.stepUpSatisfied) return askStepUp(mandateAsks ? "mandate" : "action", "stepup_required");
+    return { decision: "allow", credentialId: urn, evaluations: [], agent: pop.agent, enforcement, ...unrestricted, ...policyMark };
   }
 
   // 9. CEL — with the rung env as `agent.*` (this is where A7 is enforced).
@@ -452,11 +507,13 @@ export async function verifyAgentDirect(
     ...(accreditation ? { accreditation } : {}),
   });
   if (decision === "allow") {
+    const refused = await capped();
+    if (refused) return { ...refused, evaluations: [...evaluations, ...refused.evaluations] };
     // Authority passed — NOW a step-up is worth a person's attention (S7).
-    if ((mandateAsks || actionAsks) && !deps.stepUpSatisfied) {
+    if ((mandateAsks || actionAsks || policyAsks) && !deps.stepUpSatisfied) {
       return askStepUp(mandateAsks ? "mandate" : "action", "stepup_required", evaluations);
     }
-    return { decision: "allow", credentialId: urn, evaluations, agent: pop.agent, enforcement, ...unrestricted };
+    return { decision: "allow", credentialId: urn, evaluations, agent: pop.agent, enforcement, ...unrestricted, ...policyMark };
   }
 
   // map the first failing rule to a specific agent reason (A7) or the generic rule_failed
@@ -477,6 +534,97 @@ function toolStanding(action: Pick<ActionDetail, "rules" | "tools" | "unrestrict
   if (!action.tools?.includes(tool)) return "not_covered";
   if ((action.rules ?? []).some((r) => !r.appliesTo?.length || r.appliesTo.includes(tool))) return "limited";
   return action.unrestricted?.includes(tool) ? "unrestricted" : "not_covered";
+}
+
+/** §18.6 — the accreditation loader, its answer projected to the fields a rule may read. */
+function projectedLoader(load: NonNullable<AgentDirectDeps["loadAccreditation"]>): NonNullable<PolicyEvaluationDeps["loadAccreditation"]> {
+  return async () => {
+    const loaded = await load();
+    if (!loaded) return undefined;
+    if ("denied" in loaded && loaded.denied === true) return { denied: true, reason: String(loaded.reason) };
+    return projectAccreditation(loaded as Record<string, unknown>);
+  };
+}
+
+export interface AgentUnderPolicyDeps {
+  /** The calling verifier's identity (the PoP `aud`). */
+  verifier: { did: string };
+  /**
+   * §21.4 — the agent's usable keys (§7), resolved through its CURRENT actor as §8 steps 2–4 resolve a
+   * bound agent: merge followed, status and operator gated. No mandate pins a key, so these are the
+   * candidate set A1–A8 select from.
+   */
+  candidates: BoundKey[];
+  /** §21.3 — the current version of the agent's operator's policy; null when it has published none. */
+  policy: PolicyVersion | null;
+  loadActionVersion: (actionId: string) => ActionDetail | null | Promise<ActionDetail | null>;
+  /** §16.7 A5 — the nonce the challenge issued for this agent under the policy (§21.4). */
+  validateNonce: (nonce: string, policy: string) => string | Promise<string>;
+  /** Whether one of the policy's approvers confirmed this call (verified elsewhere, §21.3). */
+  stepUpSatisfied?: boolean;
+  now?: Date;
+  /** v0.3 §9.3 — extended `agent.*` fields, as for {@link AgentDirectDeps.agentEnvExtras}. */
+  agentEnvExtras?: Record<string, unknown>;
+  /** v0.3 §18.5 — the operator's accreditation, as for {@link AgentDirectDeps.loadAccreditation}. */
+  loadAccreditation?: () => AccreditationLoad | Promise<AccreditationLoad>;
+}
+
+/**
+ * v0.3 §21.4 — a call with no mandate, on the organization's policy. The agent presents
+ * `{ policy, action, params, pop }`, its PoP binding `{ policy, action, params }`; the caller resolved
+ * the agent (`agentDid`, its usable keys) and its operator's current policy version.
+ *
+ * Allowed when the policy's `everyCall` rules pass and its entry for the tool and agent is `allow`, or a
+ * `rules` entry that passes; `mandate_required` when the policy says nothing of the tool, or `mandate`;
+ * `policy_denied` when it refuses. A step-up the entry's action asks for goes to the policy's approvers
+ * (`rechallenge`), and with none named is `stepup_required`. Every result names the policy and the
+ * agent — its chain (§21.5) — with `enforcement: "policy"`.
+ */
+export async function verifyAgentUnderPolicy(
+  req: { agentDid: string; policy: string; pop: string; action: string; params: Record<string, unknown> },
+  deps: AgentUnderPolicyDeps,
+): Promise<AgentDirectResult> {
+  requireNonceCheck(deps);
+  const scope = { enforcement: "policy" as const, policy: req.policy, agentDid: req.agentDid };
+  const result = (decision: AgentDirectResult["decision"], extra: Partial<AgentDirectResult> = {}): AgentDirectResult => ({
+    decision,
+    evaluations: [],
+    ...scope,
+    ...extra,
+  });
+  if (!deps.candidates?.length) return result("deny", { reason: "agent_not_bound" });
+  const pop = await verifyAgentBinding(
+    { authorizedAgents: deps.candidates, pop: req.pop, verifier: deps.verifier.did, policy: req.policy, action: req.action, params: req.params },
+    { validateNonce: deps.validateNonce, now: deps.now ?? new Date() },
+  );
+  if (!pop.ok || !pop.agent) return result("deny", { reason: pop.reason ?? "pop_invalid" });
+  if (discriminatorMismatch(req.action, req.params)) return result("deny", { reason: "action_mismatch", agent: pop.agent });
+  // An organization that has published no policy authorizes nothing on its own: every tool needs a mandate.
+  if (!deps.policy) return result("deny", { reason: "mandate_required", agent: pop.agent });
+  const mark = { policyDigest: deps.policy.policyDigest, agent: pop.agent };
+  // The PoP binds the policy the agent claims; it must be its organization's, the one being read.
+  if (deps.policy.content.$id !== req.policy) return result("deny", { reason: "policy_denied", ...mark });
+
+  const verdict = await evaluatePolicy(
+    deps.policy.content,
+    { tool: req.action, params: req.params, agent: { ...(deps.agentEnvExtras ?? {}), ...pop.agent, did: req.agentDid } },
+    { loadActionVersion: deps.loadActionVersion, ...(deps.loadAccreditation ? { loadAccreditation: projectedLoader(deps.loadAccreditation) } : {}) },
+  );
+  const evaluations = verdict.evaluations;
+  if (verdict.outcome === "deny") return result("deny", { reason: verdict.reason ?? "policy_denied", evaluations, ...mark });
+  if (verdict.outcome === "mandate") return result("deny", { reason: "mandate_required", evaluations, ...mark });
+  if (verdict.stepUp && !deps.stepUpSatisfied) {
+    // No approver named: nobody to ask, as on the presentation path (§17.4).
+    if (verdict.stepUp.approvers.length === 0) return result("deny", { reason: "stepup_required", evaluations, ...mark });
+    return result("rechallenge", {
+      reason: "stepup_required",
+      evaluations,
+      ...mark,
+      stepUp: { trigger: "action", reason: "stepup_required" },
+      approvers: verdict.stepUp.approvers,
+    });
+  }
+  return result("allow", { evaluations, ...mark, ...(verdict.unrestricted ? { unrestricted: true as const } : {}) });
 }
 
 /** §16.6 — the params name a tool other than the action presented. */

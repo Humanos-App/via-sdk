@@ -79,6 +79,9 @@ export const EVENT_TYPES = [
   "SNAPSHOT_ISSUED",
   // reserved; delegation is parked in v0.4 §8 — accepted on a chain, state-neutral
   "DELEGATED",
+  // v0.3 §21.2 — a new version of an organization's `VIAPolicy`, signed by the organization and accepted
+  // by a member (`publishedBy`). Rare by design: a change of rules, never a call (§9.5).
+  "POLICY_PUBLISHED",
 ] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];

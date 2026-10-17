@@ -277,6 +277,7 @@ export {
 } from "./agent/types.js";
 export {
   actionHash,
+  policyActionHash,
   buildPoP,
   algForKey,
   allowedPopAlgs,
@@ -328,6 +329,7 @@ export {
 export {
   verifyAgentBinding,
   verifyAgentDirect,
+  verifyAgentUnderPolicy,
   projectAccreditation,
   ACCREDITATION_ENV_FIELDS,
   type AgentEnv,
@@ -336,6 +338,7 @@ export {
   type PopCheckResult,
   type AgentDirectDeps,
   type AgentDirectResult,
+  type AgentUnderPolicyDeps,
   type SemanticReviewInput,
   type SemanticReviewVerdict,
   type CredentialRecordLike,
@@ -422,6 +425,7 @@ export {
   // DID. Consumers persisting events branch on this (the platform keys `credentialId` vs
   // `subjectDid` off it), so it has to be reachable as a VALUE, not just a type.
   EVENT_SCOPE,
+  eventScopeOf,
   type EventScope,
   type ActorRecordResult,
   type ActorEventType,
@@ -437,4 +441,9 @@ export {
   type ActorFoldResult,
   type ActorAudit,
 } from "./actor/model.js";
+
+// The organization's policy (v0.3 §21)
+export * from "./policy/types.js";
+export { policyDigest, policyEntryFor, policyPublishIssues, type PolicyPublishContext } from "./policy/build.js";
+export { evaluatePolicy, type PolicyCall, type PolicyEvaluation, type PolicyEvaluationDeps } from "./policy/evaluate.js";
 

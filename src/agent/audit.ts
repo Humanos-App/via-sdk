@@ -15,7 +15,10 @@ import type { AgentEnv } from "./verify.js";
  */
 export function buildVerificationEvent(
   input: {
-    mandateId: string;
+    /** The mandate the call was made under — or, with no mandate, `policy` (§21.5). Exactly one. */
+    mandateId?: string;
+    /** §21.5 — a call with no mandate: the policy and the agent whose chain the event is on. */
+    policy?: { id: string; agentDid: string };
     decision: "allow" | "deny" | "rechallenge";
     /** The verifier's DID — the signer, so the event's `issuer` (v0.3 §2). */
     issuer: string;
@@ -41,14 +44,15 @@ export function buildVerificationEvent(
     | "affiliationRef"
     | "revocationReason"
     | "unrestricted"
+    | "policyDigest"
   >,
   signer: EventSigner,
 ): ViaEvent | null {
   if (input.decision === "rechallenge") return null;
-  const { mandateId, decision, agent, popNonceRef, previousEvent, ...rest } = input;
+  const { mandateId, policy, decision, agent, popNonceRef, previousEvent, ...rest } = input;
   const ev = buildEvent({
     ...rest,
-    subject: mandateId,
+    ...subjectOf(mandateId, policy),
     event: decision === "allow" ? "VERIFICATION_APPROVED" : "VERIFICATION_DENIED",
     previousEvent: previousEvent ?? null,
     assuranceEvaluated: agent.assurance,
@@ -67,7 +71,9 @@ export function buildVerificationEvent(
  */
 export function buildOutcomeEvent(
   input: {
-    mandateId: string;
+    /** The mandate the call was made under — or, with no mandate, `policy` (§21.5). Exactly one. */
+    mandateId?: string;
+    policy?: { id: string; agentDid: string };
     outcome: "completed" | "failed";
     /** The `id` of the `VERIFICATION_APPROVED` this outcome closes. */
     decision: string;
@@ -81,12 +87,23 @@ export function buildOutcomeEvent(
   },
   signer: EventSigner,
 ): ViaEvent {
-  const { mandateId, outcome, previousEvent, ...rest } = input;
+  const { mandateId, policy, outcome, previousEvent, ...rest } = input;
   const ev = buildEvent({
     ...rest,
-    subject: mandateId,
+    ...subjectOf(mandateId, policy),
     event: outcome === "completed" ? "ACTION_COMPLETED" : "ACTION_FAILED",
     previousEvent: previousEvent ?? null,
   });
   return signEvent(ev, signer);
+}
+
+/**
+ * What a decision or an outcome is about: the mandate it was made under, or with no mandate the policy
+ * and the agent, which together name its chain (v0.3 §21.5).
+ */
+function subjectOf(mandateId: string | undefined, policy: { id: string; agentDid: string } | undefined): { subject: string; agentDid?: string } {
+  if (!mandateId === !policy) {
+    throw new TypeError("VIA: a decision is about a mandate or, with no mandate, a policy and its agent — exactly one (v0.3 §21.5)");
+  }
+  return mandateId ? { subject: mandateId } : { subject: policy!.id, agentDid: policy!.agentDid };
 }

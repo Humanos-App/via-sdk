@@ -80,6 +80,8 @@ const GOLDEN: Record<string, ViaEvent[]> = {
     ["SUSPENDED", { reason: "review" }],
     ["RESUMED", { reason: "cleared" }],
     ["SNAPSHOT_ISSUED", { agent: { sequence: 3 } }],
+    // §21.2 — a version of the organization's policy, signed by the organization, accepted by a member.
+    ["POLICY_PUBLISHED", { policy: "urn:via:policy:golden", version: 1, policyDigest: "sha256-golden-policy", publishedBy: PERSON }, ORG],
   ]),
   agent: chain(AGENT, HUMANOS, [
     ["ACTOR_REGISTERED", { agent: { actorType: "agent", keyId: `${AGENT}#key-1`, jwk: JWK("k1"), assurance: "hardware", binding: "attested", bootstrapAnchor: "api_key", attestationKind: "attestation-eat", root: "aws-nitro", verifiedAt: "2026-01-01T00:00:00.000Z", existedSince: "2026-01-01T00:00:00.000Z", lineage: { parent: "did:web:humanos.tech:agent:golden-parent", event: "sha256-delegated" } } }],

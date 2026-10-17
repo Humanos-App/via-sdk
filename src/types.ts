@@ -94,6 +94,9 @@ export type DescriptionAuthor = "issuer" | "agent" | "grantor";
 /** §20.3 — which machinery governs this mandate. */
 export type Enforcement = "rules" | "semantic" | "none";
 
+/** §20.3, §21.3 — what governed a decision: a mandate's enforcement, or `policy` for a call with no mandate. */
+export type DecisionEnforcement = Enforcement | "policy";
+
 /** §17.4 — who may demand a fresh grantor co-sign for a call under this mandate. */
 export type StepUpTrigger = "action" | "mandate" | "verifier";
 
