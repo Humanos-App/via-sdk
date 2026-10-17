@@ -84,10 +84,19 @@ export function actionPublishIssues(content: Pick<ActionDetail, "rules" | "tools
   for (const r of rules) {
     if (!r.description?.trim()) issues.push(`rule "${r.name}" has no description`);
   }
-  if (!content.tools) {
-    if (rules.length === 0) issues.push("an action that lists no tools needs at least one rule");
-    return issues;
-  }
+  if (!content.tools && rules.length === 0) issues.push("an action that lists no tools needs at least one rule");
+  return [...issues, ...actionToolIssues(content)];
+}
+
+/**
+ * v0.3 §0.6.1 — the tool-list half of {@link actionPublishIssues}: each listed tool limited by a rule or
+ * unrestricted, never both, and no name outside `tools`. Empty for a version without `tools`. For an
+ * issuer whose own checks already cover descriptions and "at least one rule".
+ */
+export function actionToolIssues(content: Pick<ActionDetail, "rules" | "tools" | "unrestricted" | "stepUp">): string[] {
+  if (!content.tools) return [];
+  const issues: string[] = [];
+  const rules = content.rules ?? [];
   const tools = content.tools;
   if (tools.length === 0) issues.push("`tools` lists no tool");
   const listed = new Set(tools);

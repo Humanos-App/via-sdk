@@ -107,6 +107,7 @@ export { operatorsByType, buildTypeResolver, generateCelExpression } from "./act
 export {
   buildActionVersion,
   actionPublishIssues,
+  actionToolIssues,
   actionDigestSRI,
   buildActionReference,
   verifyActionReference,
