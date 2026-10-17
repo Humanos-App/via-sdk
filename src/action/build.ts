@@ -23,9 +23,18 @@ export interface BuildActionVersionInput {
   mapper?: Record<string, string>;
   /** v0.3 §17.4 — the tools whose calls need the grantor's fresh co-sign. */
   stepUp?: { tools: string[] };
+  /** v0.3 §0.6.1 — the tools whose calls the version governs. */
+  tools?: string[];
+  /** v0.3 §0.6.1 — those of `tools` no rule limits, on purpose. */
+  unrestricted?: string[];
 }
 
-/** Build an `ActionDetail` (ActionVersion content), generating each rule's CEL `expression` (N13). */
+/**
+ * Build an `ActionDetail` (ActionVersion content), generating each rule's CEL `expression` (N13).
+ *
+ * It builds drafts too — an imported action whose tools are listed and not yet decided — so it does
+ * not hold a version to what may be PUBLISHED; {@link actionPublishIssues} does.
+ */
 export function buildActionVersion(input: BuildActionVersionInput): ActionDetail {
   const userParams = input.userParams ?? {};
   const executionParams = input.executionParams ?? {};
@@ -53,7 +62,50 @@ export function buildActionVersion(input: BuildActionVersionInput): ActionDetail
     rules,
     ...(input.mapper ? { mapper: input.mapper } : {}),
     ...(input.stepUp?.tools.length ? { stepUp: { tools: input.stepUp.tools } } : {}),
+    // An empty `unrestricted` is kept when `tools` is given: "none of them" is a statement, not an absence.
+    ...(input.tools ? { tools: input.tools, unrestricted: input.unrestricted ?? [] } : {}),
   };
+}
+
+/**
+ * v0.3 §0.6.1 — what stops an ActionVersion being published, in words; empty when it may be. The
+ * issuer's check, run before a version is published, never at verify: a version already published is
+ * read as written.
+ *
+ * - Every rule carries a `description`.
+ * - With `tools`: each listed tool is governed by a rule (one whose `appliesTo` names it, or one with
+ *   no `appliesTo`) or is in `unrestricted`, never both; `unrestricted`, every `appliesTo` and
+ *   `stepUp.tools` name listed tools only. No rules at all is valid only when every tool is unrestricted.
+ * - Without `tools`: at least one rule — one that constrains nothing is a permission, not a policy.
+ */
+export function actionPublishIssues(content: Pick<ActionDetail, "rules" | "tools" | "unrestricted" | "stepUp">): string[] {
+  const issues: string[] = [];
+  const rules = content.rules ?? [];
+  for (const r of rules) {
+    if (!r.description?.trim()) issues.push(`rule "${r.name}" has no description`);
+  }
+  if (!content.tools) {
+    if (rules.length === 0) issues.push("an action that lists no tools needs at least one rule");
+    return issues;
+  }
+  const tools = content.tools;
+  if (tools.length === 0) issues.push("`tools` lists no tool");
+  const listed = new Set(tools);
+  if (listed.size !== tools.length) issues.push("`tools` lists a tool twice");
+  const unrestricted = new Set(content.unrestricted ?? []);
+  const outside = (where: string, names: Iterable<string>) => {
+    for (const n of names) if (!listed.has(n)) issues.push(`${where} names "${n}", which \`tools\` does not list`);
+  };
+  outside("`unrestricted`", unrestricted);
+  for (const r of rules) outside(`rule "${r.name}" (appliesTo)`, r.appliesTo ?? []);
+  outside("`stepUp.tools`", content.stepUp?.tools ?? []);
+  const governed = (tool: string) => rules.some((r) => !r.appliesTo?.length || r.appliesTo.includes(tool));
+  for (const tool of tools) {
+    const limited = governed(tool);
+    if (limited && unrestricted.has(tool)) issues.push(`"${tool}" is both limited by a rule and marked unrestricted`);
+    if (!limited && !unrestricted.has(tool)) issues.push(`"${tool}" is neither limited by a rule nor marked unrestricted`);
+  }
+  return issues;
 }
 
 /**

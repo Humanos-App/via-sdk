@@ -106,6 +106,7 @@ export {
 export { operatorsByType, buildTypeResolver, generateCelExpression } from "./action/cel.js";
 export {
   buildActionVersion,
+  actionPublishIssues,
   actionDigestSRI,
   buildActionReference,
   verifyActionReference,

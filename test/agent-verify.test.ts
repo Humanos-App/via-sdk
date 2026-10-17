@@ -219,6 +219,43 @@ it("holds a call to the per-tool rules of the tool presented when its params lea
   expect(await call({ channel_id: "C-support" })).toMatchObject({ decision: "allow" });
 });
 
+// @invariant §0.6.1 / §0.8: a version that lists its tools governs those alone. Another tool is
+// `tool_not_covered`, and so is a listed one left undecided — otherwise every rule would `skip` it into
+// an allow. A call to an unrestricted tool is allowed saying no rule ran; a limited one is still its rules'.
+it("holds a call to the tools the version lists, each limited by a rule or unrestricted", async () => {
+  const listed = {
+    ...ACTION,
+    tools: ["slack_send_message", "slack_list_channels", "slack_archive"],
+    unrestricted: ["slack_list_channels"],
+    userParams: { channels: { type: "array", items: "string", required: true } },
+    executionParams: { channel_id: { type: "string" } },
+    rules: [{
+      name: "channel_in", description: "Messages go only to the channels you chose",
+      appliesTo: ["slack_send_message"], requires: ["channel_id"],
+      conditions: [{ left: "executionParams.channel_id", operator: "in", right: "userParams.channels" }],
+      expression: "executionParams.channel_id in userParams.channels",
+    }],
+  } as unknown as ActionDetail;
+  const granted = structuredClone(mandate);
+  granted.credentialSubject.mandate.userParams = { channels: { description: "the channels allowed", value: ["C-support"] } };
+  const call = async (tool: string, params: Record<string, unknown>, action: ActionDetail = listed) =>
+    verifyAgentDirect(granted, { pop: await pop(attested, tool, params), action: tool, params }, deps({ loadActionVersion: async () => action }));
+
+  expect(await call("slack_delete_channel", {})).toMatchObject({ decision: "deny", reason: "tool_not_covered" });
+  expect(await call("slack_archive", {})).toMatchObject({ decision: "deny", reason: "tool_not_covered" });
+  const open = await call("slack_list_channels", {});
+  expect(open).toMatchObject({ decision: "allow", unrestricted: true });
+  expect(open.evaluations.map((e) => e.result)).toEqual(["skip"]);
+  expect(await call("slack_send_message", { channel_id: "C-general" })).toMatchObject({ decision: "deny", reason: "rule_failed" });
+  const limited = await call("slack_send_message", { channel_id: "C-support" });
+  expect(limited).toMatchObject({ decision: "allow" });
+  expect(limited).not.toHaveProperty("unrestricted");
+
+  // Every tool unrestricted: no rules at all, and still a decision that says so.
+  const readOnly = { ...listed, tools: ["slack_list_channels"], unrestricted: ["slack_list_channels"], rules: [] } as ActionDetail;
+  expect(await call("slack_list_channels", {}, readOnly)).toMatchObject({ decision: "allow", unrestricted: true, evaluations: [] });
+});
+
 it("denies a mandate whose enforcement does not fit its shape", async () => {
   const mismatched = structuredClone(mandate);
   (mismatched.credentialSubject.mandate as { enforcement?: string }).enforcement = "semantic"; // it has an action

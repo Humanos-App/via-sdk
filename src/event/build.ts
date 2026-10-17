@@ -41,6 +41,8 @@ export interface EventFields {
   decision?: string;
   /** §18.2/§18.5 — with `accreditation_revoked`: why the registrar withdrew it. */
   revocationReason?: string;
+  /** §0.6.1 — on a `VERIFICATION_APPROVED`: the call's tool is one the version marks unrestricted. */
+  unrestricted?: boolean;
   /** §9.9/§16.9 — the rung relied on at presentation. */
   keyIdEvaluated?: string;
   assuranceEvaluated?: string;

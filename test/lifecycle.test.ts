@@ -163,6 +163,39 @@ describe("verify flow (§0.8)", () => {
     expect(r.decision).toBe("allow");
     expect(r.evaluations).toHaveLength(2);
   });
+
+  // @invariant §0.6.1 / §0.8: the presentation path names no tool, so a version that lists its tools
+  // checks none there — its rules decide, as on a version without the list.
+  it("checks no tool list on the presentation path", async () => {
+    const listed = buildActionVersion({
+      $id: "urn:via:action:pay-2",
+      version: "1",
+      userParams: action.userParams,
+      executionParams: action.executionParams,
+      rules: action.rules.map(({ name, conditions }) => ({ name, conditions })),
+      tools: ["create_payment_intent"],
+    });
+    const pinned = stampMandate(
+      buildMandate({
+        subjectOrg: orgDid,
+        grantor: userDid,
+        authorizedDIDs: [verifierDid],
+        action: buildActionReference(listed, "https://api.humanos.tech/actions/pay-2"),
+        userParams: wrapUserParamsWithAction(listed, { maxAmount: 500, categories: ["books", "food"] }),
+        validFrom: "2026-01-01T00:00:00.000Z",
+        description: { text: "Act within the pinned action.", lang: "en", author: "issuer" },
+        enforcement: "rules",
+      }),
+      { privateKey: platform.privateKey, verificationMethod: vm(VIA_PLATFORM_DID) },
+    );
+    const listedVp = buildPresentation({ credential: pinned, holder: VIA_PLATFORM_DID, privateKey: platform.privateKey, verificationMethod: vm(VIA_PLATFORM_DID) });
+    const r = await verify(
+      { presentation: listedVp, executionParams: { amount: 100, category: "books" } },
+      { ...deps(), loadActionVersion: async (id: string) => (id === listed.$id ? listed : null) },
+    );
+    expect(r).toMatchObject({ decision: "allow" });
+    expect(r.evaluations).toHaveLength(2);
+  });
   it("denies over-limit (rule_failed)", async () => {
     const r = await verify({ presentation: vp, executionParams: { amount: 999, category: "books" } }, deps());
     expect(r.decision).toBe("deny");

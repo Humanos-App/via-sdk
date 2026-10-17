@@ -9,7 +9,7 @@ import {
 } from "../src/did/web.js";
 import { buildDidDocument, isAuthorizedFor, resolveVerificationJwk, resolveVerificationKey } from "../src/did/document.js";
 import { generateEd25519Key } from "../src/crypto/ed25519.js";
-import { buildActionVersion, actionDigestSRI, verifyActionReference } from "../src/action/build.js";
+import { buildActionVersion, actionDigestSRI, actionPublishIssues, verifyActionReference } from "../src/action/build.js";
 import { validateExecutionParams, validateUserParams, unwrapUserParamValues } from "../src/action/execution-params.js";
 import { evaluateRules } from "../src/cel/evaluate.js";
 
@@ -116,6 +116,62 @@ describe("action build + CEL generation (N13)", () => {
     expect(buildActionVersion({ ...base, stepUp: { tools: ["pay_claimant"] } }).stepUp).toEqual({ tools: ["pay_claimant"] });
     expect(buildActionVersion({ ...base, stepUp: { tools: [] } })).not.toHaveProperty("stepUp");
     expect(buildActionVersion(base)).not.toHaveProperty("stepUp");
+  });
+});
+
+// v0.3 §0.6.1 — what may be published. Each listed tool is limited by a rule or marked unrestricted,
+// never both; every name outside `tools` is refused; a version without `tools` keeps "at least one rule";
+// and every rule says, in words, what it protects.
+describe("what may be published (§0.6.1)", () => {
+  const channelIn = {
+    name: "channel_in",
+    description: "Messages go only to the channels you chose",
+    appliesTo: ["send"],
+    conditions: [{ left: "executionParams.channel_id", operator: "in" as const, right: "userParams.channels" }],
+  };
+  const base = {
+    $id: "urn:via:action:slack",
+    version: "1",
+    userParams: { channels: { type: "array" as const, items: "string" as const, required: true } },
+    executionParams: { channel_id: { type: "string" as const } },
+  };
+
+  it("accepts a version whose every tool is limited or unrestricted", () => {
+    expect(actionPublishIssues(buildActionVersion({ ...base, tools: ["send", "list"], unrestricted: ["list"], rules: [channelIn] }))).toEqual([]);
+    expect(actionPublishIssues(buildActionVersion({ ...base, tools: ["list"], unrestricted: ["list"] }))).toEqual([]);
+  });
+
+  it("refuses a listed tool left undecided, or both limited and unrestricted", () => {
+    expect(actionPublishIssues(buildActionVersion({ ...base, tools: ["send", "list"], rules: [channelIn] }))).toEqual([
+      '"list" is neither limited by a rule nor marked unrestricted',
+    ]);
+    const unscoped = { ...channelIn, appliesTo: undefined };
+    expect(actionPublishIssues(buildActionVersion({ ...base, tools: ["send", "list"], unrestricted: ["list"], rules: [unscoped] }))).toEqual([
+      '"list" is both limited by a rule and marked unrestricted',
+    ]);
+  });
+
+  it("refuses a name `tools` does not list", () => {
+    const issues = actionPublishIssues(
+      buildActionVersion({ ...base, tools: ["send"], unrestricted: ["list"], rules: [{ ...channelIn, appliesTo: ["post"] }], stepUp: { tools: ["delete"] } }),
+    );
+    expect(issues).toEqual(expect.arrayContaining([
+      '`unrestricted` names "list", which `tools` does not list',
+      'rule "channel_in" (appliesTo) names "post", which `tools` does not list',
+      '`stepUp.tools` names "delete", which `tools` does not list',
+    ]));
+  });
+
+  it("keeps \"at least one rule\" for a version without `tools`, and asks every rule for a description", () => {
+    expect(actionPublishIssues(buildActionVersion(base))).toEqual(["an action that lists no tools needs at least one rule"]);
+    expect(actionPublishIssues(buildActionVersion({ ...base, rules: [{ ...channelIn, description: "" }] }))).toEqual([
+      'rule "channel_in" has no description',
+    ]);
+  });
+
+  it("writes `unrestricted` beside `tools`, empty when no tool is", () => {
+    expect(buildActionVersion({ ...base, tools: ["send"], rules: [channelIn] })).toMatchObject({ tools: ["send"], unrestricted: [] });
+    expect(buildActionVersion({ ...base, rules: [channelIn] })).not.toHaveProperty("tools");
   });
 });
 

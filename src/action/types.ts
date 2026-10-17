@@ -32,6 +32,11 @@ export interface RuleCondition {
 
 export interface ActionRule {
   name: string;
+  /**
+   * The sentence a person reads, and the reason an integrator maps (v0.3 §0.6.1). REQUIRED to publish —
+   * {@link actionPublishIssues} refuses a rule without one — and optional here only because versions
+   * published before it, and drafts, are read as written.
+   */
   description?: string;
   conditions: RuleCondition[];
   /** Auto-generated CEL (N13). Derived from `conditions`; never hand-edited. */
@@ -71,4 +76,12 @@ export interface ActionDetail {
   mapper?: Record<string, string>;
   /** v0.3 §17.4 — the tools whose calls need the grantor's fresh co-sign. */
   stepUp?: { tools: string[] };
+  /**
+   * v0.3 §0.6.1 — the tools whose calls this version governs. On the agent path a call naming another
+   * is `tool_not_covered`; the presentation path names no tool and checks none. Absent on every version
+   * published before the list, which is read as written: no call's tool is checked against it.
+   */
+  tools?: string[];
+  /** v0.3 §0.6.1 — those of `tools` no rule limits, on purpose. A decision on one says `unrestricted`. */
+  unrestricted?: string[];
 }

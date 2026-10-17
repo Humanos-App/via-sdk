@@ -278,6 +278,11 @@ export interface AgentDirectResult {
   reviewer?: { id: string; version?: string };
   /** §18.5 O3 — with `accreditation_revoked`: why the registrar withdrew the accreditation (§18.2). */
   revocationReason?: AccreditationRevocationReason;
+  /**
+   * §0.6.1 — set on an `allow` for a tool the version marks unrestricted: no rule ran, on purpose, and
+   * the decision says so rather than reading like a call the rules checked.
+   */
+  unrestricted?: true;
 }
 
 const deny = (reason: string, credentialId?: string, enforcement?: Enforcement): AgentDirectResult => ({
@@ -400,6 +405,12 @@ export async function verifyAgentDirect(
   const action = await deps.loadActionVersion(m.action.id);
   if (!action) return deny("action_not_found", urn, enforcement);
   if (m.action.digestSRI && actionDigestSRI(action) !== m.action.digestSRI) return deny("action_invalid", urn, enforcement);
+  // §0.6.1, §0.8 — a version that lists its tools governs those alone. A tool it does not list is
+  // refused, and so is a listed one it left undecided: a version no issuer should have published,
+  // whose call every rule would `skip` straight into an allow.
+  const standing = action.tools ? toolStanding(action, req.action) : "unlisted_version";
+  if (standing === "not_covered") return deny("tool_not_covered", urn, enforcement);
+  const unrestricted = standing === "unrestricted" ? ({ unrestricted: true } as const) : {};
 
   // 7. executionParams shape
   try {
@@ -411,7 +422,7 @@ export async function verifyAgentDirect(
   // 8. no rules → allow
   if (!action.rules || action.rules.length === 0) {
     if ((mandateAsks || actionAsks) && !deps.stepUpSatisfied) return askStepUp(mandateAsks ? "mandate" : "action", "stepup_required");
-    return { decision: "allow", credentialId: urn, evaluations: [], agent: pop.agent, enforcement };
+    return { decision: "allow", credentialId: urn, evaluations: [], agent: pop.agent, enforcement, ...unrestricted };
   }
 
   // 9. CEL — with the rung env as `agent.*` (this is where A7 is enforced).
@@ -445,7 +456,7 @@ export async function verifyAgentDirect(
     if ((mandateAsks || actionAsks) && !deps.stepUpSatisfied) {
       return askStepUp(mandateAsks ? "mandate" : "action", "stepup_required", evaluations);
     }
-    return { decision: "allow", credentialId: urn, evaluations, agent: pop.agent, enforcement };
+    return { decision: "allow", credentialId: urn, evaluations, agent: pop.agent, enforcement, ...unrestricted };
   }
 
   // map the first failing rule to a specific agent reason (A7) or the generic rule_failed
@@ -455,6 +466,17 @@ export async function verifyAgentDirect(
   const missing = firstFail?.reason?.startsWith("required_param_missing") ? "required_param_missing" : null;
   const reason = missing ?? (firstFail && agentReasonForRule(firstFail.rule)) ?? "rule_failed";
   return { decision: "deny", credentialId: urn, reason, evaluations, agent: pop.agent, enforcement };
+}
+
+/**
+ * §0.6.1 — where a tool stands in a version that lists its tools: limited by a rule that governs it,
+ * marked unrestricted, or not covered (unlisted, or listed and left undecided). A tool both limited and
+ * marked — a version the publish check refuses — is `limited`: its rules run, and nothing says no rule did.
+ */
+function toolStanding(action: Pick<ActionDetail, "rules" | "tools" | "unrestricted">, tool: string): "limited" | "unrestricted" | "not_covered" {
+  if (!action.tools?.includes(tool)) return "not_covered";
+  if ((action.rules ?? []).some((r) => !r.appliesTo?.length || r.appliesTo.includes(tool))) return "limited";
+  return action.unrestricted?.includes(tool) ? "unrestricted" : "not_covered";
 }
 
 /** §16.6 — the params name a tool other than the action presented. */

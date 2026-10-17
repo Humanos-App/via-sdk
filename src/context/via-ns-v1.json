@@ -40,6 +40,7 @@
     "enforcement": { "@id": "via:enforcement" },
     "decision": { "@id": "via:decision", "@type": "@id" },
     "revocationReason": { "@id": "via:revocationReason" },
+    "unrestricted": { "@id": "via:unrestricted" },
     "stepUp": { "@id": "via:stepUp", "@type": "@json" },
     "review": { "@id": "via:review", "@type": "@json" },
     "client": { "@id": "via:client", "@type": "@json" },

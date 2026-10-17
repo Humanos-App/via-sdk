@@ -40,6 +40,7 @@ export function buildVerificationEvent(
     | "registrarUsed"
     | "affiliationRef"
     | "revocationReason"
+    | "unrestricted"
   >,
   signer: EventSigner,
 ): ViaEvent | null {
