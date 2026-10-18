@@ -233,6 +233,8 @@ export interface AgentDirectDeps {
    * the organization has published none.
    */
   policy?: PolicyVersion;
+  /** §21.1 — every tool any published version of a guardrail lists; required when the policy targets guardrails. */
+  guardrailTools?: PolicyEvaluationDeps["guardrailTools"];
 }
 
 /** The fields of `accreditation.*` a rule may read — v0.3 §18.6, a closed list. */
@@ -415,8 +417,17 @@ export async function verifyAgentDirect(
     if (!deps.policy) return null;
     const verdict = await evaluatePolicy(
       deps.policy.content,
-      { tool: req.action, params: req.params, agent: { ...(deps.agentEnvExtras ?? {}), ...pop.agent } },
-      { loadActionVersion: deps.loadActionVersion, ...(deps.loadAccreditation ? { loadAccreditation: projectedLoader(deps.loadAccreditation) } : {}) },
+      {
+        tool: req.action,
+        params: req.params,
+        agent: { ...(deps.agentEnvExtras ?? {}), ...pop.agent },
+        mandate: m.action ? "guardrail" : "authorization",
+      },
+      {
+        loadActionVersion: deps.loadActionVersion,
+        ...(deps.guardrailTools ? { guardrailTools: deps.guardrailTools } : {}),
+        ...(deps.loadAccreditation ? { loadAccreditation: projectedLoader(deps.loadAccreditation) } : {}),
+      },
     );
     if (verdict.outcome === "deny") {
       return { ...deny(verdict.reason ?? "policy_denied", urn, enforcement), evaluations: verdict.evaluations, agent: pop.agent, ...policyMark };
@@ -595,6 +606,8 @@ export interface AgentUnderPolicyDeps {
   agentEnvExtras?: Record<string, unknown>;
   /** v0.3 §18.5 — the operator's accreditation, as for {@link AgentDirectDeps.loadAccreditation}. */
   loadAccreditation?: () => AccreditationLoad | Promise<AccreditationLoad>;
+  /** §21.1 — every tool any published version of a guardrail lists; required when the policy targets guardrails. */
+  guardrailTools?: PolicyEvaluationDeps["guardrailTools"];
 }
 
 /**
@@ -636,7 +649,11 @@ export async function verifyAgentUnderPolicy(
   const verdict = await evaluatePolicy(
     deps.policy.content,
     { tool: req.action, params: req.params, agent: { ...(deps.agentEnvExtras ?? {}), ...pop.agent, did: req.agentDid } },
-    { loadActionVersion: deps.loadActionVersion, ...(deps.loadAccreditation ? { loadAccreditation: projectedLoader(deps.loadAccreditation) } : {}) },
+    {
+      loadActionVersion: deps.loadActionVersion,
+      ...(deps.guardrailTools ? { guardrailTools: deps.guardrailTools } : {}),
+      ...(deps.loadAccreditation ? { loadAccreditation: projectedLoader(deps.loadAccreditation) } : {}),
+    },
   );
   const evaluations = verdict.evaluations;
   if (verdict.outcome === "deny") return result("deny", { reason: verdict.reason ?? "policy_denied", evaluations, ...mark });

@@ -15,11 +15,22 @@ export interface PolicyActionRef {
   digestSRI: string;
 }
 
+/** §21.1 — a published action of the organization's own, by any of its versions: the group of tools it lists. */
+export interface PolicyGuardrailRef {
+  id: string;
+}
+
 export interface PolicyEntry {
-  /** A tool's name, as calls present it (§16.6). */
-  tool: string;
+  /** A tool's name, as calls present it (§16.6). An entry targets a `tool` or a `guardrail`, never both. */
+  tool?: string;
+  /** Every tool any published version of this action lists (§21.1) — "Slack is off" in one entry. */
+  guardrail?: PolicyGuardrailRef;
   effect: PolicyEffect;
-  /** With `rules` only, and required there. It lists `tool` in its `tools` (§0.6.1). */
+  /**
+   * With `rules` only, and required there. On a `tool` entry it lists the tool in its `tools` (§0.6.1); on a
+   * `guardrail` entry it lists none — its rules run on each of the guardrail's calls, `requires` refusing one that
+   * leaves out what a rule reads.
+   */
   action?: PolicyActionRef;
   /** The agents the entry applies to, by DID. Absent: every agent. One naming the agent wins (§21.1). */
   agents?: string[];
@@ -37,6 +48,8 @@ export interface ViaPolicy {
   everyCall?: PolicyActionRef;
   /** The organization's members, by DID, who may confirm a step-up under the policy (§21.3). */
   approvers?: string[];
+  /** §21.1 — whether its agents may act under a plain authorization, a mandate that pins no action. Default `allow`. */
+  authorizations?: "allow" | "deny";
   entries: PolicyEntry[];
 }
 

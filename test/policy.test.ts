@@ -17,7 +17,7 @@ import {
   jwkThumbprint,
   policyActionHash,
   policyDigest,
-  policyEntryFor,
+  policyEntriesFor,
   policyPublishIssues,
   stampMandate,
   verifyAgentDirect,
@@ -113,6 +113,7 @@ const CONTEXT: PolicyPublishContext = {
     const a = ACTIONS.get(r.id);
     return a && actionDigestSRI(a) === r.digestSRI ? a : null;
   },
+  ownGuardrail: (r) => ACTIONS.has(r.id),
   operates: (did) => did === SUPPORT || did === SALES,
   isMember: (did) => did === ANA || did === RUI,
 };
@@ -150,12 +151,131 @@ async function underPolicy(tool: string, params: Record<string, unknown>, over: 
 }
 
 describe("which entry applies (§21.1)", () => {
+  const none = () => new Set<string>();
   // @invariant §21.1: the most specific entry wins — one naming the agent beats one naming none.
   it("prefers the entry naming the agent, and covers every other agent with the general one", () => {
-    expect(policyEntryFor(POLICY, "kb_search", SALES)?.effect).toBe("deny");
-    expect(policyEntryFor(POLICY, "kb_search", SUPPORT)?.effect).toBe("allow");
-    expect(policyEntryFor(POLICY, "kb_search", "did:web:humanos.tech:agent:new")?.effect).toBe("allow");
-    expect(policyEntryFor(POLICY, "refund_order", SALES)).toBeUndefined();
+    expect(policyEntriesFor(POLICY, "kb_search", SALES, none)[0]?.effect).toBe("deny");
+    expect(policyEntriesFor(POLICY, "kb_search", SUPPORT, none)[0]?.effect).toBe("allow");
+    expect(policyEntriesFor(POLICY, "kb_search", "did:web:humanos.tech:agent:new", none)[0]?.effect).toBe("allow");
+    expect(policyEntriesFor(POLICY, "refund_order", SALES, none)).toEqual([]);
+  });
+
+  // @invariant §21.1: the levels, in order — tool and agent, guardrail and agent, tool, guardrail — and within one,
+  // the most restrictive first.
+  it("ranks a tool over a guardrail within each level, an agent's over everyone's, and the most restrictive first", () => {
+    const slack = new Set(["slack_send_message", "slack_list_channels"]);
+    const ops = new Set(["slack_list_channels"]);
+    const toolsOf = (g: { id: string }) => (g.id === "slack" ? slack : g.id === "ops" ? ops : new Set<string>());
+    const policy = {
+      entries: [
+        { guardrail: { id: "slack" }, effect: "deny" as const },
+        { guardrail: { id: "ops" }, effect: "allow" as const },
+        { tool: "slack_send_message", effect: "allow" as const, agents: [SUPPORT] },
+        { guardrail: { id: "slack" }, effect: "allow" as const, agents: [SALES] },
+        { tool: "slack_list_channels", effect: "allow" as const },
+      ],
+    };
+    expect(policyEntriesFor(policy, "slack_send_message", SUPPORT, toolsOf).map((e) => e.effect)).toEqual(["allow"]);
+    expect(policyEntriesFor(policy, "slack_send_message", SALES, toolsOf).map((e) => e.guardrail?.id)).toEqual(["slack"]);
+    expect(policyEntriesFor(policy, "slack_list_channels", SUPPORT, toolsOf).map((e) => e.tool)).toEqual(["slack_list_channels"]);
+    expect(policyEntriesFor(policy, "slack_send_message", "did:web:other", toolsOf).map((e) => e.effect)).toEqual(["deny"]);
+    // Two guardrails list one tool at one level: the deny comes first, and decides.
+    const both = { entries: [{ guardrail: { id: "ops" }, effect: "allow" as const }, { guardrail: { id: "slack" }, effect: "deny" as const }] };
+    expect(policyEntriesFor(both, "slack_list_channels", SUPPORT, toolsOf).map((e) => e.effect)).toEqual(["deny", "allow"]);
+  });
+});
+
+describe("a guardrail as the target (§21.1)", () => {
+  /** Payments: two tools. A later version of Slack adds `slack_archive` — the policy names neither version. */
+  const PAYMENTS: ActionDetail = {
+    $id: "urn:via:action:payments",
+    type: "VIAAction",
+    version: "1",
+    tools: ["pay_invoice", "transfer"],
+    unrestricted: ["pay_invoice", "transfer"],
+    userParams: {},
+    executionParams: { amount: { type: "number" }, invoice_id: { type: "string" } },
+    rules: [],
+  };
+  const CAP: ActionDetail = {
+    $id: "urn:via:action:cap-5000",
+    type: "VIAAction",
+    version: "1",
+    userParams: {},
+    executionParams: {},
+    rules: [{ name: "payment_cap", description: "At most €5,000 a call", requires: ["amount"], conditions: [], expression: "executionParams.amount <= 5000" }],
+  };
+  const all = new Map([...ACTIONS, [PAYMENTS.$id, PAYMENTS], [CAP.$id, CAP]]);
+  const groups: Record<string, string[]> = {
+    [SLACK.$id]: ["slack_send_message", "slack_list_channels", "slack_archive"],
+    [PAYMENTS.$id]: ["pay_invoice", "transfer"],
+  };
+  const policy: ViaPolicy = {
+    $id: POLICY_URN,
+    type: "VIAPolicy",
+    version: 5,
+    entries: [
+      { guardrail: { id: SLACK.$id }, effect: "deny" },
+      { tool: "slack_send_message", effect: "allow", agents: [SUPPORT] },
+      { guardrail: { id: PAYMENTS.$id }, effect: "rules", action: ref(CAP) },
+    ],
+  };
+  const run = (tool: string, params: Record<string, unknown>, agent = SALES, mandate?: "guardrail" | "authorization", over: Partial<ViaPolicy> = {}) =>
+    evaluatePolicy({ ...policy, ...over }, { tool, params, agent: { did: agent }, ...(mandate ? { mandate } : {}) }, {
+      loadActionVersion: (id) => all.get(id) ?? null,
+      guardrailTools: (g) => new Set(groups[g.id] ?? []),
+    });
+
+  // @invariant §21.1: "Slack is off" covers every tool any version of the Slack guardrail lists, a later one's too.
+  it("blocks every tool of a guardrail, one a later version adds included, but for an agent's own exception", async () => {
+    expect(await run("slack_list_channels", {})).toMatchObject({ outcome: "deny", reason: "policy_denied" });
+    expect(await run("slack_archive", {})).toMatchObject({ outcome: "deny", reason: "policy_denied" });
+    expect(await run("slack_send_message", { channel_id: "C-1" }, SUPPORT)).toMatchObject({ outcome: "allow" });
+    expect(await run("slack_list_channels", {}, SUPPORT)).toMatchObject({ outcome: "deny" });
+  });
+
+  // @invariant §21.1: a guardrail's rules run with `requires` — a payment that states no amount is refused, not skipped.
+  it("caps a guardrail's tools, refusing a call that leaves the amount out", async () => {
+    expect(await run("pay_invoice", { amount: 40 })).toMatchObject({ outcome: "allow" });
+    expect(await run("transfer", { amount: 9000 })).toMatchObject({ outcome: "deny", reason: "policy_denied" });
+    expect(await run("pay_invoice", { invoice_id: "123" })).toMatchObject({
+      outcome: "deny",
+      evaluations: [{ rule: "payment_cap", result: "fail", reason: "required_param_missing:amount" }],
+    });
+  });
+
+  // @invariant §21.1: with `authorizations: "deny"`, a plain authorization reaches no tool.
+  it("refuses a plain authorization where the organization says so, and only that", async () => {
+    expect(await run("kb_search", {}, SALES, "authorization", { authorizations: "deny" })).toMatchObject({ outcome: "deny", reason: "policy_denied" });
+    expect(await run("kb_search", {}, SALES, "guardrail", { authorizations: "deny" })).toMatchObject({ outcome: "mandate" });
+    expect(await run("kb_search", {}, SALES, "authorization")).toMatchObject({ outcome: "mandate" });
+  });
+
+  it("refuses to read a policy that targets guardrails with no way to know their tools", async () => {
+    await expect(
+      evaluatePolicy(policy, { tool: "pay_invoice", params: {}, agent: { did: SALES } }, { loadActionVersion: (id) => all.get(id) ?? null }),
+    ).rejects.toThrow(/guardrailTools/);
+  });
+
+  it("refuses to publish an entry with two targets, a guardrail of another's, or a guardrail cap that lists tools", () => {
+    const issues = policyPublishIssues(
+      {
+        ...policy,
+        entries: [
+          { tool: "pay_invoice", guardrail: { id: PAYMENTS.$id }, effect: "deny" },
+          { guardrail: { id: "urn:via:action:theirs" }, effect: "deny" },
+          { guardrail: { id: PAYMENTS.$id }, effect: "rules", action: ref(SLACK) },
+        ],
+      },
+      { ...CONTEXT, ownAction: (r) => (all.get(r.id) && actionDigestSRI(all.get(r.id)!) === r.digestSRI ? all.get(r.id)! : null), ownGuardrail: (r) => all.has(r.id) },
+    );
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        `entry 1 (tool pay_invoice) must target a tool or a guardrail, and only one`,
+        `entry 2 (guardrail urn:via:action:theirs): its guardrail is not a published action of the organization's own`,
+        `entry 3 (guardrail ${PAYMENTS.$id}): its action lists \`tools\`, and a guardrail entry's governs the guardrail's`,
+      ]),
+    );
   });
 });
 
@@ -167,16 +287,16 @@ describe("what may be published (§21.1)", () => {
   // @invariant §21.1: two entries at one level for one tool are refused, so order never decides.
   it("refuses two entries at one level for one tool and agent", () => {
     const twice = { ...POLICY, entries: [...POLICY.entries, { tool: "kb_search", effect: "deny" as const }] };
-    expect(policyPublishIssues(twice, CONTEXT)).toEqual(["entry 8 (kb_search) overlaps another entry for kb_search"]);
+    expect(policyPublishIssues(twice, CONTEXT)).toEqual(["entry 8 (tool kb_search) overlaps another entry for tool kb_search"]);
     const sameAgent = { ...POLICY, entries: [...POLICY.entries, { tool: "kb_search", effect: "allow" as const, agents: [SALES] }] };
-    expect(policyPublishIssues(sameAgent, CONTEXT)).toEqual([`entry 8 (kb_search) overlaps another entry for kb_search and ${SALES}`]);
+    expect(policyPublishIssues(sameAgent, CONTEXT)).toEqual([`entry 8 (tool kb_search) overlaps another entry for tool kb_search and ${SALES}`]);
   });
 
   it("refuses an action that is not the organization's, or does not list the entry's tool", () => {
     const foreign = { ...POLICY, entries: [{ tool: "pay", effect: "rules" as const, action: { id: "urn:via:action:theirs", digestSRI: "sha256-x" } }] };
-    expect(policyPublishIssues(foreign, CONTEXT)).toEqual(["entry 1 (pay): its action is not a published action of the organization's own"]);
+    expect(policyPublishIssues(foreign, CONTEXT)).toEqual(["entry 1 (tool pay): its action is not a published action of the organization's own"]);
     const unlisted = { ...POLICY, entries: [{ tool: "slack_archive", effect: "rules" as const, action: ref(SLACK) }] };
-    expect(policyPublishIssues(unlisted, CONTEXT)).toEqual(["entry 1 (slack_archive): its action does not list slack_archive in `tools`"]);
+    expect(policyPublishIssues(unlisted, CONTEXT)).toEqual(["entry 1 (tool slack_archive): its action does not list slack_archive in `tools`"]);
   });
 
   it("refuses an everyCall action that lists tools, an agent it does not operate, and an approver who is no member", () => {
@@ -189,7 +309,7 @@ describe("what may be published (§21.1)", () => {
     expect(policyPublishIssues(bad, CONTEXT)).toEqual([
       "the `everyCall` action lists `tools`: it governs every call, whatever the tool",
       "approver did:web:humanos.tech:user:stranger is not a member of the organization",
-      "entry 1 (kb_search): the organization does not operate did:web:other.example:agent:x",
+      "entry 1 (tool kb_search): the organization does not operate did:web:other.example:agent:x",
     ]);
   });
 });

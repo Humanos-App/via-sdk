@@ -446,6 +446,6 @@ export {
 
 // The organization's policy (v0.3 §21)
 export * from "./policy/types.js";
-export { policyDigest, policyEntryFor, policyPublishIssues, type PolicyPublishContext } from "./policy/build.js";
+export { policyDigest, policyEntriesFor, policyPublishIssues, type GuardrailTools, type PolicyPublishContext } from "./policy/build.js";
 export { evaluatePolicy, type PolicyCall, type PolicyEvaluation, type PolicyEvaluationDeps } from "./policy/evaluate.js";
 

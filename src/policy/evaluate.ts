@@ -2,20 +2,31 @@ import { actionDigestSRI } from "../action/build.js";
 import { validateExecutionParams } from "../action/execution-params.js";
 import type { ActionDetail } from "../action/types.js";
 import { evaluateRules, executionParamsRead, type RuleEvaluation } from "../cel/evaluate.js";
-import { policyEntryFor } from "./build.js";
-import type { PolicyActionRef, PolicyEntry, ViaPolicy } from "./types.js";
+import { policyEntriesFor } from "./build.js";
+import type { PolicyActionRef, PolicyEntry, PolicyGuardrailRef, ViaPolicy } from "./types.js";
 
 /** One call, as the policy reads it (§21.3). */
 export interface PolicyCall {
   /** The tool the call presents — the `action` its PoP signs (§16.6). */
   tool: string;
   params: Record<string, unknown>;
-  /** The CEL `agent.*` environment (§9.3); its `did` picks the entry. */
+  /** The CEL `agent.*` environment (§9.3); its `did` picks the entries. */
   agent: Record<string, unknown> & { did?: string };
+  /**
+   * The kind of mandate the call is made under (§16.4) — absent with no mandate. A plain `authorization` is refused
+   * under `authorizations: "deny"` (§21.1).
+   */
+  mandate?: "guardrail" | "authorization";
 }
 
 export interface PolicyEvaluationDeps {
   loadActionVersion: (actionId: string) => ActionDetail | null | Promise<ActionDetail | null>;
+  /**
+   * §21.1 — every tool any published version of a guardrail's action lists: the versions Humanos groups as one
+   * action (§0.6). Required when the policy has a guardrail entry — without it a block by guardrail would match
+   * nothing, so the evaluator throws rather than read the policy as allowing.
+   */
+  guardrailTools?: (guardrail: PolicyGuardrailRef) => ReadonlySet<string> | Promise<ReadonlySet<string>>;
   /**
    * §18.5–§18.6 — the operator's accreditation, asked for only when a rule the policy runs reads
    * `accreditation`. A failure denies with its reason; absent, the rule errors and denies (§16.8).
@@ -37,19 +48,22 @@ export interface PolicyEvaluation {
   /** On `deny`: `policy_denied`, or what made the policy's own action unusable. */
   reason?: string;
   evaluations: RuleEvaluation[];
+  /** The entry that decided — the most restrictive of the winning level (§21.1). */
   entry?: PolicyEntry;
-  /** On `allow`: the entry's action asks for a step-up on the tool, and who may confirm it (§21.3). */
+  /** On `allow`: an entry's action asks for a step-up on the tool, and who may confirm it (§21.3). */
   stepUp?: { approvers: string[] };
-  /** On `allow` through `rules`: the action marks the tool unrestricted, so no rule ran (§0.6.1). */
+  /** On `allow` through a tool's `rules`: the action marks the tool unrestricted, so no rule ran (§0.6.1). */
   unrestricted?: true;
 }
 
 const passed = (evaluations: RuleEvaluation[]) => evaluations.every((e) => e.result === "pass" || e.result === "skip");
+const NO_TOOLS: ReadonlySet<string> = new Set();
 
 /**
- * §21.3 — the organization's policy over one call: its `everyCall` rules, then the most specific entry
- * for the tool and the agent. A deny at any step denies. The caller combines the outcome with a
- * mandate when one is presented, and runs a step-up the outcome asks for.
+ * §21.3 — the organization's policy over one call: a plain authorization under `authorizations: "deny"`, its
+ * `everyCall` rules, then the entries of the most specific level for the tool and the agent (§21.1), the most
+ * restrictive deciding. A deny at any step denies. The caller combines the outcome with a mandate when one is
+ * presented, and runs a step-up the outcome asks for.
  */
 export async function evaluatePolicy(policy: ViaPolicy, call: PolicyCall, deps: PolicyEvaluationDeps): Promise<PolicyEvaluation> {
   const evaluations: RuleEvaluation[] = [];
@@ -78,6 +92,9 @@ export async function evaluatePolicy(policy: ViaPolicy, call: PolicyCall, deps: 
     return actionDigestSRI(action) === ref.digestSRI ? action : "action_invalid";
   };
 
+  // 0. Plain authorizations, where the organization refuses them (§21.1).
+  if (call.mandate === "authorization" && policy.authorizations === "deny") return deny("policy_denied");
+
   // 1. Rules for every call. The params' shape is not checked: they govern calls of every shape. A rule
   // reading a parameter the call does not carry is `skip` (§21.1) — `amount <= 5000` holds for the calls
   // that state an amount and leaves a search alone. One that does not parse runs, and errors: a deny.
@@ -98,36 +115,54 @@ export async function evaluatePolicy(policy: ViaPolicy, call: PolicyCall, deps: 
     if (!passed(evaluations)) return deny("policy_denied");
   }
 
-  // 2. The entry for the tool and the agent.
-  const entry = policyEntryFor(policy, call.tool, typeof call.agent.did === "string" ? call.agent.did : undefined);
-  if (!entry || entry.effect === "mandate") return { outcome: "mandate", evaluations, ...(entry ? { entry } : {}) };
-  if (entry.effect === "deny") return deny("policy_denied", entry);
-  if (entry.effect === "allow") return { outcome: "allow", evaluations, entry };
-
-  // `rules`: the action decides, as a pinned one does at §0.8 rows 7–8 — over the rules that govern the tool.
-  if (!entry.action) return deny("policy_denied", entry);
-  const action = await load(entry.action);
-  if (typeof action === "string") return deny(action, entry);
-  if (!action.tools?.includes(call.tool)) return deny("policy_denied", entry);
-  try {
-    validateExecutionParams(action, call.params);
-  } catch (e) {
-    return deny(`execution_params_invalid:${(e as Error).message}`, entry);
+  // 2. The entries for the tool and the agent: the most specific level's, most restrictive first (§21.1).
+  const guardrails = [...new Set(policy.entries.flatMap((e) => (e.guardrail ? [e.guardrail.id] : [])))];
+  if (guardrails.length && !deps.guardrailTools) {
+    throw new TypeError("VIA: this policy targets guardrails, and no guardrailTools is wired (v0.3 §21.1)");
   }
-  const ctx = await env(action);
-  if ("denied" in ctx) return deny(ctx.denied as string, entry);
-  const r = evaluateRules(action.rules, ctx);
-  evaluations.push(...r.evaluations);
-  if (!passed(r.evaluations)) return deny("policy_denied", entry);
-  const governed = action.rules.some((rule) => !rule.appliesTo?.length || rule.appliesTo.includes(call.tool));
-  // A listed tool neither governed nor unrestricted is the version §0.8 refuses.
-  if (!governed && !action.unrestricted?.includes(call.tool)) return deny("policy_denied", entry);
-  const asks = action.stepUp?.tools.includes(call.tool) ?? false;
+  const tools = new Map<string, ReadonlySet<string>>();
+  for (const id of guardrails) tools.set(id, await deps.guardrailTools!({ id }));
+  const agentDid = typeof call.agent.did === "string" ? call.agent.did : undefined;
+  const entries = policyEntriesFor(policy, call.tool, agentDid, (g) => tools.get(g.id) ?? NO_TOOLS);
+  const top = entries[0];
+  if (!top || top.effect === "mandate") return { outcome: "mandate", evaluations, ...(top ? { entry: top } : {}) };
+  if (top.effect === "deny") return deny("policy_denied", top);
+  if (top.effect === "allow") return { outcome: "allow", evaluations, entry: top };
+
+  // `rules`: every `rules` entry of the level must pass (two guardrails can list one tool).
+  let stepUp: { approvers: string[] } | undefined;
+  let unrestricted = false;
+  for (const entry of entries.filter((e) => e.effect === "rules")) {
+    if (!entry.action) return deny("policy_denied", entry);
+    const action = await load(entry.action);
+    if (typeof action === "string") return deny(action, entry);
+    if (entry.tool !== undefined) {
+      // A tool's entry: its action as §0.8 rows 7–8 run a pinned one, over the rules that govern the tool.
+      if (!action.tools?.includes(call.tool)) return deny("policy_denied", entry);
+      try {
+        validateExecutionParams(action, call.params);
+      } catch (e) {
+        return deny(`execution_params_invalid:${(e as Error).message}`, entry);
+      }
+    }
+    // A guardrail's entry: its rules over the call, row 7 aside — it governs calls of several shapes — and
+    // `requires` refusing a call that leaves out what a rule reads: a cap a payment cannot dodge.
+    const ctx = await env(action);
+    if ("denied" in ctx) return deny(ctx.denied as string, entry);
+    const r = evaluateRules(action.rules, ctx);
+    evaluations.push(...r.evaluations);
+    if (!passed(r.evaluations)) return deny("policy_denied", entry);
+    const governed = action.rules.some((rule) => !rule.appliesTo?.length || rule.appliesTo.includes(call.tool));
+    // A listed tool neither governed nor unrestricted is the version §0.8 refuses.
+    if (entry.tool !== undefined && !governed && !action.unrestricted?.includes(call.tool)) return deny("policy_denied", entry);
+    unrestricted = entry.tool !== undefined && !governed;
+    if (!stepUp && action.stepUp?.tools.includes(call.tool)) stepUp = { approvers: entry.approvers ?? policy.approvers ?? [] };
+  }
   return {
     outcome: "allow",
     evaluations,
-    entry,
-    ...(asks ? { stepUp: { approvers: entry.approvers ?? policy.approvers ?? [] } } : {}),
-    ...(!governed ? { unrestricted: true as const } : {}),
+    entry: top,
+    ...(stepUp ? { stepUp } : {}),
+    ...(unrestricted ? { unrestricted: true as const } : {}),
   };
 }
