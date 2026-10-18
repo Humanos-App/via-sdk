@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 /** A VIA resource type that has a `urn:via:<type>:<uuid>` identifier (spec §0.4). */
-export type ViaUrnType = "credential" | "event" | "action" | "evidence" | "actor" | "signal";
+/** `policy` (v0.3 §21.1): one URN for every version of an organization's `VIAPolicy`. */
+export type ViaUrnType = "credential" | "event" | "action" | "evidence" | "actor" | "signal" | "policy";
 
 /**
  * Mint a `urn:via:<type>:<uuid>` — the protocol URN scheme for mandates, events, actions, evidence,
