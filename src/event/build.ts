@@ -51,6 +51,8 @@ export interface EventFields {
   policy?: string;
   version?: number;
   publishedBy?: string;
+  /** How the member confirmed: `webauthn` | `otp` (§21.2). */
+  publishedWith?: string;
   /** §9.9/§16.9 — the rung relied on at presentation. */
   keyIdEvaluated?: string;
   assuranceEvaluated?: string;
