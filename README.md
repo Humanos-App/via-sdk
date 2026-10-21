@@ -94,7 +94,9 @@ A complete runnable script: [`examples/healthcare-claims.ts`](../examples/health
 | `generateCelExpression(conditions, typeOf)` / `buildTypeResolver` / `operatorsByType` | rule → CEL |
 | `validateExecutionParams` / `validateUserParams` | type/required checks; a `datetime` is an ISO-8601 string or a finite number (§0.6.3) |
 | `wrapUserParamsWithAction` / `unwrapUserParamValues` | `{description,value}` ↔ flat |
-| `evaluateRules(rules, ctx)` / `evaluateRule` | CEL over `{ userParams, executionParams }` |
+| `evaluateRules(rules, ctx)` / `evaluateRule` | CEL over `{ userParams, executionParams }`, plus the version's `constants` (`constantValues`) |
+| `actionPublishIssues` / `actionForIssues` / `validateConstants` | the issuer's publish check: tools, what a version is `for`, its constants (§0.6.1) |
+| `mandateMayPin` / `policyMayName` / `readsUserParams` | which versions a mandate may pin (§16.4) and the policy may name (§21.1) |
 | `rewriteCelTimestamps(expression)` | the `timestamp()` calls a verifier routes through VIA's string-or-number datetime contract; mixing the two in one comparison is an error (§0.6.3). For an authoring checker that must check the expression the verifier runs |
 
 ### Mandates

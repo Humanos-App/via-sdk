@@ -114,6 +114,7 @@ const CONTEXT: PolicyPublishContext = {
     return a && actionDigestSRI(a) === r.digestSRI ? a : null;
   },
   ownGuardrail: (r) => ACTIONS.has(r.id),
+  ownVersion: (r) => ACTIONS.get(r.id) ?? null,
   operates: (did) => did === SUPPORT || did === SALES,
   isMember: (did) => did === ANA || did === RUI,
 };
@@ -461,6 +462,21 @@ describe("the policy under a mandate (§21.3 step 4)", () => {
     });
     expect(await call("refund_order", { amount: 40 }, { ...asks, stepUpSatisfied: true, policyStepUpSatisfied: true })).toMatchObject({ decision: "allow" });
   });
+
+  // @invariant §21.3 step 4: a `mandate` entry naming `under` refuses a mandate on another action, `mandate_required`
+  // naming the action, and leaves one on that action standing.
+  it("refuses a mandate on another action where the tool needs one under a named action", async () => {
+    const needs = (id: string) => {
+      const content: ViaPolicy = { ...POLICY, entries: [{ tool: "slack_send_message", effect: "mandate", under: { id } }] };
+      return { policy: { content, policyDigest: policyDigest(content) }, actionVersions: (a: { id: string }) => new Set([a.id]) };
+    };
+    expect(await call("slack_send_message", { channel_id: "C-1" }, needs("urn:via:action:credit"))).toMatchObject({
+      decision: "deny",
+      reason: "mandate_required",
+      under: [{ id: "urn:via:action:credit" }],
+    });
+    expect(await call("slack_send_message", { channel_id: "C-1" }, needs(MESSAGES.$id))).toMatchObject({ decision: "allow" });
+  });
 });
 
 describe("the decisions' chain (§21.5)", () => {
@@ -563,5 +579,139 @@ describe("evaluatePolicy (§21.3)", () => {
       loadActionVersion: (id) => (id === REFUNDS.$id ? changed : ACTIONS.get(id) ?? null),
     });
     expect(r).toMatchObject({ outcome: "deny", reason: "action_invalid" });
+  });
+});
+
+describe("a tool that needs a mandate under an action (`under`, §21.1, §21.3)", () => {
+  /** Two versions of the credit action, Humanos's one group; billing and support also list `issue_credit`. */
+  const credit = (version: string): ActionDetail => ({
+    $id: `urn:via:action:credit-v${version}`,
+    type: "VIAAction",
+    version,
+    for: "mandate",
+    tools: ["issue_credit"],
+    unrestricted: ["issue_credit"],
+    userParams: {},
+    executionParams: {},
+    rules: [],
+  });
+  const CREDIT_V1 = credit("1");
+  const CREDIT_V2 = credit("2");
+  const BILLING: ActionDetail = { ...credit("1"), $id: "urn:via:action:billing", tools: ["issue_credit", "send_invoice"], unrestricted: ["issue_credit", "send_invoice"] };
+  const OTHER: ActionDetail = { ...credit("1"), $id: "urn:via:action:support-desk" };
+  const all = new Map([CREDIT_V1, CREDIT_V2, BILLING, OTHER].map((a) => [a.$id, a]));
+  const group = (id: string): string[] => (id.startsWith("urn:via:action:credit-") ? [CREDIT_V1.$id, CREDIT_V2.$id] : [id]);
+  const deps = {
+    loadActionVersion: (id: string) => all.get(id) ?? null,
+    guardrailTools: (g: { id: string }) => new Set(group(g.id).flatMap((v) => all.get(v)?.tools ?? [])),
+    actionVersions: (a: { id: string }) => new Set(group(a.id)),
+  };
+  const policy = (entries: ViaPolicy["entries"]): ViaPolicy => ({ $id: POLICY_URN, type: "VIAPolicy", version: 9, entries });
+  const run = (p: ViaPolicy, mandate?: "guardrail" | "authorization", mandateAction?: string, over: Partial<typeof deps> = {}) =>
+    evaluatePolicy(p, { tool: "issue_credit", params: {}, agent: { did: SUPPORT }, ...(mandate ? { mandate } : {}), ...(mandateAction ? { mandateAction } : {}) }, {
+      ...deps,
+      ...over,
+    });
+  const onCredit = policy([{ tool: "issue_credit", effect: "mandate", under: { id: CREDIT_V2.$id } }]);
+
+  // @invariant §21.3: with `under`, only a guardrail mandate on a version of that action meets the entry — any
+  // version, the one the person consented to; a plain authorization never does.
+  it("takes a mandate on any version of the action named, and refuses every other", async () => {
+    expect(await run(onCredit, "guardrail", CREDIT_V1.$id)).toMatchObject({ outcome: "mandate" });
+    expect(await run(onCredit, "guardrail", OTHER.$id)).toMatchObject({ outcome: "deny", reason: "mandate_required", under: [{ id: CREDIT_V2.$id }] });
+    expect(await run(onCredit, "authorization")).toMatchObject({ outcome: "deny", reason: "mandate_required", under: [{ id: CREDIT_V2.$id }] });
+    // Without `under`, any mandate meets it, as before.
+    expect(await run(policy([{ tool: "issue_credit", effect: "mandate" }]), "authorization")).toMatchObject({ outcome: "mandate" });
+  });
+
+  it("names the action with no mandate, so the agent can ask for one", async () => {
+    expect(await run(onCredit)).toMatchObject({ outcome: "mandate", under: [{ id: CREDIT_V2.$id }] });
+  });
+
+  // @invariant §21.1: where several `mandate` entries apply at one level, those naming an `under` decide and a mandate
+  // under any one of their actions is enough; one naming none adds nothing beside them.
+  it("takes a mandate under any of the actions the deciding entries name, and ignores one that names none", async () => {
+    const either = policy([
+      { guardrail: { id: CREDIT_V1.$id }, effect: "mandate", under: { id: CREDIT_V1.$id } },
+      { guardrail: { id: BILLING.$id }, effect: "mandate", under: { id: BILLING.$id } },
+    ]);
+    expect(await run(either, "guardrail", CREDIT_V2.$id)).toMatchObject({ outcome: "mandate" });
+    expect(await run(either, "guardrail", BILLING.$id)).toMatchObject({ outcome: "mandate" });
+    expect(await run(either, "guardrail", OTHER.$id)).toMatchObject({ outcome: "deny", reason: "mandate_required", under: [{ id: CREDIT_V1.$id }, { id: BILLING.$id }] });
+    const mixed = policy([
+      { guardrail: { id: CREDIT_V1.$id }, effect: "mandate", under: { id: CREDIT_V1.$id } },
+      { guardrail: { id: BILLING.$id }, effect: "mandate" },
+    ]);
+    expect(await run(mixed, "guardrail", OTHER.$id)).toMatchObject({ outcome: "deny", reason: "mandate_required", under: [{ id: CREDIT_V1.$id }] });
+    expect(await run(mixed, "guardrail", CREDIT_V1.$id)).toMatchObject({ outcome: "mandate" });
+  });
+
+  it("refuses to read `under` with no way to know an action's versions, but needs none for a plain authorization", async () => {
+    await expect(run(onCredit, "guardrail", CREDIT_V1.$id, { actionVersions: undefined })).rejects.toThrow(/actionVersions/);
+    expect(await run(onCredit, "authorization", undefined, { actionVersions: undefined })).toMatchObject({ outcome: "deny", reason: "mandate_required" });
+  });
+
+  it("answers `mandate_required` naming the action, on a call with no mandate", async () => {
+    const version = { content: onCredit, policyDigest: policyDigest(onCredit) };
+    expect(await underPolicy("issue_credit", {}, { policy: version })).toMatchObject({
+      decision: "deny",
+      reason: "mandate_required",
+      under: [{ id: CREDIT_V2.$id }],
+      enforcement: "policy",
+    });
+  });
+
+  // @invariant §21.1: `under` goes with `mandate` only, names an action of the organization's own, and never one written
+  // for the policy; the policy names no action written for a mandate.
+  it("refuses to publish an `under` elsewhere, of another's, or written for the policy, and a mandate's action", () => {
+    const CAP: ActionDetail = { $id: "urn:via:action:cap-c", type: "VIAAction", version: "1", for: "policy", constants: { max: { type: "number", value: 5 } }, executionParams: {}, rules: [{ name: "cap", description: "d", conditions: [], expression: "executionParams.amount <= constants.max" }] };
+    const owned = new Map([...all, [CAP.$id, CAP], ...ACTIONS]);
+    const ctx: PolicyPublishContext = {
+      ...CONTEXT,
+      ownAction: (r) => (owned.get(r.id) && actionDigestSRI(owned.get(r.id)!) === r.digestSRI ? owned.get(r.id)! : null),
+      ownGuardrail: (r) => owned.has(r.id),
+      ownVersion: (r) => owned.get(r.id) ?? null,
+    };
+    const issues = policyPublishIssues(
+      {
+        ...policy([
+          { tool: "kb_search", effect: "allow", under: { id: CREDIT_V1.$id } },
+          { tool: "issue_credit", effect: "mandate", under: { id: "urn:via:action:theirs" } },
+          { tool: "send_invoice", effect: "mandate", under: { id: CAP.$id } },
+          { tool: "issue_credit", effect: "rules", action: ref(CREDIT_V1), agents: [SUPPORT] },
+        ]),
+        everyCall: ref(CREDIT_V2),
+      },
+      ctx,
+    );
+    expect(issues).toEqual([
+      "the `everyCall` action lists `tools`: it governs every call, whatever the tool",
+      "entry 1 (tool kb_search) names `under` without being `mandate`",
+      "entry 2 (tool issue_credit): its `under` is not a published action of the organization's own",
+      "entry 3 (tool send_invoice): its `under` is written for the policy, and no mandate pins one",
+      "entry 4 (tool issue_credit): its action is written for a mandate, and the policy runs it with no person's values",
+    ]);
+    const FOR_MANDATE: ActionDetail = { ...CAP, for: "mandate", constants: undefined, rules: [{ ...CAP.rules[0]!, expression: "executionParams.amount <= 5" }] };
+    const everyCall = { ...policy([]), everyCall: ref(FOR_MANDATE) };
+    expect(policyPublishIssues(everyCall, { ...ctx, ownAction: (r) => (r.digestSRI === actionDigestSRI(FOR_MANDATE) ? FOR_MANDATE : null) })).toEqual([
+      "the `everyCall` action is written for a mandate: the policy runs it with no person's values",
+    ]);
+  });
+
+  // @invariant §0.6.3, §21.3: the policy runs its action with the version's constants.
+  it("runs a policy action's constants", async () => {
+    const CAP: ActionDetail = buildActionVersion({
+      $id: "urn:via:action:cap-k",
+      version: "1",
+      for: "policy",
+      constants: { maxAmount: { type: "number", value: 5000 } },
+      executionParams: { amount: { type: "number" } },
+      rules: [{ name: "payment_cap", description: "At most €5,000", requires: ["amount"], conditions: [{ left: "executionParams.amount", operator: "<=", right: "constants.maxAmount" }] }],
+    });
+    const capped = policy([{ guardrail: { id: BILLING.$id }, effect: "rules", action: ref(CAP) }]);
+    const go = (amount: number) =>
+      evaluatePolicy(capped, { tool: "send_invoice", params: { amount }, agent: { did: SUPPORT } }, { ...deps, loadActionVersion: (id) => (id === CAP.$id ? CAP : all.get(id) ?? null) });
+    expect(await go(40)).toMatchObject({ outcome: "allow" });
+    expect(await go(9000)).toMatchObject({ outcome: "deny", reason: "policy_denied", evaluations: [{ rule: "payment_cap", result: "fail" }] });
   });
 });

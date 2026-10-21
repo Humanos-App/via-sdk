@@ -1,7 +1,7 @@
 import { verifyDataIntegrityProof } from "../crypto/proof.js";
 import { didFromUrl, verifierDomainOf, VIA_PLATFORM_DID } from "../did/web.js";
 import { actionDigestSRI } from "../action/build.js";
-import { validateExecutionParams, unwrapUserParamValues } from "../action/execution-params.js";
+import { constantValues, validateExecutionParams, unwrapUserParamValues } from "../action/execution-params.js";
 import type { ActionDetail } from "../action/types.js";
 import { evaluateRules, type RuleEvaluation } from "../cel/evaluate.js";
 import { domainMatches } from "../presentation/vp.js";
@@ -182,6 +182,7 @@ async function runChecks(
   // 9. CEL
   const { decision, evaluations } = evaluateRules(action.rules, {
     userParams: unwrapUserParamValues(mandate.userParams),
+    constants: constantValues(action),
     executionParams,
   });
   // S13 — a governed call that omitted a required parameter is its own answer, not `rule_failed`:

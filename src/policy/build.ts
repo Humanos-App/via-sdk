@@ -1,5 +1,6 @@
 import { canonicalizeRFC8785 } from "../crypto/canonicalize.js";
 import { computeSRI } from "../crypto/digest.js";
+import { mandateMayPin, policyMayName } from "../action/build.js";
 import type { ActionDetail } from "../action/types.js";
 import {
   POLICY_EFFECTS,
@@ -56,6 +57,11 @@ export interface PolicyPublishContext {
   ownAction: (ref: PolicyActionRef) => ActionDetail | null;
   /** Is this a published action version of the organization's own — a guardrail an entry may target? */
   ownGuardrail: (ref: PolicyGuardrailRef) => boolean;
+  /**
+   * The published version a `{ id }` names, when it is the organization's own; null when it is none of those. An
+   * entry's `under` is checked through it: what the action is `for` (§0.6.1).
+   */
+  ownVersion: (ref: PolicyGuardrailRef) => ActionDetail | null;
   /** Does the organization operate this agent? */
   operates: (did: string) => boolean;
   /** Is this person one of the organization's members? Humanos's record: a person's affiliation is v0.4's. */
@@ -80,6 +86,7 @@ export function policyPublishIssues(policy: ViaPolicy, ctx: PolicyPublishContext
     if (!action) issues.push("`everyCall` is not a published action of the organization's own");
     else if (action.tools) issues.push("the `everyCall` action lists `tools`: it governs every call, whatever the tool");
     else if (action.rules.some((r) => r.appliesTo?.length)) issues.push("an `everyCall` rule names a tool: it governs every call");
+    else if (!policyMayName(action)) issues.push("the `everyCall` action is written for a mandate: the policy runs it with no person's values");
   }
   for (const did of policy.approvers ?? []) if (!ctx.isMember(did)) issues.push(`approver ${did} is not a member of the organization`);
 
@@ -98,6 +105,13 @@ export function policyPublishIssues(policy: ViaPolicy, ctx: PolicyPublishContext
       if (!action) issues.push(`${at}: its action is not a published action of the organization's own`);
       else if (e.tool !== undefined && !action.tools?.includes(e.tool)) issues.push(`${at}: its action does not list ${e.tool} in \`tools\``);
       else if (e.guardrail && action.tools) issues.push(`${at}: its action lists \`tools\`, and a guardrail entry's governs the guardrail's`);
+      else if (!policyMayName(action)) issues.push(`${at}: its action is written for a mandate, and the policy runs it with no person's values`);
+    }
+    if (e.under && e.effect !== "mandate") issues.push(`${at} names \`under\` without being \`mandate\``);
+    if (e.under) {
+      const version = ctx.ownVersion(e.under);
+      if (!version) issues.push(`${at}: its \`under\` is not a published action of the organization's own`);
+      else if (!mandateMayPin(version)) issues.push(`${at}: its \`under\` is written for the policy, and no mandate pins one`);
     }
     for (const did of e.agents ?? []) if (!ctx.operates(did)) issues.push(`${at}: the organization does not operate ${did}`);
     for (const did of e.approvers ?? []) if (!ctx.isMember(did)) issues.push(`${at}: approver ${did} is not a member of the organization`);

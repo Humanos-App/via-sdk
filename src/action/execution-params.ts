@@ -1,4 +1,4 @@
-import type { ArrayItemType, ParamDef } from "./types.js";
+import type { ActionDetail, ArrayItemType, ParamDef } from "./types.js";
 
 /** Every type this SDK understands. A declaration outside this set is refused (see below). */
 const KNOWN_TYPES = new Set<string>([
@@ -31,7 +31,7 @@ const KNOWN_TYPES = new Set<string>([
 export function validateParams(
   defs: Record<string, ParamDef>,
   values: Record<string, unknown>,
-  kind: "User" | "Execution",
+  kind: "User" | "Execution" | "Constant",
 ): void {
   for (const [name, def] of Object.entries(defs)) {
     if (!KNOWN_TYPES.has(def.type as string)) {
@@ -91,7 +91,7 @@ function matchesScalar(type: ArrayItemType, value: unknown): boolean {
 function validateMap(
   valueType: ArrayItemType | undefined,
   value: unknown,
-  kind: "User" | "Execution",
+  kind: "User" | "Execution" | "Constant",
   name: string,
 ): void {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw err(kind, name, "map");
@@ -148,6 +148,21 @@ export function wrapUserParamsWithAction(
     out[name] = { description, value };
   }
   return out;
+}
+
+/**
+ * v0.3 §0.6.1 — each constant's value of its declared type, a constant always carrying one; throws naming the first
+ * that does not. The issuer's check before publishing ({@link actionPublishIssues}).
+ */
+export function validateConstants(content: Pick<ActionDetail, "constants">): void {
+  const constants = content.constants ?? {};
+  const defs = Object.fromEntries(Object.entries(constants).map(([name, c]) => [name, { ...c, required: true }]));
+  validateParams(defs, constantValues(content), "Constant");
+}
+
+/** v0.3 §0.6.3 — a version's constants as CEL reads them: `{ name: value }`. Empty for a version without any. */
+export function constantValues(content: Pick<ActionDetail, "constants">): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(content.constants ?? {}).map(([name, c]) => [name, c.value]));
 }
 
 /** Strip the `{ description, value }` envelope to a flat `{ name: value }` for CEL. */

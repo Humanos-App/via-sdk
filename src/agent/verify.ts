@@ -8,7 +8,7 @@ import { actionHash, decodePoP, policyActionHash, verifyPoPSignature } from "./p
 import { jwkThumbprint } from "../crypto/p256.js";
 import { evaluateRules, type RuleEvaluation } from "../cel/evaluate.js";
 import { agentReasonForRule } from "./constraints.js";
-import { unwrapUserParamValues, validateExecutionParams } from "../action/execution-params.js";
+import { constantValues, unwrapUserParamValues, validateExecutionParams } from "../action/execution-params.js";
 import { actionDigestSRI } from "../action/build.js";
 import type { AccreditationRevocationReason } from "../operator/types.js";
 import type { ActionDetail } from "../action/types.js";
@@ -26,7 +26,7 @@ import { enforcementFitsShape, enforcementOf, mayWidenAuthority } from "../manda
 import { EXT_SEMANTIC_REVIEW, MAX_EXECUTIONS_REACHED, unsupportedCriticalExtension, verifyStamp, type ResolvePublicKey } from "../mandate/build.js";
 import { detectSpecVersion } from "../version.js";
 import { evaluatePolicy, type PolicyEvaluationDeps } from "../policy/evaluate.js";
-import type { PolicyVersion } from "../policy/types.js";
+import type { PolicyGuardrailRef, PolicyVersion } from "../policy/types.js";
 
 /** The validated rung, surfaced into the CEL context as `agent.*` (§16.8). */
 export interface AgentEnv {
@@ -235,6 +235,11 @@ export interface AgentDirectDeps {
   policy?: PolicyVersion;
   /** §21.1 — every tool any published version of a guardrail lists; required when the policy targets guardrails. */
   guardrailTools?: PolicyEvaluationDeps["guardrailTools"];
+  /**
+   * §21.1 — every published version of an action, by any of them; required when the policy names `under` for a tool
+   * a call under a mandate makes.
+   */
+  actionVersions?: PolicyEvaluationDeps["actionVersions"];
 }
 
 /** The fields of `accreditation.*` a rule may read — v0.3 §18.6, a closed list. */
@@ -322,6 +327,8 @@ export interface AgentDirectResult {
   agentDid?: string;
   /** §21.3 — on a `rechallenge` under the policy: the members who may confirm the call. */
   approvers?: string[];
+  /** §21.3 — on `mandate_required`: the actions a mandate may be under, any one of them, for the agent to ask for. */
+  under?: PolicyGuardrailRef[];
 }
 
 const deny = (reason: string, credentialId?: string, enforcement?: Enforcement): AgentDirectResult => ({
@@ -409,8 +416,9 @@ export async function verifyAgentDirect(
   const actionAsks = deps.requiresStepUp ? await deps.requiresStepUp(req.action, req.params) : false;
   const mandateAsks = m.stepUp?.triggers?.includes("mandate") ?? false;
   // §21.3 step 4 — the organization's policy caps the call: after the mandate's rules, before the step-up.
-  // A `deny` or a failing `rules` entry refuses; `allow`, `mandate` and no entry leave the mandate's
-  // decision standing, since an allow cannot widen a mandate. A step-up its action asks for is the grantor's.
+  // A `deny` or a failing `rules` entry refuses, and so does a `mandate` entry naming an `under` this mandate is not
+  // on (`mandate_required`); `allow`, any other `mandate` and no entry leave the mandate's decision standing, since
+  // an allow cannot widen a mandate. A step-up its action asks for is the grantor's.
   const policyMark = deps.policy ? { policyDigest: deps.policy.policyDigest } : {};
   let policyApprovers: string[] | undefined;
   const capped = async (): Promise<AgentDirectResult | null> => {
@@ -422,15 +430,18 @@ export async function verifyAgentDirect(
         params: req.params,
         agent: { ...(deps.agentEnvExtras ?? {}), ...pop.agent },
         mandate: m.action ? "guardrail" : "authorization",
+        ...(m.action ? { mandateAction: m.action.id } : {}),
       },
       {
         loadActionVersion: deps.loadActionVersion,
         ...(deps.guardrailTools ? { guardrailTools: deps.guardrailTools } : {}),
+        ...(deps.actionVersions ? { actionVersions: deps.actionVersions } : {}),
         ...(deps.loadAccreditation ? { loadAccreditation: projectedLoader(deps.loadAccreditation) } : {}),
       },
     );
     if (verdict.outcome === "deny") {
-      return { ...deny(verdict.reason ?? "policy_denied", urn, enforcement), evaluations: verdict.evaluations, agent: pop.agent, ...policyMark };
+      const under = verdict.under ? { under: verdict.under } : {};
+      return { ...deny(verdict.reason ?? "policy_denied", urn, enforcement), evaluations: verdict.evaluations, agent: pop.agent, ...policyMark, ...under };
     }
     policyApprovers = verdict.stepUp?.approvers;
     return null;
@@ -536,6 +547,7 @@ export async function verifyAgentDirect(
     : wantsAccreditation && deps.loadAccreditation ? { level: "unverified" } : undefined;
   const { decision, evaluations } = evaluateRules(action.rules, {
     userParams: unwrapUserParamValues(m.userParams),
+    constants: constantValues(action),
     // §16.6: the tool is the action presented — the PoP signs it, and a different `params.tool` was
     // refused above. Read from the params alone, a call that left `tool` out skipped every
     // `appliesTo` rule, so a missing input widened authority.
@@ -657,7 +669,9 @@ export async function verifyAgentUnderPolicy(
   );
   const evaluations = verdict.evaluations;
   if (verdict.outcome === "deny") return result("deny", { reason: verdict.reason ?? "policy_denied", evaluations, ...mark });
-  if (verdict.outcome === "mandate") return result("deny", { reason: "mandate_required", evaluations, ...mark });
+  if (verdict.outcome === "mandate") {
+    return result("deny", { reason: "mandate_required", evaluations, ...mark, ...(verdict.under ? { under: verdict.under } : {}) });
+  }
   if (verdict.stepUp && !deps.stepUpSatisfied) {
     // No approver named: nobody to ask, as on the presentation path (§17.4).
     if (verdict.stepUp.approvers.length === 0) return result("deny", { reason: "stepup_required", evaluations, ...mark });

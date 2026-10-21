@@ -1,5 +1,5 @@
 import { actionDigestSRI } from "../action/build.js";
-import { validateExecutionParams } from "../action/execution-params.js";
+import { constantValues, validateExecutionParams } from "../action/execution-params.js";
 import type { ActionDetail } from "../action/types.js";
 import { evaluateRules, executionParamsRead, type RuleEvaluation } from "../cel/evaluate.js";
 import { policyEntriesFor } from "./build.js";
@@ -17,6 +17,8 @@ export interface PolicyCall {
    * under `authorizations: "deny"` (§21.1).
    */
   mandate?: "guardrail" | "authorization";
+  /** Under a guardrail mandate: the id of the action version it pins (§16.4), which a `mandate` entry's `under` reads. */
+  mandateAction?: string;
 }
 
 export interface PolicyEvaluationDeps {
@@ -36,6 +38,12 @@ export interface PolicyEvaluationDeps {
     | undefined
     | { denied: true; reason: string }
     | Promise<Record<string, unknown> | undefined | { denied: true; reason: string }>;
+  /**
+   * §21.1 — the id of every published version of the action a `{ id }` names: the versions Humanos groups as one (§0.6).
+   * Required when a call under a mandate meets a `mandate` entry naming `under` — without it no mandate could be told
+   * to be under it, so the evaluator throws rather than read the entry as met.
+   */
+  actionVersions?: (action: PolicyGuardrailRef) => ReadonlySet<string> | Promise<ReadonlySet<string>>;
 }
 
 /**
@@ -45,7 +53,10 @@ export interface PolicyEvaluationDeps {
  */
 export interface PolicyEvaluation {
   outcome: "allow" | "deny" | "mandate";
-  /** On `deny`: `policy_denied`, or what made the policy's own action unusable. */
+  /**
+   * On `deny`: `policy_denied`; `mandate_required` under a mandate the deciding entries' `under` does not name; or what
+   * made the policy's own action unusable.
+   */
   reason?: string;
   evaluations: RuleEvaluation[];
   /** The entry that decided — the most restrictive of the winning level (§21.1). */
@@ -54,6 +65,11 @@ export interface PolicyEvaluation {
   stepUp?: { approvers: string[] };
   /** On `allow` through a tool's `rules`: the action marks the tool unrestricted, so no rule ran (§0.6.1). */
   unrestricted?: true;
+  /**
+   * On `mandate`, and on a `mandate_required` deny: the actions the deciding `mandate` entries name in `under` — a
+   * mandate under any one of them meets them (§21.1), and the agent can ask for one (§21.3).
+   */
+  under?: PolicyGuardrailRef[];
 }
 
 const passed = (evaluations: RuleEvaluation[]) => evaluations.every((e) => e.result === "pass" || e.result === "skip");
@@ -81,6 +97,7 @@ export async function evaluatePolicy(policy: ViaPolicy, call: PolicyCall, deps: 
     }
     return {
       userParams: {},
+      constants: constantValues(action),
       executionParams: { ...call.params, tool: call.tool },
       agent: call.agent,
       ...(accreditation ? { accreditation } : {}),
@@ -125,7 +142,14 @@ export async function evaluatePolicy(policy: ViaPolicy, call: PolicyCall, deps: 
   const agentDid = typeof call.agent.did === "string" ? call.agent.did : undefined;
   const entries = policyEntriesFor(policy, call.tool, agentDid, (g) => tools.get(g.id) ?? NO_TOOLS);
   const top = entries[0];
-  if (!top || top.effect === "mandate") return { outcome: "mandate", evaluations, ...(top ? { entry: top } : {}) };
+  if (!top || top.effect === "mandate") {
+    // §21.1 — the `mandate` entries naming an `under` decide, and a mandate under any one of their actions is enough:
+    // a mandate pins one action. One naming none adds nothing beside them.
+    const under = entries.flatMap((e) => (e.effect === "mandate" && e.under ? [e.under] : []));
+    const mark = { evaluations, ...(top ? { entry: top } : {}), ...(under.length ? { under } : {}) };
+    if (under.length && call.mandate && !(await isUnder(call, under, deps))) return { outcome: "deny", reason: "mandate_required", ...mark };
+    return { outcome: "mandate", ...mark };
+  }
   if (top.effect === "deny") return deny("policy_denied", top);
   if (top.effect === "allow") return { outcome: "allow", evaluations, entry: top };
 
@@ -165,4 +189,14 @@ export async function evaluatePolicy(policy: ViaPolicy, call: PolicyCall, deps: 
     ...(stepUp ? { stepUp } : {}),
     ...(unrestricted ? { unrestricted: true as const } : {}),
   };
+}
+
+/** §21.1 — is the call's mandate a guardrail pinning a version of one of these actions? A plain authorization never is. */
+async function isUnder(call: PolicyCall, under: PolicyGuardrailRef[], deps: PolicyEvaluationDeps): Promise<boolean> {
+  if (call.mandate !== "guardrail" || !call.mandateAction) return false;
+  if (!deps.actionVersions) {
+    throw new TypeError("VIA: this policy names `under`, and no actionVersions is wired (v0.3 §21.1)");
+  }
+  for (const action of under) if ((await deps.actionVersions(action)).has(call.mandateAction)) return true;
+  return false;
 }

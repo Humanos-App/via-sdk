@@ -65,12 +65,38 @@ export interface ActionTarget {
   path: string;
 }
 
+/**
+ * v0.3 §0.6.1 — what a version is for. `mandate`: a person's mandate pins it, and its limits may be the values they
+ * fix (`userParams`). `policy`: the organization's policy (§21) names it, and it declares no `userParams`. Absent on
+ * every version written before it, which is read as its content allows (`mandateMayPin`, `policyMayName`).
+ */
+export type ActionFor = "mandate" | "policy";
+
+/**
+ * v0.3 §0.6.1 — a value the version fixes, which its rules read as `constants.<name>`: a policy's limit, or a term a
+ * mandate's person is shown as fixed. Typed as a parameter is, and pinned with the rest of the content by the digest.
+ */
+export interface ConstantDef {
+  type: ParamType;
+  description?: string;
+  /** `array` only: the element type. */
+  items?: ArrayItemType;
+  /** `map` only: the value type. */
+  values?: MapValueType;
+  value: unknown;
+}
+
 export interface ActionDetail {
   $id: string;
   type: string;
   version: string;
+  /** v0.3 §0.6.1 — a mandate's or a policy's; absent, as its content allows. */
+  for?: ActionFor;
   target?: ActionTarget;
-  userParams: Record<string, ParamDef>;
+  /** The values a person fixes in the mandate. Optional: a policy action has none (§0.6.1). */
+  userParams?: Record<string, ParamDef>;
+  /** v0.3 §0.6.1 — the values the version fixes itself, read as `constants.<name>`; any version may declare them. */
+  constants?: Record<string, ConstantDef>;
   executionParams: Record<string, ParamDef>;
   rules: ActionRule[];
   mapper?: Record<string, string>;

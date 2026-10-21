@@ -3,8 +3,10 @@ import type { ActionRule } from "../action/types.js";
 import { rewriteCelTimestamps } from "./timestamps.js";
 
 export interface CelContext {
-  /** Issuer constants, unwrapped to `{ name: value }`. */
+  /** The mandate's values, unwrapped to `{ name: value }`. */
   userParams: Record<string, unknown>;
+  /** v0.3 §0.6.3 — the action version's constants, `{ name: value }` (`constantValues`). */
+  constants?: Record<string, unknown>;
   /** Verifier-supplied runtime values. */
   executionParams: Record<string, unknown>;
   /** §16.8 — the acting agent's verified rung `{ assurance, binding, root, verifiedAt, did }`. Present only under agent binding. */
@@ -164,6 +166,40 @@ export function validateCelExpression(expression: string): { ok: true } | { ok: 
  * v0.3 §21.1: an `everyCall` rule is `skip` on a call that carries none of one of them.
  */
 export function executionParamsRead(expression: string): string[] | null {
+  return fieldsRead(expression, "executionParams");
+}
+
+/**
+ * v0.3 §0.6.1 — the constants an expression reads, from its parse tree: `constants.cap` and `constants["cap"]`.
+ * Null when it does not parse.
+ */
+export function constantsRead(expression: string): string[] | null {
+  return fieldsRead(expression, "constants");
+}
+
+/**
+ * v0.3 §0.6.1, §21.1 — does an expression read `userParams` at all: a field, a key, or the whole map? From its parse
+ * tree, so never the word inside a string. Null when it does not parse. A policy runs its rules with none.
+ */
+export function readsUserParams(expression: string): boolean | null {
+  let ast: unknown;
+  try {
+    ast = celParse(expression).ast;
+  } catch {
+    return null;
+  }
+  const visit = (node: unknown): boolean => {
+    if (!node || typeof node !== "object") return false;
+    if (Array.isArray(node)) return node.some(visit);
+    const { op, args } = node as { op?: unknown; args?: unknown };
+    if (op === "id" && args === "userParams") return true;
+    return typeof op === "string" && visit(args);
+  };
+  return visit(ast);
+}
+
+/** The fields of one variable an expression reads, by name or by a literal key. Null when it does not parse. */
+function fieldsRead(expression: string, variable: string): string[] | null {
   let ast: unknown;
   try {
     ast = celParse(expression).ast;
@@ -171,7 +207,7 @@ export function executionParamsRead(expression: string): string[] | null {
     return null;
   }
   const read = new Set<string>();
-  const isScope = (n: unknown) => (n as { op?: unknown; args?: unknown })?.op === "id" && (n as { args?: unknown }).args === "executionParams";
+  const isScope = (n: unknown) => (n as { op?: unknown; args?: unknown })?.op === "id" && (n as { args?: unknown }).args === variable;
   const visit = (node: unknown): void => {
     if (!node || typeof node !== "object") return;
     if (Array.isArray(node)) {

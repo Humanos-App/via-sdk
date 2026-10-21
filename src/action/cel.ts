@@ -1,4 +1,4 @@
-import type { ActionDetail, ConditionOperator, ParamType, RuleCondition } from "./types.js";
+import type { ActionDetail, ConditionOperator, ParamDef, ParamType, RuleCondition } from "./types.js";
 
 /** Operators allowed per parameter type (matches the platform authoring UI). */
 export const operatorsByType: Record<ParamType, ConditionOperator[]> = {
@@ -14,26 +14,30 @@ export const operatorsByType: Record<ParamType, ConditionOperator[]> = {
   map: ["==", "!="],
 };
 
-/** Resolve a reference like `userParams.maxAmount` / `executionParams.amount` to its declared type. */
-export function buildTypeResolver(content: Pick<ActionDetail, "userParams" | "executionParams">) {
-  return (ref: string): ParamType | undefined => {
-    const [scope, name] = ref.split(".", 2);
-    if (!name) return undefined;
-    if (scope === "userParams") return content.userParams[name]?.type;
-    if (scope === "executionParams") return content.executionParams[name]?.type;
-    return undefined;
-  };
+/**
+ * Resolve a reference like `userParams.maxAmount` / `executionParams.amount` / `constants.cap` (v0.3 §0.6.2) to its
+ * declared type.
+ */
+export function buildTypeResolver(content: Pick<ActionDetail, "userParams" | "executionParams" | "constants">) {
+  return (ref: string): ParamType | undefined => declaredAt(content, ref)?.type;
 }
 
 /** Resolve a `map` ref to its declared `values` type — the effective type once indexed. */
-export function buildMapValueResolver(content: Pick<ActionDetail, "userParams" | "executionParams">) {
-  return (ref: string): ParamType | undefined => {
-    const [scope, name] = ref.split(".", 2);
-    if (!name) return undefined;
-    if (scope === "userParams") return content.userParams[name]?.values;
-    if (scope === "executionParams") return content.executionParams[name]?.values;
-    return undefined;
-  };
+export function buildMapValueResolver(content: Pick<ActionDetail, "userParams" | "executionParams" | "constants">) {
+  return (ref: string): ParamType | undefined => declaredAt(content, ref)?.values;
+}
+
+/** The declaration a `<scope>.<name>` ref names: a param, or a constant. */
+function declaredAt(
+  content: Pick<ActionDetail, "userParams" | "executionParams" | "constants">,
+  ref: string,
+): Pick<ParamDef, "type" | "values"> | undefined {
+  const [scope, name] = ref.split(".", 2);
+  if (!name) return undefined;
+  if (scope === "userParams") return content.userParams?.[name];
+  if (scope === "executionParams") return content.executionParams[name];
+  if (scope === "constants") return content.constants?.[name];
+  return undefined;
 }
 
 function wrapIfDatetime(ref: string, type: ParamType | undefined): string {

@@ -2,14 +2,20 @@ import { canonicalizeRFC8785 } from "../crypto/canonicalize.js";
 import { computeSRI } from "../crypto/digest.js";
 import { buildTypeResolver, generateCelExpression } from "./cel.js";
 import { assertNoUnverifiedClientRefs } from "../agent/constraints.js";
-import type { ActionDetail, ActionTarget, ParamDef, RuleCondition } from "./types.js";
+import { constantsRead, readsUserParams } from "../cel/evaluate.js";
+import { validateConstants } from "./execution-params.js";
+import type { ActionDetail, ActionFor, ActionTarget, ConstantDef, ParamDef, RuleCondition } from "./types.js";
 
 export interface BuildActionVersionInput {
   $id: string;
   type?: string;
   version: string;
+  /** v0.3 §0.6.1 — a mandate's (the default) or a policy's. */
+  for?: ActionFor;
   target?: ActionTarget;
   userParams?: Record<string, ParamDef>;
+  /** v0.3 §0.6.1 — a policy action's own values, read by its rules as `constants.<name>`. */
+  constants?: Record<string, ConstantDef>;
   executionParams?: Record<string, ParamDef>;
   rules?: {
     name: string;
@@ -38,7 +44,7 @@ export interface BuildActionVersionInput {
 export function buildActionVersion(input: BuildActionVersionInput): ActionDetail {
   const userParams = input.userParams ?? {};
   const executionParams = input.executionParams ?? {};
-  const typeOf = buildTypeResolver({ userParams, executionParams });
+  const typeOf = buildTypeResolver({ userParams, executionParams, constants: input.constants });
   const rules = (input.rules ?? []).map((r) => ({
     name: r.name,
     ...(r.description ? { description: r.description } : {}),
@@ -56,8 +62,11 @@ export function buildActionVersion(input: BuildActionVersionInput): ActionDetail
     $id: input.$id,
     type: input.type ?? "VIAAction",
     version: input.version,
+    ...(input.for ? { for: input.for } : {}),
     ...(input.target ? { target: input.target } : {}),
-    userParams,
+    // A policy action has no userParams; one given anyway is kept, for actionPublishIssues to refuse.
+    ...(input.for !== "policy" || input.userParams ? { userParams } : {}),
+    ...(input.constants ? { constants: input.constants } : {}),
     executionParams,
     rules,
     ...(input.mapper ? { mapper: input.mapper } : {}),
@@ -77,15 +86,90 @@ export function buildActionVersion(input: BuildActionVersionInput): ActionDetail
  *   no `appliesTo`) or is in `unrestricted`, never both; `unrestricted`, every `appliesTo` and
  *   `stepUp.tools` name listed tools only. No rules at all is valid only when every tool is unrestricted.
  * - Without `tools`: at least one rule — one that constrains nothing is a permission, not a policy.
+ * - By what it is for ({@link actionForIssues}): `mandate` or `policy`, and a policy action neither declares nor reads
+ *   userParams; each constant has a value of its type; every constant a rule reads is declared.
  */
-export function actionPublishIssues(content: Pick<ActionDetail, "rules" | "tools" | "unrestricted" | "stepUp">): string[] {
+export function actionPublishIssues(
+  content: Pick<ActionDetail, "rules" | "tools" | "unrestricted" | "stepUp" | "for" | "userParams" | "constants">,
+): string[] {
   const issues: string[] = [];
   const rules = content.rules ?? [];
   for (const r of rules) {
     if (!r.description?.trim()) issues.push(`rule "${r.name}" has no description`);
   }
   if (!content.tools && rules.length === 0) issues.push("an action that lists no tools needs at least one rule");
-  return [...issues, ...actionToolIssues(content)];
+  return [...issues, ...actionToolIssues(content), ...actionForIssues(content)];
+}
+
+/** A constant's name, read as `constants.<name>`: a CEL identifier. */
+const CONSTANT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * v0.3 §0.6.1 — the half of {@link actionPublishIssues} that follows what the version is for, and its constants. `for`
+ * is `mandate` or `policy`. A policy runs its rules with no person's values (§21.3), so a policy action neither declares
+ * nor reads userParams, and fixes its limits as constants. Any version may declare constants; each is named so a rule
+ * can read it and carries a value of its type, and every `constants.<name>` a rule reads, in a condition or its CEL, is
+ * one the version declares: an undeclared one errors on every call, which is a deny.
+ */
+export function actionForIssues(content: Pick<ActionDetail, "rules" | "for" | "userParams" | "constants">): string[] {
+  const issues: string[] = [];
+  const constants = content.constants ?? {};
+  const declared = Object.keys(constants);
+  if (content.for !== undefined && content.for !== "mandate" && content.for !== "policy") {
+    issues.push(`\`for\` is "${String(content.for)}", neither mandate nor policy`);
+  }
+  if (content.for === "policy") {
+    const userParams = Object.keys(content.userParams ?? {});
+    if (userParams.length) issues.push(`a policy action declares no userParams (${userParams.join(", ")}): fix its limits as constants`);
+    for (const r of content.rules ?? []) {
+      if (ruleReadsUserParams(r)) issues.push(`rule "${r.name}" reads userParams, which a policy action has none of`);
+    }
+  }
+  for (const name of declared) {
+    if (!CONSTANT_NAME.test(name)) issues.push(`constant "${name}" is not a CEL identifier, so no rule can read it`);
+  }
+  try {
+    validateConstants(content);
+  } catch (e) {
+    issues.push((e as Error).message);
+  }
+  for (const r of content.rules ?? []) {
+    const fromConditions = (r.conditions ?? []).flatMap((c) =>
+      [c.left, c.right, c.leftKey, c.rightKey].flatMap((ref) => (ref?.startsWith("constants.") ? [ref.slice("constants.".length)] : [])),
+    );
+    const read = new Set([...fromConditions, ...(constantsRead(r.expression ?? "") ?? [])]);
+    const missing = [...read].filter((name) => !Object.hasOwn(constants, name));
+    if (missing.length) issues.push(`rule "${r.name}" reads ${missing.map((n) => `constants.${n}`).join(", ")}, which the version does not declare`);
+  }
+  return issues;
+}
+
+/**
+ * v0.3 §16.4 — may a guardrail mandate pin this version? Not one written for the organization's policy; one without
+ * `for`, written before it, may.
+ */
+export function mandateMayPin(content: Pick<ActionDetail, "for">): boolean {
+  return content.for !== "policy";
+}
+
+/**
+ * v0.3 §21.1 — may the organization's policy name this version, as its `everyCall` or a `rules` entry's action? Not
+ * one written for a mandate. One without `for`, written before it, may when it declares no userParams and no rule of
+ * it reads one: the policy runs it with none, so such a rule would error on every call.
+ */
+export function policyMayName(content: Pick<ActionDetail, "for" | "userParams" | "rules">): boolean {
+  if (content.for === "mandate") return false;
+  if (Object.keys(content.userParams ?? {}).length) return false;
+  return !(content.rules ?? []).some(ruleReadsUserParams);
+}
+
+/** Does a rule read `userParams` — in a condition's operand or key, or in its expression's parse tree? */
+function ruleReadsUserParams(rule: Pick<ActionDetail["rules"][number], "conditions" | "expression">): boolean {
+  const refs = (rule.conditions ?? []).flatMap((c) => [c.left, c.right, c.leftKey, c.rightKey]);
+  if (refs.some((ref) => ref?.startsWith("userParams."))) return true;
+  const expression = rule.expression ?? "";
+  // An expression that does not parse is read by its text: a rule that errors anyway is not worth the doubt.
+  return readsUserParams(expression) ?? /\buserParams\b/.test(expression);
 }
 
 /**

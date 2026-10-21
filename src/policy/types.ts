@@ -15,7 +15,10 @@ export interface PolicyActionRef {
   digestSRI: string;
 }
 
-/** §21.1 — a published action of the organization's own, by any of its versions: the group of tools it lists. */
+/**
+ * §21.1 — a published action of the organization's own, by any of its versions (the versions Humanos groups as one,
+ * §0.6): a guardrail an entry targets, or the action a `mandate` entry's mandate must be under.
+ */
 export interface PolicyGuardrailRef {
   id: string;
 }
@@ -36,6 +39,11 @@ export interface PolicyEntry {
   agents?: string[];
   /** Who confirms a step-up on this entry, replacing the policy's `approvers` (§21.3). */
   approvers?: string[];
+  /**
+   * With `mandate` only (§21.1): the action the call's mandate must be under — a guardrail mandate pinning one of its
+   * published versions; a plain authorization never is. Absent, any mandate.
+   */
+  under?: PolicyGuardrailRef;
 }
 
 export interface ViaPolicy {
