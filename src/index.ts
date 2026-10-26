@@ -105,7 +105,7 @@ export {
   unwrapUserParamValues,
   type WrappedUserParam,
 } from "./action/execution-params.js";
-export { operatorsByType, buildTypeResolver, generateCelExpression } from "./action/cel.js";
+export { operatorsByType, buildTypeResolver, buildMapValueResolver, generateCelExpression, celRef, expressionMismatches } from "./action/cel.js";
 export {
   buildActionVersion,
   actionPublishIssues,

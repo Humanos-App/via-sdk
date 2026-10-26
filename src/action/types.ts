@@ -39,7 +39,7 @@ export interface ActionRule {
    */
   description?: string;
   conditions: RuleCondition[];
-  /** Auto-generated CEL (N13). Derived from `conditions`; never hand-edited. */
+  /** CEL generated from `conditions` (§0.6.2); written by hand only on a rule with none. */
   expression: string;
   /**
    * The tools this rule GOVERNS, by `executionParams.tool` (S13).

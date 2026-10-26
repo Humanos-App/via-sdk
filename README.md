@@ -91,7 +91,8 @@ A complete runnable script: [`examples/healthcare-claims.ts`](../examples/health
 |---|---|
 | `buildActionVersion(input)` → `ActionDetail` | generates each rule's CEL `expression` (N13) |
 | `buildActionReference(content, location)` / `verifyActionReference` / `actionDigestSRI` | hash-pinning |
-| `generateCelExpression(conditions, typeOf)` / `buildTypeResolver` / `operatorsByType` | rule → CEL |
+| `generateCelExpression(conditions, typeOf, valuesOf?)` / `buildTypeResolver` / `buildMapValueResolver` / `operatorsByType` | rule → CEL; a name that is not a CEL identifier reads as `scope["name"]` (`celRef`, §0.6.2) |
+| `expressionMismatches(content)` | the rules whose expression is not what their conditions generate, which publishing refuses (§0.6.2) |
 | `validateExecutionParams` / `validateUserParams` | type/required checks; a `datetime` is an ISO-8601 string or a finite number (§0.6.3) |
 | `wrapUserParamsWithAction` / `unwrapUserParamValues` | `{description,value}` ↔ flat |
 | `evaluateRules(rules, ctx)` / `evaluateRule` | CEL over `{ userParams, executionParams }`, plus the version's `constants` (`constantValues`) |

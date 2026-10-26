@@ -1,6 +1,6 @@
 import { canonicalizeRFC8785 } from "../crypto/canonicalize.js";
 import { computeSRI } from "../crypto/digest.js";
-import { buildTypeResolver, generateCelExpression } from "./cel.js";
+import { buildMapValueResolver, buildTypeResolver, expressionMismatches, generateCelExpression } from "./cel.js";
 import { assertNoUnverifiedClientRefs } from "../agent/constraints.js";
 import { constantsRead, readsUserParams } from "../cel/evaluate.js";
 import { validateConstants } from "./execution-params.js";
@@ -45,6 +45,7 @@ export function buildActionVersion(input: BuildActionVersionInput): ActionDetail
   const userParams = input.userParams ?? {};
   const executionParams = input.executionParams ?? {};
   const typeOf = buildTypeResolver({ userParams, executionParams, constants: input.constants });
+  const valuesOf = buildMapValueResolver({ userParams, executionParams, constants: input.constants });
   const rules = (input.rules ?? []).map((r) => ({
     name: r.name,
     ...(r.description ? { description: r.description } : {}),
@@ -53,7 +54,7 @@ export function buildActionVersion(input: BuildActionVersionInput): ActionDetail
     ...(r.appliesTo?.length ? { appliesTo: r.appliesTo } : {}),
     ...(r.requires?.length ? { requires: r.requires } : {}),
     conditions: r.conditions,
-    expression: generateCelExpression(r.conditions, typeOf),
+    expression: generateCelExpression(r.conditions, typeOf, valuesOf),
   }));
   // v0.3 §9.4ter(c): a rule MUST NOT read what a client says about itself, and an implementation MUST
   // refuse it when the action is written — the last moment its hollowness is visible.
@@ -81,7 +82,7 @@ export function buildActionVersion(input: BuildActionVersionInput): ActionDetail
  * issuer's check, run before a version is published, never at verify: a version already published is
  * read as written.
  *
- * - Every rule carries a `description`.
+ * - Every rule carries a `description`, and a rule with `conditions` the expression they generate (§0.6.2).
  * - With `tools`: each listed tool is governed by a rule (one whose `appliesTo` names it, or one with
  *   no `appliesTo`) or is in `unrestricted`, never both; `unrestricted`, every `appliesTo` and
  *   `stepUp.tools` name listed tools only. No rules at all is valid only when every tool is unrestricted.
@@ -90,12 +91,16 @@ export function buildActionVersion(input: BuildActionVersionInput): ActionDetail
  *   userParams; each constant has a value of its type; every constant a rule reads is declared.
  */
 export function actionPublishIssues(
-  content: Pick<ActionDetail, "rules" | "tools" | "unrestricted" | "stepUp" | "for" | "userParams" | "constants">,
+  content: Pick<ActionDetail, "rules" | "tools" | "unrestricted" | "stepUp" | "for" | "userParams" | "constants"> &
+    Partial<Pick<ActionDetail, "executionParams">>,
 ): string[] {
   const issues: string[] = [];
   const rules = content.rules ?? [];
   for (const r of rules) {
     if (!r.description?.trim()) issues.push(`Describe rule "${r.name}" in a sentence: it is the reason a denied call gives.`);
+  }
+  for (const name of expressionMismatches(content)) {
+    issues.push(`Regenerate rule "${name}" from its conditions: its expression is not what they generate. To keep the expression as written, remove its conditions.`);
   }
   if (!content.tools && rules.length === 0) issues.push("Add at least one rule: an action that covers no tools needs one.");
   return [...issues, ...actionToolIssues(content), ...actionForIssues(content)];

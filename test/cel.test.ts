@@ -7,7 +7,8 @@
  */
 import { describe, it, expect } from "vitest";
 import { evaluateRule, evaluateRules, validateCelExpression, CEL_EXPRESSION_MAX_LENGTH } from "../src/cel/evaluate.js";
-import { buildActionVersion } from "../src/action/build.js";
+import { buildActionVersion, actionPublishIssues } from "../src/action/build.js";
+import { celRef, expressionMismatches } from "../src/action/cel.js";
 
 const ctx = {
   // deadline is an issuer constant (userParam); when is a runtime value (executionParam).
@@ -128,6 +129,74 @@ describe("generateCelExpression × engine — end to end", () => {
     expect(bad.evaluations.find((e) => e.rule === "amt")?.result).toBe("fail"); // 999 > 500
     expect(bad.evaluations.find((e) => e.rule === "cat")?.result).toBe("fail"); // "x" not in [a,b]
     expect(bad.evaluations.find((e) => e.rule === "notblocked")?.result).toBe("fail"); // "x" IS blocked
+  });
+});
+
+// v0.3 §0.6.2 — a name that is not a CEL identifier, or is one of CEL's words, is read through brackets.
+describe("generateCelExpression — names that are not CEL identifiers", () => {
+  it.each([
+    ["an identifier, as given", "executionParams.amount", "executionParams.amount"],
+    ["a hyphenated tool input, bracketed", "executionParams.max-amount", 'executionParams["max-amount"]'],
+    ["a CEL word, bracketed", "userParams.in", 'userParams["in"]'],
+    ["a ref outside the three scopes, as given", "1.5", "1.5"],
+  ])("renders %s", (_case, ref, cel) => {
+    expect(celRef(ref)).toBe(cel);
+  });
+
+  const action = buildActionVersion({
+    $id: "urn:via:action:cel-2",
+    version: "1",
+    userParams: { "max-amount": { type: "number", required: true }, caps: { type: "map", values: "number", required: true } },
+    executionParams: { "order-total": { type: "number", required: true }, "desk-id": { type: "string", required: true } },
+    rules: [
+      { name: "cap", conditions: [{ left: "executionParams.order-total", operator: "<=", right: "userParams.max-amount" }] },
+      {
+        name: "desk",
+        conditions: [{ left: "executionParams.order-total", operator: "<=", right: "userParams.caps", rightKey: "executionParams.desk-id" }],
+      },
+    ],
+  });
+
+  it("generates bracketed names, map keys and guards that the engine reads", () => {
+    expect(action.rules.map((r) => r.expression)).toEqual([
+      'executionParams["order-total"] <= userParams["max-amount"]',
+      'executionParams["desk-id"] in userParams.caps && executionParams["order-total"] <= userParams.caps[executionParams["desk-id"]]',
+    ]);
+    const ctx = (total: number) => ({
+      userParams: { "max-amount": 500, caps: { d1: 300 } },
+      executionParams: { "order-total": total, "desk-id": "d1" },
+    });
+    expect(evaluateRules(action.rules, ctx(200)).decision).toBe("allow");
+    expect(evaluateRules(action.rules, ctx(400)).evaluations.map((e) => e.result)).toEqual(["pass", "fail"]);
+  });
+});
+
+// v0.3 §0.6.2 — an issuer refuses a rule whose expression parted from its conditions; one with none is hand-written.
+describe("expressionMismatches", () => {
+  const base = buildActionVersion({
+    $id: "urn:via:action:cel-3",
+    version: "1",
+    userParams: { maxAmount: { type: "number", required: true } },
+    executionParams: { amount: { type: "number", required: true } },
+    rules: [{ name: "cap", description: "At most the cap", conditions: [{ left: "executionParams.amount", operator: "<=", right: "userParams.maxAmount" }] }],
+  });
+
+  it("accepts the expression its conditions generate", () => {
+    expect(expressionMismatches(base)).toEqual([]);
+  });
+
+  // @refusal
+  it("names a rule whose expression is not what its conditions generate, and the publish check refuses it", () => {
+    const edited = { ...base, rules: [{ ...base.rules[0]!, expression: "executionParams.amount < userParams.maxAmount" }] };
+    expect(expressionMismatches(edited)).toEqual(["cap"]);
+    expect(actionPublishIssues(edited)).toContain(
+      'Regenerate rule "cap" from its conditions: its expression is not what they generate. To keep the expression as written, remove its conditions.',
+    );
+  });
+
+  it("leaves a rule with no conditions to the expression written by hand", () => {
+    const written = { ...base, rules: [{ name: "fresh", description: "d", conditions: [], expression: 'agent.assurance == "hardware"' }] };
+    expect(expressionMismatches(written)).toEqual([]);
   });
 });
 
