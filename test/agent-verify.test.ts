@@ -301,6 +301,25 @@ describe("verifyAgentDirect — A1–A8 + agent.* CEL (M4)", () => {
     expect(r.agent).toMatchObject({ assurance: "hardware", binding: "attested", root: "aws-nitro" });
   });
 
+  // @invariant v0.3 §9.3: a rule never reads the presenting key's id — it changes on rotation, and a raw pin has none —
+  // though the result keeps it, for the decision event's `keyIdEvaluated` (§9.9).
+  it("gives no rule agent.keyId, and still names the key in the result", async () => {
+    const keyId = `${AGENT_DID}#key-1`;
+    const pinned = mandate.credentialSubject.mandate.context.authorizedAgents!.map((e) => ({ ...e, keyId }));
+    const byKey: ActionDetail = {
+      ...ACTION,
+      rules: [{ name: "this_key", description: "only this key", conditions: [], expression: `agent.keyId == "${keyId}"` }],
+    };
+    const params = { amount: 10, action: "transfer" };
+    const r = await verifyAgentDirect(
+      mandate,
+      { pop: await pop(attested, "transfer", params), action: "transfer", params },
+      deps({ candidates: pinned, loadActionVersion: async () => byKey }),
+    );
+    expect(r).toMatchObject({ decision: "deny", agent: { keyId } });
+    expect(r.evaluations.map((e) => e.result)).toEqual(["error"]);
+  });
+
   it("A2 agent_not_bound: an unregistered (impostor) key", async () => {
     const params = { amount: 10, action: "transfer" };
     const r = await verifyAgentDirect(mandate, { pop: await pop(impostor, "transfer", params), action: "transfer", params }, deps());

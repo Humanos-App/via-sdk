@@ -357,7 +357,22 @@ export {
 export {
   buildVerificationEvent,
   buildOutcomeEvent,
+  outcomeParams,
+  type AgentOutcomeKind,
 } from "./agent/audit.js";
+
+// Agent Binding (§16) — the call proof (§16.16), the decision shown to the party the agent calls
+export {
+  CALL_PROOF_TYP,
+  CALL_PROOF_HEADER,
+  CALL_PROOF_META_KEY,
+  CALL_PROOF_MAX_LIFETIME,
+  buildCallProof,
+  verifyCallProof,
+  type CallProofClaims,
+  type CallProofCall,
+  type CallProofReason,
+} from "./agent/call-proof.js";
 
 // Operator Verification (§18 proposal) — the identity axis
 export {

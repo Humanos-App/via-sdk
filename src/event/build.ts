@@ -3,6 +3,7 @@ import { canonicalizeRFC8785 } from "../crypto/canonicalize.js";
 import { computeSRI } from "../crypto/digest.js";
 import { canonicalEventType, createDataIntegrityProof, verifyDataIntegrityProof, type EventType } from "../crypto/proof.js";
 import type { Jwk } from "../crypto/p256.js";
+import type { RuleEvaluation } from "../cel/evaluate.js";
 import { didFromUrl } from "../did/web.js";
 import { stampMandate, type ResolvePublicKey } from "../mandate/build.js";
 import {
@@ -26,7 +27,8 @@ export interface EventFields {
   /** Why the event was recorded, for the audit — any kind MAY carry it. */
   reason?: string;
   // ── about a mandate ──
-  evaluations?: unknown[];
+  /** §2.0 — each rule's result (`pass` | `fail` | `error` | `skip`), as the evaluator returns it. */
+  evaluations?: RuleEvaluation[];
   executionParams?: Record<string, unknown>;
   targetVerifier?: string;
   /** §20.3 — which machinery governed a `VERIFICATION_*` decision. */

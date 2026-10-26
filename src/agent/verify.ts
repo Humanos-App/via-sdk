@@ -428,7 +428,7 @@ export async function verifyAgentDirect(
       {
         tool: req.action,
         params: req.params,
-        agent: { ...(deps.agentEnvExtras ?? {}), ...pop.agent },
+        agent: _celAgent(deps.agentEnvExtras, pop.agent),
         mandate: m.action ? "guardrail" : "authorization",
         ...(m.action ? { mandateAction: m.action.id } : {}),
       },
@@ -552,7 +552,7 @@ export async function verifyAgentDirect(
     // refused above. Read from the params alone, a call that left `tool` out skipped every
     // `appliesTo` rule, so a missing input widened authority.
     executionParams: { ...req.params, tool: req.action },
-    agent: { ...(deps.agentEnvExtras ?? {}), ...pop.agent },
+    agent: _celAgent(deps.agentEnvExtras, pop.agent),
     ...(accreditation ? { accreditation } : {}),
   });
   if (decision === "allow") {
@@ -660,7 +660,7 @@ export async function verifyAgentUnderPolicy(
 
   const verdict = await evaluatePolicy(
     deps.policy.content,
-    { tool: req.action, params: req.params, agent: { ...(deps.agentEnvExtras ?? {}), ...pop.agent, did: req.agentDid } },
+    { tool: req.action, params: req.params, agent: { ..._celAgent(deps.agentEnvExtras, pop.agent), did: req.agentDid } },
     {
       loadActionVersion: deps.loadActionVersion,
       ...(deps.guardrailTools ? { guardrailTools: deps.guardrailTools } : {}),
@@ -731,4 +731,14 @@ async function reviewSemantic(
     return { escalate: true, ...(reviewer ? { reviewer } : {}) };
   }
   return { ...(reviewer ? { reviewer } : {}) };
+}
+
+/**
+ * v0.3 §9.3 — what rules read of the agent: the projection and the presenting key's rung, never its `keyId`. A key's id
+ * changes when it rotates and a raw-key pin has none, so a rule over it would start denying; the decision event records
+ * it as `keyIdEvaluated` (§9.9), from the PoP's result (2026-10-26).
+ */
+function _celAgent(extras: Record<string, unknown> | undefined, agent: AgentEnv | undefined): Record<string, unknown> {
+  const { keyId: _keyId, ...rule } = { ...(extras ?? {}), ...agent } as Record<string, unknown>;
+  return rule;
 }

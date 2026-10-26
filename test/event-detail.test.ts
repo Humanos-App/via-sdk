@@ -41,7 +41,7 @@ beforeAll(() => {
 /** One value per detail slot, each distinguishable in the output. */
 const DETAILS = {
   reason: "step_up_satisfied",
-  evaluations: [{ rule: "amount_limit", passed: true }],
+  evaluations: [{ rule: "amount_limit", result: "pass" as const }],
   executionParams: { tool: "slack_send_message" },
   targetVerifier: "did:web:verifier.example",
   keyIdEvaluated: "did:web:humanos.tech:agent:a#key-1",

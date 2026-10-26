@@ -21,14 +21,14 @@ const te = new TextEncoder();
  * The `alg` is always passed IN, never read from the token: every caller here has already derived
  * it from the key.
  */
-async function signJws(alg: string, data: Uint8Array, privateJwk: Jwk): Promise<Uint8Array> {
+export async function signJws(alg: string, data: Uint8Array, privateJwk: Jwk): Promise<Uint8Array> {
   if (alg === "ES256") return signES256(data, privateJwk);
   const key = createPrivateKey({ key: privateJwk as never, format: "jwk" });
   // EdDSA takes no digest — the algorithm fixes it. RS256 is RSASSA-PKCS1-v1_5 with SHA-256.
   return new Uint8Array(alg === "EdDSA" ? nodeSign(null, data, key) : nodeSign("sha256", data, key));
 }
 
-async function verifyJws(alg: string, data: Uint8Array, sig: Uint8Array, publicJwk: Jwk): Promise<boolean> {
+export async function verifyJws(alg: string, data: Uint8Array, sig: Uint8Array, publicJwk: Jwk): Promise<boolean> {
   if (alg === "ES256") return verifyES256(data, sig, publicJwk);
   try {
     const key = createPublicKey({ key: publicJwk as never, format: "jwk" });
@@ -140,7 +140,7 @@ export interface DecodedPoP {
  *
  * The header's `alg` is therefore read only to reject obvious garbage. It never selects a
  * verification routine (RFC 8725 §3.1); {@link algForKey} does that from the resolved key.
- * Tolerates a bare-string `cnf` during the kya migration window (target form is `{jkt}`).
+ * `cnf` is `{ jkt }` only (§16.6): a bare thumbprint string is refused (2026-10-26).
  */
 export function decodePoP(jws: string): DecodedPoP {
   try {
@@ -154,8 +154,7 @@ export function decodePoP(jws: string): DecodedPoP {
     if (!header.alg || !["ES256", "RS256", "EdDSA"].includes(header.alg)) {
       return { ok: false, reason: "pop_invalid" };
     }
-    const cnf = payload?.cnf as { jkt?: string } | string | undefined;
-    const jkt = typeof cnf === "string" ? cnf : cnf?.jkt;
+    const jkt = (payload?.cnf as { jkt?: unknown } | undefined)?.jkt;
     if (!payload || typeof jkt !== "string") return { ok: false, reason: "pop_invalid" };
     return { ok: true, payload, jkt, alg: header.alg };
   } catch {

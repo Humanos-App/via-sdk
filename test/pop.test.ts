@@ -75,12 +75,11 @@ describe("PoP build/decode/verify (§16.6–§16.7)", () => {
     expect(decodePoP(`${hdr({ alg: "EdDSA", typ: "via-pop+jwt" })}.${p}.x`).ok).toBe(true);
   });
 
-  it("tolerates a bare-string cnf during the kya migration window", () => {
+  // @refusal §16.6: `cnf` is `{ jkt }` only — nothing sends a bare thumbprint, and accepting it only widened A1 (2026-10-26).
+  it("refuses a bare-string cnf", () => {
     const header = Buffer.from(JSON.stringify({ alg: "ES256", typ: "via-pop+jwt" })).toString("base64url");
     const payload = Buffer.from(JSON.stringify({ ...mkPayload(), cnf: jkt })).toString("base64url"); // cnf = bare string
-    const d = decodePoP(`${header}.${payload}.x`);
-    expect(d.ok).toBe(true);
-    expect(d.jkt).toBe(jkt);
+    expect(decodePoP(`${header}.${payload}.x`)).toMatchObject({ ok: false, reason: "pop_invalid" });
   });
 });
 

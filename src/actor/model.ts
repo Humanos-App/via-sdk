@@ -1276,7 +1276,9 @@ export function projectAgentContext(
 ): Record<string, unknown> {
   const assurance = presentingKey ? (presentingKey.assurance ?? "pop") : subject.assurance;
   const binding = presentingKey ? (presentingKey.binding ?? "self") : subject.binding;
-  const verifiedAt = presentingKey ? presentingKey.verifiedAt : subject.verifiedAt;
+  // v0.3 §9.3: both instants in epoch milliseconds, the unit A8 compares in, so a rule can compare them (§0.6.3).
+  const verifiedAt = _epochMs(presentingKey ? presentingKey.verifiedAt : subject.verifiedAt);
+  const runtimeAt = _epochMs((presentingKey ? presentingKey.runtime : subject.runtime)?.at);
   const root = presentingKey ? presentingKey.root : subject.root;
   return {
     // The actor's own DID. §16.1 splits IDENTIFIER from AUTHENTICATOR: the DID is who the agent
@@ -1295,7 +1297,7 @@ export function projectAgentContext(
     assurance,
     binding,
     bootstrapAnchor: subject.bootstrapAnchor,
-    verifiedAt,
+    ...(verifiedAt !== undefined ? { verifiedAt } : {}),
     status: subject.status,
     ...(root ? { root } : {}),
     ...(subject.operator ? { operator: { org: subject.operator.org } } : {}),
@@ -1310,10 +1312,15 @@ export function projectAgentContext(
     runtime: (presentingKey ? presentingKey.runtime : subject.runtime)?.class ?? "none",
     // When the class was established, so a mandate can bound freshness itself. Not compared here:
     // a projection that silently expired a claim would hide which rule rejected the request.
-    ...((presentingKey ? presentingKey.runtime : subject.runtime)?.at
-      ? { runtimeAt: (presentingKey ? presentingKey.runtime : subject.runtime)!.at }
-      : {}),
+    ...(runtimeAt !== undefined ? { runtimeAt } : {}),
   };
+}
+
+/** An instant as epoch milliseconds: an ISO string parsed, a number kept; undefined when absent or unreadable. */
+function _epochMs(at: string | number | undefined): number | undefined {
+  if (at === undefined) return undefined;
+  const ms = typeof at === "number" ? at : Date.parse(at);
+  return Number.isFinite(ms) ? ms : undefined;
 }
 
 export interface ActorAudit {

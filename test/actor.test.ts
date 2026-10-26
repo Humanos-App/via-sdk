@@ -1016,7 +1016,7 @@ describe("projectAgentContext (§9 / KYA A.3) — the agent.* CEL namespace", ()
       binding: "attested",
       bootstrapAnchor: "api_key",
       status: "active",
-      verifiedAt: "2026-08-01T00:00:00.000Z",
+      verifiedAt: Date.parse("2026-08-01T00:00:00.000Z"), // epoch ms (§9.3)
     });
     // Pinned-key resolution is §7's job, not a rule's — a rule reaching into keys would be
     // writing its own D7, badly.
@@ -1047,7 +1047,8 @@ describe("projectAgentContext (§9 / KYA A.3) — the agent.* CEL namespace", ()
     // resolved THROUGH the actor, so the bound belongs to the mandate that cares. This is the
     // projection that lets it be written at all.
     const rule = [
-      { name: "fresh", description: "attestation too old", expression: 'agent.verifiedAt >= "2026-07-15T00:00:00.000Z"' },
+      // epoch ms, as A8 compares (§9.3): a rule bounds an instant by a fixed date, never by `now` (§16.8)
+      { name: "fresh", description: "attestation too old", expression: `agent.verifiedAt >= ${Date.parse("2026-07-15T00:00:00.000Z")}` },
     ];
     const fresh = evaluateRules(rule, { userParams: {}, executionParams: {}, agent: projectAgentContext(subject()) });
     expect(fresh.decision).toBe("allow");
@@ -1110,7 +1111,7 @@ describe("projectAgentContext (§9 / KYA A.3) — the agent.* CEL namespace", ()
     expect(k1.verifiedAt).toBe(NEW);
     expect(k2.verifiedAt).toBe(OLD); // untouched — it was not re-attested
 
-    const bound = [{ name: "fresh", description: "too old", expression: 'agent.verifiedAt >= "2026-10-01T00:00:00.000Z"' }];
+    const bound = [{ name: "fresh", description: "too old", expression: `agent.verifiedAt >= ${Date.parse("2026-10-01T00:00:00.000Z")}` }];
     const ctx = (k: typeof k1) => ({ userParams: {}, executionParams: {}, agent: projectAgentContext(folded.subject, k) });
     expect(evaluateRules(bound, ctx(k1)).decision).toBe("allow");
     expect(evaluateRules(bound, ctx(k2)).decision).toBe("deny");
@@ -1190,7 +1191,7 @@ describe("RUNTIME_ATTESTED — the runtime axis", () => {
     if (!r.ok) throw new Error("fold failed");
     const ctx = projectAgentContext(r.subject);
     expect(ctx.runtime).toBe("tee");
-    expect(ctx.runtimeAt).toBe("2026-09-03T10:00:00.000Z");
+    expect(ctx.runtimeAt).toBe(Date.parse("2026-09-03T10:00:00.000Z")); // epoch ms, as verifiedAt (§9.3)
   });
 });
 

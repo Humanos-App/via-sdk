@@ -64,6 +64,22 @@ export function buildVerificationEvent(
   return signEvent(ev, signer);
 }
 
+/** §2.1 — what the agent reports: the call `completed`, or `failed`. */
+export type AgentOutcomeKind = "completed" | "failed";
+
+/**
+ * §2.1 — the params of a `report_outcome`, as the agent's PoP binds them (`action_hash`, §16.6) and the
+ * gateway rebuilds them: `{ decisionEventId, outcome, error? }`, `error` only when given. A wire
+ * contract: any divergence between the two sides is an `action_hash_mismatch` on every report.
+ */
+export function outcomeParams(
+  decisionEventId: string,
+  outcome: AgentOutcomeKind,
+  error?: string,
+): Record<string, unknown> {
+  return { decisionEventId, outcome, ...(error ? { error } : {}) };
+}
+
 /**
  * §2.1 — a signed `ACTION_COMPLETED` / `ACTION_FAILED`: the outcome the agent reported, naming the
  * `VERIFICATION_APPROVED` it closes in `decision`, and signed by the verifier that made that decision
@@ -74,7 +90,7 @@ export function buildOutcomeEvent(
     /** The mandate the call was made under — or, with no mandate, `policy` (§21.5). Exactly one. */
     mandateId?: string;
     policy?: { id: string; agentDid: string };
-    outcome: "completed" | "failed";
+    outcome: AgentOutcomeKind;
     /** The `id` of the `VERIFICATION_APPROVED` this outcome closes. */
     decision: string;
     /** The verifier's DID — the signer, so the event's `issuer` (v0.3 §2). */
