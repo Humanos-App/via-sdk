@@ -95,9 +95,9 @@ export function actionPublishIssues(
   const issues: string[] = [];
   const rules = content.rules ?? [];
   for (const r of rules) {
-    if (!r.description?.trim()) issues.push(`rule "${r.name}" has no description`);
+    if (!r.description?.trim()) issues.push(`Describe rule "${r.name}" in a sentence: it is the reason a denied call gives.`);
   }
-  if (!content.tools && rules.length === 0) issues.push("an action that lists no tools needs at least one rule");
+  if (!content.tools && rules.length === 0) issues.push("Add at least one rule: an action that covers no tools needs one.");
   return [...issues, ...actionToolIssues(content), ...actionForIssues(content)];
 }
 
@@ -116,17 +116,18 @@ export function actionForIssues(content: Pick<ActionDetail, "rules" | "for" | "u
   const constants = content.constants ?? {};
   const declared = Object.keys(constants);
   if (content.for !== undefined && content.for !== "mandate" && content.for !== "policy") {
-    issues.push(`\`for\` is "${String(content.for)}", neither mandate nor policy`);
+    issues.push(`"for" is "${String(content.for)}": it must be mandate or policy.`);
   }
   if (content.for === "policy") {
     const userParams = Object.keys(content.userParams ?? {});
-    if (userParams.length) issues.push(`a policy action declares no userParams (${userParams.join(", ")}): fix its limits as constants`);
+    if (userParams.length)
+      issues.push(`A policy action has no user params (${userParams.join(", ")}): a policy runs with no person to set them. Make each one a constant.`);
     for (const r of content.rules ?? []) {
-      if (ruleReadsUserParams(r)) issues.push(`rule "${r.name}" reads userParams, which a policy action has none of`);
+      if (ruleReadsUserParams(r)) issues.push(`Rule "${r.name}" reads userParams, which a policy action has none of. Read a constant instead.`);
     }
   }
   for (const name of declared) {
-    if (!CONSTANT_NAME.test(name)) issues.push(`constant "${name}" is not a CEL identifier, so no rule can read it`);
+    if (!CONSTANT_NAME.test(name)) issues.push(`Rename constant "${name}": use only letters, digits and _, not starting with a digit, so a rule can read it.`);
   }
   try {
     validateConstants(content);
@@ -139,7 +140,8 @@ export function actionForIssues(content: Pick<ActionDetail, "rules" | "for" | "u
     );
     const read = new Set([...fromConditions, ...(constantsRead(r.expression ?? "") ?? [])]);
     const missing = [...read].filter((name) => !Object.hasOwn(constants, name));
-    if (missing.length) issues.push(`rule "${r.name}" reads ${missing.map((n) => `constants.${n}`).join(", ")}, which the version does not declare`);
+    if (missing.length)
+      issues.push(`Rule "${r.name}" reads ${missing.map((n) => `constants.${n}`).join(", ")}, which this version does not declare. Add it, or change the rule.`);
   }
   return issues;
 }
@@ -182,21 +184,21 @@ export function actionToolIssues(content: Pick<ActionDetail, "rules" | "tools" |
   const issues: string[] = [];
   const rules = content.rules ?? [];
   const tools = content.tools;
-  if (tools.length === 0) issues.push("`tools` lists no tool");
+  if (tools.length === 0) issues.push("The action covers no tools: list at least one.");
   const listed = new Set(tools);
-  if (listed.size !== tools.length) issues.push("`tools` lists a tool twice");
+  if (listed.size !== tools.length) issues.push("The action lists a tool twice.");
   const unrestricted = new Set(content.unrestricted ?? []);
-  const outside = (where: string, names: Iterable<string>) => {
-    for (const n of names) if (!listed.has(n)) issues.push(`${where} names "${n}", which \`tools\` does not list`);
+  const outside = (what: (n: string) => string, names: Iterable<string>) => {
+    for (const n of names) if (!listed.has(n)) issues.push(`${what(n)}, but the action does not cover it.`);
   };
-  outside("`unrestricted`", unrestricted);
-  for (const r of rules) outside(`rule "${r.name}" (appliesTo)`, r.appliesTo ?? []);
-  outside("`stepUp.tools`", content.stepUp?.tools ?? []);
+  outside((n) => `"${n}" is marked as needing no limits`, unrestricted);
+  for (const r of rules) outside((n) => `Rule "${r.name}" applies to "${n}"`, r.appliesTo ?? []);
+  outside((n) => `"${n}" needs human approval`, content.stepUp?.tools ?? []);
   const governed = (tool: string) => rules.some((r) => !r.appliesTo?.length || r.appliesTo.includes(tool));
   for (const tool of tools) {
     const limited = governed(tool);
-    if (limited && unrestricted.has(tool)) issues.push(`"${tool}" is both limited by a rule and marked unrestricted`);
-    if (!limited && !unrestricted.has(tool)) issues.push(`"${tool}" is neither limited by a rule nor marked unrestricted`);
+    if (limited && unrestricted.has(tool)) issues.push(`"${tool}" has a rule and is marked as needing no limits: keep one.`);
+    if (!limited && !unrestricted.has(tool)) issues.push(`Add a rule for "${tool}".`);
   }
   return issues;
 }

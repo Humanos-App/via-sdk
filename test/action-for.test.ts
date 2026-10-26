@@ -111,27 +111,27 @@ describe("what may be published (§0.6.1)", () => {
 
   // @invariant §0.6.1: a `for` this SDK does not know is refused, never read as one of the two.
   it("refuses a `for` other than mandate or policy", () => {
-    expect(actionPublishIssues({ ...CAP, for: "polcy" as never })).toEqual(['`for` is "polcy", neither mandate nor policy']);
+    expect(actionPublishIssues({ ...CAP, for: "polcy" as never })).toEqual(['"for" is "polcy": it must be mandate or policy.']);
   });
 
   // @invariant §0.6.1: a policy action neither declares nor reads userParams — the policy runs it with none.
   it("refuses a policy action that declares userParams, or has a rule reading them in any form", () => {
     expect(actionPublishIssues({ ...CAP, userParams: { cap: { type: "number" } } })).toContain(
-      "a policy action declares no userParams (cap): fix its limits as constants",
+      "A policy action has no user params (cap): a policy runs with no person to set them. Make each one a constant.",
     );
     const whole = { ...CAP, rules: [{ ...CAP.rules[0]!, conditions: [], expression: '"vip" in userParams' }] };
-    expect(actionPublishIssues(whole)).toContain('rule "payment_cap" reads userParams, which a policy action has none of');
+    expect(actionPublishIssues(whole)).toContain('Rule "payment_cap" reads userParams, which a policy action has none of. Read a constant instead.');
     const inText = { ...CAP, rules: [{ ...CAP.rules[0]!, conditions: [], expression: 'executionParams.note != "userParams.cap" && executionParams.amount <= constants.maxAmount' }] };
     expect(actionPublishIssues(inText)).toEqual([]);
   });
 
   it("refuses a constant that is not a CEL identifier, not of its type, or not declared where a rule reads it", () => {
     expect(actionPublishIssues({ ...CAP, constants: { ...CAP.constants, "max-amount": { type: "number", value: 1 } } })).toContain(
-      'constant "max-amount" is not a CEL identifier, so no rule can read it',
+      'Rename constant "max-amount": use only letters, digits and _, not starting with a digit, so a rule can read it.',
     );
     expect(actionPublishIssues({ ...CAP, constants: { maxAmount: { type: "number", value: "5000" } } }).join()).toMatch(/maxAmount/);
     const undeclared = { ...CAP, rules: [{ ...CAP.rules[0]!, conditions: [{ left: "executionParams.amount", operator: "<=" as const, right: "constants.cap" }], expression: "executionParams.amount <= constants.cap" }] };
-    expect(actionPublishIssues(undeclared)).toContain('rule "payment_cap" reads constants.cap, which the version does not declare');
+    expect(actionPublishIssues(undeclared)).toContain('Rule "payment_cap" reads constants.cap, which this version does not declare. Add it, or change the rule.');
   });
 });
 

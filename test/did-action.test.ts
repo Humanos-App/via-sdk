@@ -143,11 +143,11 @@ describe("what may be published (§0.6.1)", () => {
 
   it("refuses a listed tool left undecided, or both limited and unrestricted", () => {
     expect(actionPublishIssues(buildActionVersion({ ...base, tools: ["send", "list"], rules: [channelIn] }))).toEqual([
-      '"list" is neither limited by a rule nor marked unrestricted',
+      'Add a rule for "list".',
     ]);
     const unscoped = { ...channelIn, appliesTo: undefined };
     expect(actionPublishIssues(buildActionVersion({ ...base, tools: ["send", "list"], unrestricted: ["list"], rules: [unscoped] }))).toEqual([
-      '"list" is both limited by a rule and marked unrestricted',
+      '"list" has a rule and is marked as needing no limits: keep one.',
     ]);
   });
 
@@ -156,16 +156,16 @@ describe("what may be published (§0.6.1)", () => {
       buildActionVersion({ ...base, tools: ["send"], unrestricted: ["list"], rules: [{ ...channelIn, appliesTo: ["post"] }], stepUp: { tools: ["delete"] } }),
     );
     expect(issues).toEqual(expect.arrayContaining([
-      '`unrestricted` names "list", which `tools` does not list',
-      'rule "channel_in" (appliesTo) names "post", which `tools` does not list',
-      '`stepUp.tools` names "delete", which `tools` does not list',
+      '"list" is marked as needing no limits, but the action does not cover it.',
+      'Rule "channel_in" applies to "post", but the action does not cover it.',
+      '"delete" needs human approval, but the action does not cover it.',
     ]));
   });
 
   it("keeps \"at least one rule\" for a version without `tools`, and asks every rule for a description", () => {
-    expect(actionPublishIssues(buildActionVersion(base))).toEqual(["an action that lists no tools needs at least one rule"]);
+    expect(actionPublishIssues(buildActionVersion(base))).toEqual(["Add at least one rule: an action that covers no tools needs one."]);
     expect(actionPublishIssues(buildActionVersion({ ...base, rules: [{ ...channelIn, description: "" }] }))).toEqual([
-      'rule "channel_in" has no description',
+      'Describe rule "channel_in" in a sentence: it is the reason a denied call gives.',
     ]);
   });
 
