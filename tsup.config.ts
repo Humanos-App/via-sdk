@@ -9,12 +9,7 @@ export default defineConfig({
   // from index.ts that X.509 stack would land in the dist every consumer ships, for a dev utility.
   entry: ["src/index.ts", "src/action/cel.ts", "src/agent/sim.ts"],
   format: ["esm", "cjs"],
-  // tsup 8 injects `baseUrl` into declaration compilation, which TypeScript 6 reports as
-  // TS5101 (deprecated, gone in 7). Scope the allowance to THIS builder rather than the
-  // tsconfig, so the deprecation stays visible everywhere else. Ported from the platform's
-  // dev line, which hit it first — and it belongs here because `sync-via-sdk` copies this
-  // file wholesale, so a fix that lives only in the vendored copy dies on the next sync.
-  dts: { compilerOptions: { ignoreDeprecations: "6.0" } },
+  dts: true,
   clean: true,
   sourcemap: true,
   target: "es2022",
