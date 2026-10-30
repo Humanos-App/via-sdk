@@ -1,9 +1,11 @@
-// Agent-binding verification (§16.7 / §16.11 — agent-direct). Two entry points:
+// Agent-binding verification (§16.7 / §16.11 — agent-direct). Three entry points:
 //  • verifyAgentBinding — the PoP identity checks A1–A6 + A8 (pure; returns the
 //    validated rung as an `agent.*` env). A7 (the rung floor) is CEL over `agent.*`
 //    at step 8, not a separate check (§16.8 / C1).
 //  • verifyAgentDirect — the full §16.11 flow: status/validity/audience + A1–A8 +
 //    the action CEL (with the rung env) + step-up → `rechallenge` (D7).
+//  • verifyAgentCall — §21.3's policy-first flow: the proof once, the policy's entry
+//    or its default, and the mandate only where the entry asks for one.
 import { actionHash, decodePoP, policyActionHash, verifyPoPSignature } from "./pop.js";
 import { jwkThumbprint } from "../crypto/p256.js";
 import { evaluateRules, type RuleEvaluation } from "../cel/evaluate.js";
@@ -25,7 +27,8 @@ import type {
 import { enforcementFitsShape, enforcementOf, mayWidenAuthority } from "../mandate/description.js";
 import { EXT_SEMANTIC_REVIEW, MAX_EXECUTIONS_REACHED, unsupportedCriticalExtension, verifyStamp, type ResolvePublicKey } from "../mandate/build.js";
 import { detectSpecVersion } from "../version.js";
-import { evaluatePolicy, type PolicyEvaluationDeps } from "../policy/evaluate.js";
+import { policyDefault } from "../policy/build.js";
+import { evaluatePolicy, isUnder, type PolicyEvaluationDeps } from "../policy/evaluate.js";
 import type { PolicyGuardrailRef, PolicyVersion } from "../policy/types.js";
 
 /** The validated rung, surfaced into the CEL context as `agent.*` (§16.8). */
@@ -87,6 +90,8 @@ export interface PopCheckResult {
   reason?: AgentReasonCode;
   agent?: AgentEnv;
   boundKey?: BoundKey;
+  /** §16.6 — the `action_hash` the PoP bound, checked: the call's fingerprint a decision event records (§2). */
+  actionHash?: string;
 }
 
 /** §16.7 A1–A6 + A8 — decode, select the bound key, verify the signature, aud, nonce, action_hash, staleness. */
@@ -112,26 +117,30 @@ export async function verifyAgentBinding(input: PopCheckInput, deps: PopCheckDep
     return { ok: false, reason: "action_hash_mismatch" }; // A6
   }
 
-  // A8. `verifiedAt` is ISO on the wire (v0.3) or epoch ms (v0.2-signed); compare in ms either way.
-  // An unparseable instant on an entry WITH a window denies: `now - NaN > x` is false, so the
-  // condition is written to fail closed rather than fall through.
-  const now = (deps.now ?? new Date()).getTime();
-  const verifiedAtMs = boundKeyVerifiedAtMs(bk);
-  if (bk.maxAttestationStaleness !== undefined && !(now - verifiedAtMs <= bk.maxAttestationStaleness * 1000)) {
-    return { ok: false, reason: "attestation_stale" };
-  }
+  // A8
+  if (attestationStale(bk, deps.now ?? new Date())) return { ok: false, reason: "attestation_stale" };
 
+  return { ok: true, boundKey: bk, agent: agentEnvOf(bk), actionHash: expected };
+}
+
+/**
+ * §16.7 A8 — the key's attestation is older than its entry's re-attest window. `verifiedAt` is ISO on the wire (v0.3)
+ * or epoch ms (v0.2-signed); compared in ms either way. An unparseable instant on an entry WITH a window is stale:
+ * `now - NaN > x` is false, so the condition is written to fail closed rather than fall through.
+ */
+function attestationStale(bk: BoundKey, now: Date): boolean {
+  return bk.maxAttestationStaleness !== undefined && !(now.getTime() - boundKeyVerifiedAtMs(bk) <= bk.maxAttestationStaleness * 1000);
+}
+
+/** §16.8 — the validated rung of the entry whose key signed, as the CEL `agent.*` reads it. */
+function agentEnvOf(bk: BoundKey): AgentEnv {
   return {
-    ok: true,
-    boundKey: bk,
-    agent: {
-      assurance: bk.assurance,
-      binding: bk.binding,
-      root: bk.root,
-      verifiedAt: verifiedAtMs,
-      ...(bk.did ? { did: bk.did } : {}),
-      ...(bk.keyId ? { keyId: bk.keyId } : {}),
-    },
+    assurance: bk.assurance,
+    binding: bk.binding,
+    root: bk.root,
+    verifiedAt: boundKeyVerifiedAtMs(bk),
+    ...(bk.did ? { did: bk.did } : {}),
+    ...(bk.keyId ? { keyId: bk.keyId } : {}),
   };
 }
 
@@ -322,6 +331,8 @@ export interface AgentDirectResult {
   unrestricted?: true;
   /** §21.3 — the organization's policy version the call was checked against, under a mandate or not. */
   policyDigest?: string;
+  /** §2, §16.6 — the `action_hash` the call's PoP bound, once checked: what its decision event records of the call. */
+  actionHash?: string;
   /** §21.4–§21.5 — a call with no mandate: the policy's URN and the agent's DID, which name its chain. */
   policy?: string;
   agentDid?: string;
@@ -329,6 +340,8 @@ export interface AgentDirectResult {
   approvers?: string[];
   /** §21.3 — on `mandate_required`: the actions a mandate may be under, any one of them, for the agent to ask for. */
   under?: PolicyGuardrailRef[];
+  /** §21.3 — no entry applied to the call: the policy's `default` decided it. */
+  unset?: true;
 }
 
 const deny = (reason: string, credentialId?: string, enforcement?: Enforcement): AgentDirectResult => ({
@@ -367,28 +380,9 @@ export async function verifyAgentDirect(
   // §20.3 — what governs this mandate, carried on every result below. Derived for artifacts
   // issued before §20; the field wins wherever it is present.
   const enforcement = enforcementOf(m);
-  // §8 step 1: the mandate's own STAMP, first. A copy edited after issuance verifies nothing.
-  const stamp = await verifyStamp(mandate, deps.resolvePublicKey);
-  if (!stamp.valid) return deny("credential_stamp_invalid", urn, enforcement);
-  // §0.13 / §16.10: a version this SDK does not understand fails closed, as on the presentation path.
-  if (detectSpecVersion(mandate) === "unknown") return deny("unsupported_spec_version", urn, enforcement);
-  // §19.2: a critical extension this verifier does not implement is denied, never ignored. Agent-direct
-  // implements semantic review (with a reviewer wired — without one §20.6 denies on its own).
-  if (unsupportedCriticalExtension(m, AGENT_DIRECT_EXTENSIONS)) return deny("extension_unsupported", urn, enforcement);
-  // §20.3: an enforcement that does not fit the mandate's shape fails open either way — refuse it.
-  if (!enforcementFitsShape(m)) return deny("enforcement_invalid", urn, enforcement);
-
-  // 2–3. status + validity (trusted record)
-  const record = await deps.loadCredentialRecord(urn);
-  if (record.status !== "ACTIVE") {
-    return deny(record.exhausted ? MAX_EXECUTIONS_REACHED : `credential_${record.status.toLowerCase()}`, urn, enforcement);
-  }
-  if (record.validFrom && new Date(record.validFrom) > now) return deny("not_yet_valid", urn, enforcement);
-  if (record.validUntil && new Date(record.validUntil) < now) return deny("expired", urn, enforcement);
-
-  // 4. audience — the verifier must be authorized to use the mandate
-  const authorizedDIDs = record.authorizedDIDs ?? m.context.authorizedDIDs;
-  if (!authorizedDIDs.includes(deps.verifier.did)) return deny("verifier_not_authorized", urn, enforcement);
+  // §8 step 1 to step 4: the mandate's STAMP and shape, its trusted record, its audience.
+  const refused = await mandateAuthority(mandate, () => deps.loadCredentialRecord(urn), deps, now);
+  if (refused) return refused;
 
   // 5. agent binding is REQUIRED when the mandate carries authorizedAgents (§16.4)
   // Bound or not is the SIGNED mandate's question; which keys may sign is step 0's answer.
@@ -474,30 +468,112 @@ export async function verifyAgentDirect(
     ...policyMark,
   });
 
+  // 6–9. What the mandate itself says of the call: its words, or its pinned action, the call inputs and the rules.
+  const passed = await decideUnderMandate(mandate, req, pop.agent, deps);
+  if (!("pass" in passed)) return passed;
+  const named = passed.reviewer ? { reviewer: passed.reviewer } : {};
+  // §17.4: the reviewer may take a call to the person only where the mandate permits it —
+  // `verifier` in `triggers`, and the reason in `reasons` when that list is present. Otherwise
+  // the call it could not settle is a deny: nobody agreed to be asked.
+  if (passed.escalate && !deps.stepUpSatisfied) {
+    if (!verifierMayEscalate(m.stepUp, "semantic_review")) return { ...deny("semantic_review", urn, enforcement), ...named };
+    return { ...askStepUp("verifier", "semantic_review"), ...named };
+  }
+  const capRefused = await capped();
+  if (capRefused) return { ...capRefused, evaluations: [...passed.evaluations, ...capRefused.evaluations], ...named };
+  // Authority passed — NOW a step-up is worth a person's attention (S7).
+  if ((mandateAsks || actionAsks) && !deps.stepUpSatisfied) {
+    return { ...askStepUp(mandateAsks ? "mandate" : "action", "stepup_required", passed.evaluations), ...named };
+  }
+  const staff = askApprovers(passed.evaluations);
+  if (staff) return { ...staff, ...named };
+  return {
+    decision: "allow",
+    credentialId: urn,
+    evaluations: passed.evaluations,
+    agent: pop.agent,
+    enforcement,
+    ...(passed.unrestricted ? { unrestricted: true as const } : {}),
+    ...policyMark,
+    ...named,
+  };
+}
+
+/**
+ * §8 step 1 and §16.11 steps 2–4 — the mandate's own authority, before any key or rule: its STAMP, a spec version
+ * and extensions this SDK understands, an enforcement that fits its shape, its trusted record (status, dates) and
+ * this verifier among those it authorizes. A deny, or null when it holds. `loadRecord` runs once the STAMP holds.
+ */
+async function mandateAuthority(
+  mandate: ViaMandateCredential,
+  loadRecord: () => CredentialRecordLike | Promise<CredentialRecordLike>,
+  deps: Pick<AgentDirectDeps, "resolvePublicKey" | "verifier">,
+  now: Date,
+): Promise<AgentDirectResult | null> {
+  const urn = mandate.id;
+  const m = mandate.credentialSubject.mandate;
+  const enforcement = enforcementOf(m);
+  // §8 step 1: the mandate's own STAMP, first. A copy edited after issuance verifies nothing.
+  const stamp = await verifyStamp(mandate, deps.resolvePublicKey);
+  if (!stamp.valid) return deny("credential_stamp_invalid", urn, enforcement);
+  // §0.13 / §16.10: a version this SDK does not understand fails closed, as on the presentation path.
+  if (detectSpecVersion(mandate) === "unknown") return deny("unsupported_spec_version", urn, enforcement);
+  // §19.2: a critical extension this verifier does not implement is denied, never ignored. Agent-direct
+  // implements semantic review (with a reviewer wired — without one §20.6 denies on its own).
+  if (unsupportedCriticalExtension(m, AGENT_DIRECT_EXTENSIONS)) return deny("extension_unsupported", urn, enforcement);
+  // §20.3: an enforcement that does not fit the mandate's shape fails open either way — refuse it.
+  if (!enforcementFitsShape(m)) return deny("enforcement_invalid", urn, enforcement);
+
+  // 2–3. status + validity (trusted record)
+  const record = await loadRecord();
+  if (record.status !== "ACTIVE") {
+    return deny(record.exhausted ? MAX_EXECUTIONS_REACHED : `credential_${record.status.toLowerCase()}`, urn, enforcement);
+  }
+  if (record.validFrom && new Date(record.validFrom) > now) return deny("not_yet_valid", urn, enforcement);
+  if (record.validUntil && new Date(record.validUntil) < now) return deny("expired", urn, enforcement);
+
+  // 4. audience — the verifier must be authorized to use the mandate
+  const authorizedDIDs = record.authorizedDIDs ?? m.context.authorizedDIDs;
+  if (!authorizedDIDs.includes(deps.verifier.did)) return deny("verifier_not_authorized", urn, enforcement);
+  return null;
+}
+
+/** What the mandate itself allows of a call (§16.11 steps 6–9), left for the caller to settle. */
+interface MandatePass {
+  pass: true;
+  evaluations: RuleEvaluation[];
+  /** §0.6.1 — the pinned version marks the tool unrestricted: no rule ran, on purpose. */
+  unrestricted?: true;
+  /** §20.6 — the reviewer that took part. */
+  reviewer?: { id: string; version?: string };
+  /** §20.6 — the reviewer could not settle the call: only a person could. */
+  escalate?: true;
+  /** §17.4 — the pinned action lists the tool under `stepUp.tools`: a person confirms each call of it. */
+  stepUpTool?: true;
+}
+
+/**
+ * §16.11 steps 6–9 — what the mandate itself says of a call whose authority and key have held: its words (a
+ * reviewer, §20.6) or its pinned action (tool standing, call inputs, rules over `agent.*` and `accreditation.*`).
+ * A deny, or a pass carrying what the caller settles after it: the policy, a step-up, approvers.
+ */
+async function decideUnderMandate(
+  mandate: ViaMandateCredential,
+  req: { action: string; params: Record<string, unknown> },
+  agent: AgentEnv,
+  deps: Pick<AgentDirectDeps, "review" | "loadActionVersion" | "loadAccreditation" | "agentEnvExtras">,
+): Promise<AgentDirectResult | MandatePass> {
+  const urn = mandate.id;
+  const m = mandate.credentialSubject.mandate;
+  const enforcement = enforcementOf(m);
+
   // 6. no action → the words govern, or nothing does (§20.3). `allow` now SAYS which.
   if (!m.action) {
-    let reviewer: { id: string; version?: string } | undefined;
-    if (enforcement === "semantic") {
-      const reviewed = await reviewSemantic(m.description, req, urn, deps);
-      reviewer = reviewed.reviewer;
-      const named = reviewer ? { reviewer } : {};
-      if (reviewed.denied) return { ...deny(reviewed.reason, urn, enforcement), ...named };
-      // §17.4: the reviewer may take a call to the person only where the mandate permits it —
-      // `verifier` in `triggers`, and the reason in `reasons` when that list is present. Otherwise
-      // the call it could not settle is a deny: nobody agreed to be asked.
-      if (reviewed.escalate && !deps.stepUpSatisfied) {
-        if (!verifierMayEscalate(m.stepUp, "semantic_review")) return { ...deny("semantic_review", urn, enforcement), ...named };
-        return { ...askStepUp("verifier", "semantic_review"), ...named };
-      }
-    }
-    const refused = await capped();
-    if (refused) return { ...refused, ...(reviewer ? { reviewer } : {}) };
-    if ((mandateAsks || actionAsks) && !deps.stepUpSatisfied) {
-      return { ...askStepUp(mandateAsks ? "mandate" : "action", "stepup_required"), ...(reviewer ? { reviewer } : {}) };
-    }
-    const staff = askApprovers();
-    if (staff) return { ...staff, ...(reviewer ? { reviewer } : {}) };
-    return { decision: "allow", credentialId: urn, evaluations: [], agent: pop.agent, enforcement, ...policyMark, ...(reviewer ? { reviewer } : {}) };
+    if (enforcement !== "semantic") return { pass: true, evaluations: [] };
+    const reviewed = await reviewSemantic(m.description, req, urn, deps);
+    const named = reviewed.reviewer ? { reviewer: reviewed.reviewer } : {};
+    if (reviewed.denied) return { ...deny(reviewed.reason, urn, enforcement), ...named };
+    return { pass: true, evaluations: [], ...named, ...(reviewed.escalate ? { escalate: true as const } : {}) };
   }
 
   // 6b. load + pin-check the ActionVersion
@@ -510,6 +586,7 @@ export async function verifyAgentDirect(
   const standing = action.tools ? toolStanding(action, req.action) : "unlisted_version";
   if (standing === "not_covered") return deny("tool_not_covered", urn, enforcement);
   const unrestricted = standing === "unrestricted" ? ({ unrestricted: true } as const) : {};
+  const asks = action.stepUp?.tools.includes(req.action) ? ({ stepUpTool: true } as const) : {};
 
   // 7. executionParams shape
   try {
@@ -519,14 +596,7 @@ export async function verifyAgentDirect(
   }
 
   // 8. no rules → allow
-  if (!action.rules || action.rules.length === 0) {
-    const refused = await capped();
-    if (refused) return refused;
-    if ((mandateAsks || actionAsks) && !deps.stepUpSatisfied) return askStepUp(mandateAsks ? "mandate" : "action", "stepup_required");
-    const staff = askApprovers();
-    if (staff) return staff;
-    return { decision: "allow", credentialId: urn, evaluations: [], agent: pop.agent, enforcement, ...unrestricted, ...policyMark };
-  }
+  if (!action.rules || action.rules.length === 0) return { pass: true, evaluations: [], ...unrestricted, ...asks };
 
   // 9. CEL — with the rung env as `agent.*` (this is where A7 is enforced).
   // v0.3: the env EXTENDS with actor-projection fields (bootstrapAnchor, status)
@@ -552,20 +622,10 @@ export async function verifyAgentDirect(
     // refused above. Read from the params alone, a call that left `tool` out skipped every
     // `appliesTo` rule, so a missing input widened authority.
     executionParams: { ...req.params, tool: req.action },
-    agent: _celAgent(deps.agentEnvExtras, pop.agent),
+    agent: _celAgent(deps.agentEnvExtras, agent),
     ...(accreditation ? { accreditation } : {}),
   });
-  if (decision === "allow") {
-    const refused = await capped();
-    if (refused) return { ...refused, evaluations: [...evaluations, ...refused.evaluations] };
-    // Authority passed — NOW a step-up is worth a person's attention (S7).
-    if ((mandateAsks || actionAsks) && !deps.stepUpSatisfied) {
-      return askStepUp(mandateAsks ? "mandate" : "action", "stepup_required", evaluations);
-    }
-    const staff = askApprovers(evaluations);
-    if (staff) return staff;
-    return { decision: "allow", credentialId: urn, evaluations, agent: pop.agent, enforcement, ...unrestricted, ...policyMark };
-  }
+  if (decision === "allow") return { pass: true, evaluations, ...unrestricted, ...asks };
 
   // map the first failing rule to a specific agent reason (A7) or the generic rule_failed
   const firstFail = evaluations.find((e) => e.result === "fail" || e.result === "error");
@@ -573,7 +633,7 @@ export async function verifyAgentDirect(
   // the rule did not fail, the call never carried what the rule constrains.
   const missing = firstFail?.reason?.startsWith("required_param_missing") ? "required_param_missing" : null;
   const reason = missing ?? (firstFail && agentReasonForRule(firstFail.rule)) ?? "rule_failed";
-  return { decision: "deny", credentialId: urn, reason, evaluations, agent: pop.agent, enforcement };
+  return { decision: "deny", credentialId: urn, reason, evaluations, agent, enforcement };
 }
 
 /**
@@ -597,70 +657,109 @@ function projectedLoader(load: NonNullable<AgentDirectDeps["loadAccreditation"]>
   };
 }
 
-export interface AgentUnderPolicyDeps {
+/** A mandate the verifier holds, read by its id for {@link verifyAgentCall} (§16.11 step 1). */
+export interface HeldMandate {
+  /** The body the verifier LOADED by its id, untouched: its STAMP is checked here, so any edit is refused. */
+  mandate: ViaMandateCredential;
+  /** Its trusted record: status, dates, audience. */
+  record: CredentialRecordLike;
+  /**
+   * §16.7 step 0 — the mandate's `authorizedAgents`, each resolved through its CURRENT actor, as
+   * {@link AgentDirectDeps.candidates} are. Required when the mandate binds agents.
+   */
+  candidates?: BoundKey[];
+  /** A refusal the verifier reached on its own record of the mandate before the SDK reads it (a cancelled request). */
+  denied?: string;
+}
+
+/** One agent tool call as {@link verifyAgentCall} takes it (§16.11, §21.4). */
+export interface AgentCallRequest {
+  /** The agent the caller resolved: its DID names the policy lane (§21.5). */
+  agentDid: string;
+  pop: string;
+  /** The tool the call presents (§16.6). */
+  action: string;
+  params: Record<string, unknown>;
+  /** A mandate the agent presents; its PoP then binds the mandate. Read only for a `mandate` entry (§21.3). */
+  mandateId?: string;
+  /** With no mandate presented: the policy the PoP binds, as the challenge named it (§21.4). */
+  policy?: string;
+}
+
+export interface AgentCallDeps
+  extends Pick<AgentDirectDeps, "resolvePublicKey" | "loadActionVersion" | "review" | "agentEnvExtras" | "loadAccreditation" | "now"> {
   /** The calling verifier's identity (the PoP `aud`). */
   verifier: { did: string };
   /**
-   * §21.4 — the agent's usable keys (§7), resolved through its CURRENT actor as §8 steps 2–4 resolve a
-   * bound agent: merge followed, status and operator gated. No mandate pins a key, so these are the
-   * candidate set A1–A8 select from.
+   * §21.4 — the agent's usable keys (§7), resolved through its CURRENT actor as §8 steps 2–4 resolve a bound
+   * agent: the keys a proof may be made with, whichever authority it names.
    */
   candidates: BoundKey[];
-  /** §21.3 — the current version of the agent's operator's policy; null when it has published none. */
-  policy: PolicyVersion | null;
-  loadActionVersion: (actionId: string) => ActionDetail | null | Promise<ActionDetail | null>;
-  /** §16.7 A5 — the nonce the challenge issued for this agent under the policy (§21.4). */
-  validateNonce: (nonce: string, policy: string) => string | Promise<string>;
-  /** Whether one of the policy's approvers confirmed this call (verified elsewhere, §21.3). */
-  stepUpSatisfied?: boolean;
-  now?: Date;
-  /** v0.3 §9.3 — extended `agent.*` fields, as for {@link AgentDirectDeps.agentEnvExtras}. */
-  agentEnvExtras?: Record<string, unknown>;
-  /** v0.3 §18.5 — the operator's accreditation, as for {@link AgentDirectDeps.loadAccreditation}. */
-  loadAccreditation?: () => AccreditationLoad | Promise<AccreditationLoad>;
+  /** §21.2 — the current version of the agent's operator's policy. Every organization has one: v0 at the least. */
+  policy: PolicyVersion;
+  /** §16.7 A5 — the nonce the challenge issued for the authority the PoP names: the mandate, or the policy. */
+  validateNonce: (nonce: string, authority: string) => string | Promise<string>;
   /** §21.1 — every tool any published version of a guardrail lists; required when the policy targets guardrails. */
   guardrailTools?: PolicyEvaluationDeps["guardrailTools"];
+  /** §21.1 — every published version of an action, by any of them; required when a `mandate` entry names `under`. */
+  actionVersions?: PolicyEvaluationDeps["actionVersions"];
+  /** The mandate presented, by its id; null when the verifier holds none of that id. Called only for a `mandate` entry. */
+  loadMandate?: (mandateId: string) => HeldMandate | null | Promise<HeldMandate | null>;
 }
 
+/** What {@link verifyAgentCall} answers: allow or deny, never `rechallenge` (§17.4: it asks no person). */
+export type AgentCallResult = Omit<AgentDirectResult, "decision" | "stepUp" | "approvers"> & { decision: "allow" | "deny" };
+
 /**
- * v0.3 §21.4 — a call with no mandate, on the organization's policy. The agent presents
- * `{ policy, action, params, pop }`, its PoP binding `{ policy, action, params }`; the caller resolved
- * the agent (`agentDid`, its usable keys) and its operator's current policy version.
+ * §21.3 — one agent tool call, decided policy first. The agent's PoP is checked once, against its own usable keys,
+ * over the authority it names: the mandate it presents, or the organization's policy. Then the policy's entry for
+ * the tool and the agent decides: `allow`, `deny`, `rules` (its action's rules), or `mandate`. No entry applying is
+ * the policy's `default`: `allow` is observed (`enforcement: "none"`, `unset`), `deny` is `policy_denied`.
  *
- * Allowed when the policy's `everyCall` rules pass and its entry for the tool and agent is `allow`, or a
- * `rules` entry that passes; `mandate_required` when the policy says nothing of the tool, or `mandate`;
- * `policy_denied` when it refuses. A step-up the entry's action asks for goes to the policy's approvers
- * (`rechallenge`), and with none named is `stepup_required`. Every result names the policy and the
- * agent — its chain (§21.5) — with `enforcement: "policy"`.
+ * A mandate is read only for a `mandate` entry, and a mandate presented for any other is ignored, never loaded. Under
+ * a `mandate` entry the mandate must be held, hold its own authority (§16.11 steps 1–4), be under the entry's action
+ * when it names one, bind the key that proved, and allow the call itself (its words, or its pinned action's rules).
+ *
+ * This verifier asks no person to confirm a call: whatever would ask one (a policy action's or a mandate's step-up, a
+ * reviewer that could not settle the call) refuses it, and nothing answers `rechallenge`. Every result names its
+ * chain: `credentialId` for a decision taken on a mandate, else the policy lane (`policy`, `agentDid`, §21.5).
  */
-export async function verifyAgentUnderPolicy(
-  req: { agentDid: string; policy: string; pop: string; action: string; params: Record<string, unknown> },
-  deps: AgentUnderPolicyDeps,
-): Promise<AgentDirectResult> {
+export async function verifyAgentCall(req: AgentCallRequest, deps: AgentCallDeps): Promise<AgentCallResult> {
   requireNonceCheck(deps);
-  const scope = { enforcement: "policy" as const, policy: req.policy, agentDid: req.agentDid };
-  const result = (decision: AgentDirectResult["decision"], extra: Partial<AgentDirectResult> = {}): AgentDirectResult => ({
+  if (!req.mandateId === !req.policy) {
+    throw new TypeError("VIA: a call names the mandate its PoP binds or, with none, the policy — exactly one (v0.3 §21.4)");
+  }
+  const now = deps.now ?? new Date();
+  const policyUrn = deps.policy.content.$id;
+  const policyDigest = deps.policy.policyDigest;
+  const onLane = (decision: AgentCallResult["decision"], extra: Partial<AgentCallResult> = {}): AgentCallResult => ({
     decision,
     evaluations: [],
-    ...scope,
+    enforcement: "policy",
+    policy: policyUrn,
+    agentDid: req.agentDid,
+    policyDigest,
     ...extra,
   });
-  if (!deps.candidates?.length) return result("deny", { reason: "agent_not_bound" });
-  const pop = await verifyAgentBinding(
-    { authorizedAgents: deps.candidates, pop: req.pop, verifier: deps.verifier.did, policy: req.policy, action: req.action, params: req.params },
-    { validateNonce: deps.validateNonce, now: deps.now ?? new Date() },
-  );
-  if (!pop.ok || !pop.agent) return result("deny", { reason: pop.reason ?? "pop_invalid" });
-  if (discriminatorMismatch(req.action, req.params)) return result("deny", { reason: "action_mismatch", agent: pop.agent });
-  // An organization that has published no policy authorizes nothing on its own: every tool needs a mandate.
-  if (!deps.policy) return result("deny", { reason: "mandate_required", agent: pop.agent });
-  const mark = { policyDigest: deps.policy.policyDigest, agent: pop.agent };
-  // The PoP binds the policy the agent claims; it must be its organization's, the one being read.
-  if (deps.policy.content.$id !== req.policy) return result("deny", { reason: "policy_denied", ...mark });
+  if (!deps.candidates?.length) return onLane("deny", { reason: "agent_not_bound" });
 
+  // §16.7 A1–A6 + A8 — once, against the agent's own keys, over the authority the PoP names.
+  const authority = req.mandateId ? { mandateId: req.mandateId } : { policy: req.policy };
+  const pop = await verifyAgentBinding(
+    { authorizedAgents: deps.candidates, pop: req.pop, verifier: deps.verifier.did, ...authority, action: req.action, params: req.params },
+    { validateNonce: deps.validateNonce, now },
+  );
+  if (!pop.ok || !pop.agent || !pop.boundKey) return onLane("deny", { reason: pop.reason ?? "pop_invalid" });
+  const agent = pop.agent;
+  const proof = pop.actionHash ? { actionHash: pop.actionHash } : {};
+  if (discriminatorMismatch(req.action, req.params)) return onLane("deny", { reason: "action_mismatch", agent, ...proof });
+  // A PoP over the policy binds the one being read: the organization's own.
+  if (!req.mandateId && req.policy !== policyUrn) return onLane("deny", { reason: "policy_denied", agent, ...proof });
+
+  // The policy decides first. No mandate kind is passed: a mandate is read below, and only for a `mandate` entry.
   const verdict = await evaluatePolicy(
     deps.policy.content,
-    { tool: req.action, params: req.params, agent: { ..._celAgent(deps.agentEnvExtras, pop.agent), did: req.agentDid } },
+    { tool: req.action, params: req.params, agent: { ..._celAgent(deps.agentEnvExtras, agent), did: req.agentDid } },
     {
       loadActionVersion: deps.loadActionVersion,
       ...(deps.guardrailTools ? { guardrailTools: deps.guardrailTools } : {}),
@@ -668,22 +767,81 @@ export async function verifyAgentUnderPolicy(
     },
   );
   const evaluations = verdict.evaluations;
-  if (verdict.outcome === "deny") return result("deny", { reason: verdict.reason ?? "policy_denied", evaluations, ...mark });
-  if (verdict.outcome === "mandate") {
-    return result("deny", { reason: "mandate_required", evaluations, ...mark, ...(verdict.under ? { under: verdict.under } : {}) });
+  if (verdict.outcome === "deny") return onLane("deny", { reason: verdict.reason ?? "policy_denied", evaluations, agent, ...proof });
+  // No entry: the policy's default decides, and every answer says so. An allow is observed — no rule of an entry ran
+  // (§20.3 `none`); `mandate` goes on as a `mandate` entry naming no action.
+  const unset = verdict.unset ? ({ unset: true } as const) : {};
+  if (verdict.unset) {
+    const byDefault = policyDefault(deps.policy.content);
+    if (byDefault === "deny") return onLane("deny", { reason: "policy_denied", evaluations, agent, ...unset, ...proof });
+    if (byDefault === "allow") return onLane("allow", { evaluations, agent, enforcement: "none", ...unset, ...proof });
   }
-  if (verdict.stepUp && !deps.stepUpSatisfied) {
-    // No approver named: nobody to ask, as on the presentation path (§17.4).
-    if (verdict.stepUp.approvers.length === 0) return result("deny", { reason: "stepup_required", evaluations, ...mark });
-    return result("rechallenge", {
-      reason: "stepup_required",
-      evaluations,
-      ...mark,
-      stepUp: { trigger: "policy", reason: "stepup_required" },
-      approvers: verdict.stepUp.approvers,
-    });
+  if (verdict.outcome === "allow") {
+    // A policy action asking a person to confirm the call: nobody is asked (§17.4), so it is refused.
+    if (verdict.stepUp) return onLane("deny", { reason: "stepup_required", evaluations, agent, ...proof });
+    return onLane("allow", { evaluations, agent, ...(verdict.unrestricted ? { unrestricted: true as const } : {}), ...proof });
   }
-  return result("allow", { evaluations, ...mark, ...(verdict.unrestricted ? { unrestricted: true as const } : {}) });
+  const under = verdict.under;
+  if (!req.mandateId) return onLane("deny", { reason: "mandate_required", evaluations, agent, ...(under ? { under } : {}), ...unset, ...proof });
+
+  // `mandate`: the mandate presented decides, under the entry's action when it names one.
+  if (!deps.loadMandate) {
+    throw new TypeError("VIA: a `mandate` entry met a presented mandate, and no loadMandate is wired (v0.3 §21.3)");
+  }
+  const held = await deps.loadMandate(req.mandateId);
+  if (!held) return onLane("deny", { reason: "mandate_not_found", evaluations, agent, ...unset, ...proof });
+  // From here the decision is the mandate's, on its chain, with the policy version it was read under.
+  const mandate = held.mandate;
+  const urn = mandate.id;
+  const m = mandate.credentialSubject.mandate;
+  const enforcement = enforcementOf(m);
+  // Each answer below is a refusal or the one approval: none of the checks it runs asks a person.
+  const onMandate = (result: AgentDirectResult): AgentCallResult => ({
+    ...result,
+    decision: result.decision === "allow" ? "allow" : "deny",
+    evaluations: [...evaluations, ...result.evaluations],
+    policyDigest,
+    ...unset,
+    ...proof,
+  });
+  if (held.denied) return onMandate(deny(held.denied, urn, enforcement));
+  const refused = await mandateAuthority(mandate, () => held.record, deps, now);
+  if (refused) return onMandate(refused);
+  if (under?.length) {
+    const call = { tool: req.action, params: req.params, agent: {}, mandate: m.action ? ("guardrail" as const) : ("authorization" as const), ...(m.action ? { mandateAction: m.action.id } : {}) };
+    const versions = { loadActionVersion: deps.loadActionVersion, ...(deps.actionVersions ? { actionVersions: deps.actionVersions } : {}) };
+    if (!(await isUnder(call, under, versions))) return onMandate({ ...deny("mandate_required", urn, enforcement), under });
+  }
+
+  // §16.7 A2, A8 — the key that proved is one the mandate binds, inside the mandate's own re-attest window.
+  const signed = m.context.authorizedAgents;
+  if (signed?.length && !held.candidates) return onMandate(deny("actor_unresolvable", urn, enforcement));
+  const proved = jwkThumbprint(pop.boundKey.cnf.jwk);
+  const bound = (signed?.length ? withSignedWindow(held.candidates!, signed) : []).find((k) => jwkThumbprint(k.cnf.jwk) === proved);
+  if (!bound) return onMandate(deny("agent_not_bound", urn, enforcement));
+  if (attestationStale(bound, now)) return onMandate(deny("attestation_stale", urn, enforcement));
+  const mandateAgent = agentEnvOf(bound);
+  // §21.1 — the organization refuses plain authorizations: a mandate that pins no action.
+  if (!m.action && deps.policy.content.authorizations === "deny") return onMandate({ ...deny("policy_denied", urn, enforcement), agent: mandateAgent });
+
+  const passed = await decideUnderMandate(mandate, req, mandateAgent, deps);
+  if (!("pass" in passed)) return onMandate(passed);
+  const named = passed.reviewer ? { reviewer: passed.reviewer } : {};
+  // Nobody is asked to confirm a call (§17.4): a reviewer that could not settle it, the mandate's own step-up or its
+  // pinned action's refuses it.
+  if (passed.escalate) return onMandate({ ...deny("semantic_review", urn, enforcement), agent: mandateAgent, ...named });
+  if (m.stepUp?.triggers?.includes("mandate") || passed.stepUpTool) {
+    return onMandate({ ...deny("stepup_required", urn, enforcement), evaluations: passed.evaluations, agent: mandateAgent, ...named });
+  }
+  return onMandate({
+    decision: "allow",
+    credentialId: urn,
+    evaluations: passed.evaluations,
+    agent: mandateAgent,
+    enforcement,
+    ...(passed.unrestricted ? { unrestricted: true as const } : {}),
+    ...named,
+  });
 }
 
 /** §16.6 — the params name a tool other than the action presented. */
@@ -716,7 +874,7 @@ async function reviewSemantic(
   description: MandateDescription | undefined,
   req: { action: string; params: Record<string, unknown> },
   urn: string,
-  deps: AgentDirectDeps,
+  deps: Pick<AgentDirectDeps, "review">,
 ): Promise<{ denied?: false; escalate?: boolean; reviewer?: { id: string; version?: string } } | { denied: true; reason: string; reviewer?: { id: string; version?: string } }> {
   if (!description) return { denied: true, reason: "description_required" };
   if (!deps.review) return { denied: true, reason: "reviewer_unavailable" };

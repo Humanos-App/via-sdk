@@ -2,7 +2,7 @@ import { actionDigestSRI } from "../action/build.js";
 import { constantValues, validateExecutionParams } from "../action/execution-params.js";
 import type { ActionDetail } from "../action/types.js";
 import { evaluateRules, executionParamsRead, type RuleEvaluation } from "../cel/evaluate.js";
-import { policyEntriesFor } from "./build.js";
+import { policyDefault, policyEntriesFor } from "./build.js";
 import type { PolicyActionRef, PolicyEntry, PolicyGuardrailRef, ViaPolicy } from "./types.js";
 
 /** One call, as the policy reads it (§21.3). */
@@ -49,7 +49,8 @@ export interface PolicyEvaluationDeps {
 /**
  * What the policy says of one call. `allow`: with no mandate the call may run; under one, the policy
  * does not object. `deny`: refused, whatever a mandate grants. `mandate`: a person's mandate is needed —
- * under a mandate, no objection.
+ * under a mandate, no objection. No entry applying answers `mandate` with `unset`, so a caller reading
+ * §21.3's `default` tells the two apart.
  */
 export interface PolicyEvaluation {
   outcome: "allow" | "deny" | "mandate";
@@ -61,6 +62,8 @@ export interface PolicyEvaluation {
   evaluations: RuleEvaluation[];
   /** The entry that decided — the most restrictive of the winning level (§21.1). */
   entry?: PolicyEntry;
+  /** §21.3 — no entry applied to the call: the policy's `default` decides it, not an entry. */
+  unset?: true;
   /** On `allow`: an entry's action asks for a step-up on the tool, and who may confirm it (§21.3). */
   stepUp?: { approvers: string[] };
   /** On `allow` through a tool's `rules`: the action marks the tool unrestricted, so no rule ran (§0.6.1). */
@@ -146,7 +149,7 @@ export async function evaluatePolicy(policy: ViaPolicy, call: PolicyCall, deps: 
     // §21.1 — the `mandate` entries naming an `under` decide, and a mandate under any one of their actions is enough:
     // a mandate pins one action. One naming none adds nothing beside them.
     const under = entries.flatMap((e) => (e.effect === "mandate" && e.under ? [e.under] : []));
-    const mark = { evaluations, ...(top ? { entry: top } : {}), ...(under.length ? { under } : {}) };
+    const mark = { evaluations, ...(top ? { entry: top } : { unset: true as const }), ...(under.length ? { under } : {}) };
     if (under.length && call.mandate && !(await isUnder(call, under, deps))) return { outcome: "deny", reason: "mandate_required", ...mark };
     return { outcome: "mandate", ...mark };
   }
@@ -191,8 +194,57 @@ export async function evaluatePolicy(policy: ViaPolicy, call: PolicyCall, deps: 
   };
 }
 
+/**
+ * §21.3 — the tools of a mandate about to be issued that the agent's policy would never read it for: an entry other
+ * than `mandate`, a `mandate` entry naming `under` actions the mandate is not under, or no entry under a `default`
+ * other than `mandate`. An issuer refuses to issue while any is left: the person would consent to limits that
+ * never apply to those calls. `action` is the version a guardrail mandate pins; a plain authorization has none.
+ */
+export async function toolsNotLeftToMandate(
+  policy: Pick<ViaPolicy, "entries" | "default">,
+  mandate: { tools: readonly string[]; action?: string },
+  agentDid: string | undefined,
+  deps: Pick<PolicyEvaluationDeps, "guardrailTools" | "actionVersions">,
+): Promise<string[]> {
+  const guardrails = [...new Set(policy.entries.flatMap((e) => (e.guardrail ? [e.guardrail.id] : [])))];
+  if (guardrails.length && !deps.guardrailTools) {
+    throw new TypeError("VIA: this policy targets guardrails, and no guardrailTools is wired (v0.3 §21.1)");
+  }
+  const tools = new Map<string, ReadonlySet<string>>();
+  for (const id of guardrails) tools.set(id, await deps.guardrailTools!({ id }));
+  const kind = mandate.action ? ("guardrail" as const) : ("authorization" as const);
+  const missed: string[] = [];
+  for (const tool of mandate.tools) {
+    const entries = policyEntriesFor(policy, tool, agentDid, (g) => tools.get(g.id) ?? NO_TOOLS);
+    const top = entries[0];
+    if (!top) {
+      if (policyDefault(policy) !== "mandate") missed.push(tool);
+      continue;
+    }
+    if (top.effect !== "mandate") {
+      missed.push(tool);
+      continue;
+    }
+    const under = entries.flatMap((e) => (e.effect === "mandate" && e.under ? [e.under] : []));
+    const call = { tool, params: {}, agent: {}, mandate: kind, ...(mandate.action ? { mandateAction: mandate.action } : {}) };
+    if (under.length && !(await isUnder(call, under, { loadActionVersion: () => null, ...deps }))) missed.push(tool);
+  }
+  return missed;
+}
+
+/**
+ * §21.3 — may a plain authorization, which lists no tools, be issued to this agent: does any tool read one? A `mandate`
+ * entry naming no `under` that applies to the agent, or a `mandate` default. Under version 0 none does.
+ */
+export function policyReadsAuthorization(policy: Pick<ViaPolicy, "entries" | "default">, agentDid: string | undefined): boolean {
+  if (policyDefault(policy) === "mandate") return true;
+  return policy.entries.some(
+    (e) => e.effect === "mandate" && !e.under && (!e.agents?.length || (agentDid !== undefined && e.agents.includes(agentDid))),
+  );
+}
+
 /** §21.1 — is the call's mandate a guardrail pinning a version of one of these actions? A plain authorization never is. */
-async function isUnder(call: PolicyCall, under: PolicyGuardrailRef[], deps: PolicyEvaluationDeps): Promise<boolean> {
+export async function isUnder(call: PolicyCall, under: PolicyGuardrailRef[], deps: PolicyEvaluationDeps): Promise<boolean> {
   if (call.mandate !== "guardrail" || !call.mandateAction) return false;
   if (!deps.actionVersions) {
     throw new TypeError("VIA: this policy names `under`, and no actionVersions is wired (v0.3 §21.1)");

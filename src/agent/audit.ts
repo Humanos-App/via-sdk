@@ -45,6 +45,8 @@ export function buildVerificationEvent(
     | "revocationReason"
     | "unrestricted"
     | "policyDigest"
+    | "unset"
+    | "actionHash"
   >,
   signer: EventSigner,
 ): ViaEvent | null {

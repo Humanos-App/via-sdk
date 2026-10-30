@@ -3,8 +3,10 @@ import { computeSRI } from "../crypto/digest.js";
 import { mandateMayPin, policyMayName } from "../action/build.js";
 import type { ActionDetail } from "../action/types.js";
 import {
+  POLICY_DEFAULTS,
   POLICY_EFFECTS,
   type PolicyActionRef,
+  type PolicyDefault,
   type PolicyEffect,
   type PolicyEntry,
   type PolicyGuardrailRef,
@@ -14,6 +16,11 @@ import {
 /** §21.2 — the digest a `POLICY_PUBLISHED` names: the §0.5.3 `digestSRI` of the version's JCS form. */
 export function policyDigest(policy: ViaPolicy): string {
   return computeSRI(canonicalizeRFC8785(policy));
+}
+
+/** §21.1 — the version's `default`; a version that states none was published before it existed, and meant `mandate`. */
+export function policyDefault(policy: Pick<ViaPolicy, "default">): PolicyDefault {
+  return policy.default ?? "mandate";
 }
 
 /** The tools a guardrail targets: every tool any published version of its action lists (§21.1). */
@@ -26,7 +33,7 @@ const RESTRICTION: Record<PolicyEffect, number> = { deny: 0, rules: 1, mandate: 
  * §21.1 — the entries for a call of `tool` by `agentDid`: those of the most specific level that has any — a tool
  * entry naming the agent, a guardrail entry naming the agent, a tool entry naming none, a guardrail entry naming none
  * — ordered most restrictive first. Several can apply at one level only through guardrails that list the same tool;
- * the first decides, and every `rules` among them must pass. Empty is the default: a person's mandate is needed.
+ * the first decides, and every `rules` among them must pass. Empty: the policy's `default` decides (§21.3).
  */
 export function policyEntriesFor(
   policy: Pick<ViaPolicy, "entries">,
@@ -80,6 +87,8 @@ export function policyPublishIssues(policy: ViaPolicy, ctx: PolicyPublishContext
   if (policy.authorizations !== undefined && policy.authorizations !== "allow" && policy.authorizations !== "deny") {
     issues.push("`authorizations` is neither allow nor deny");
   }
+  if (policy.default === undefined) issues.push("`default` is missing: a version states what a tool no entry applies to gets");
+  else if (!POLICY_DEFAULTS.includes(policy.default)) issues.push("`default` is none of allow, deny and mandate");
 
   if (policy.everyCall) {
     const action = ctx.ownAction(policy.everyCall);

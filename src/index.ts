@@ -338,7 +338,7 @@ export {
 export {
   verifyAgentBinding,
   verifyAgentDirect,
-  verifyAgentUnderPolicy,
+  verifyAgentCall,
   projectAccreditation,
   ACCREDITATION_ENV_FIELDS,
   type AgentEnv,
@@ -347,7 +347,10 @@ export {
   type PopCheckResult,
   type AgentDirectDeps,
   type AgentDirectResult,
-  type AgentUnderPolicyDeps,
+  type AgentCallRequest,
+  type AgentCallResult,
+  type AgentCallDeps,
+  type HeldMandate,
   type SemanticReviewInput,
   type SemanticReviewVerdict,
   type CredentialRecordLike,
@@ -468,6 +471,6 @@ export {
 
 // The organization's policy (v0.3 §21)
 export * from "./policy/types.js";
-export { policyDigest, policyEntriesFor, policyPublishIssues, type GuardrailTools, type PolicyPublishContext } from "./policy/build.js";
-export { evaluatePolicy, type PolicyCall, type PolicyEvaluation, type PolicyEvaluationDeps } from "./policy/evaluate.js";
+export { policyDefault, policyDigest, policyEntriesFor, policyPublishIssues, type GuardrailTools, type PolicyPublishContext } from "./policy/build.js";
+export { evaluatePolicy, policyReadsAuthorization, toolsNotLeftToMandate, type PolicyCall, type PolicyEvaluation, type PolicyEvaluationDeps } from "./policy/evaluate.js";
 

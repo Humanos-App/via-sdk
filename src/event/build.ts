@@ -47,6 +47,13 @@ export interface EventFields {
   unrestricted?: boolean;
   /** §21.3 — the organization's policy version a decision was checked against. */
   policyDigest?: string;
+  /** §21.3 — no entry of the policy applied to the call: its `default` decided it. */
+  unset?: boolean;
+  /**
+   * §2, §16.6 — on a `VERIFICATION_*`: the `action_hash` the call's PoP bound, the digest of its authority, tool and
+   * params. Whoever holds the params can show they are the ones decided, with no copy of them on the chain.
+   */
+  actionHash?: string;
   /** §21.5 — on a policy-scoped event: the agent whose chain it is on (not `agent`, a legacy container). */
   agentDid?: string;
   // ── about an organization's policy (`POLICY_PUBLISHED`, §21.2) ──

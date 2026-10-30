@@ -19,11 +19,13 @@ import {
   policyDigest,
   policyEntriesFor,
   policyPublishIssues,
+  policyReadsAuthorization,
   stampMandate,
+  toolsNotLeftToMandate,
+  verifyAgentCall,
   verifyAgentDirect,
-  verifyAgentUnderPolicy,
   type ActionDetail,
-  type AgentUnderPolicyDeps,
+  type AgentCallDeps,
   type BoundKey,
   type P256KeyPair,
   type PolicyPublishContext,
@@ -34,7 +36,7 @@ import {
 
 /**
  * v0.3 §21 — the organization's policy: one per organization, over every call of every agent it
- * operates. With no mandate it is the call's only authority; under one it caps the call.
+ * operates. It decides every call first; a person's mandate is read only for a tool it leaves to one.
  */
 
 const ORG = "did:web:acme.example";
@@ -45,6 +47,9 @@ const RUI = "did:web:humanos.tech:user:rui";
 const POLICY_URN = "urn:via:policy:acme";
 const VERIFIER = "did:web:acme.example";
 const now = new Date("2026-10-20T09:00:00.000Z");
+/** Humanos's STAMP key, for the mandates a `mandate` entry reads. */
+const HUMANOS = generateEd25519Key();
+const HUMANOS_VM = "did:web:humanos.tech#key-1";
 
 /** Messages to listed channels only; listing channels has no limits. */
 const SLACK: ActionDetail = buildActionVersion({
@@ -94,6 +99,7 @@ const POLICY: ViaPolicy = {
   $id: POLICY_URN,
   type: "VIAPolicy",
   version: 4,
+  default: "mandate",
   everyCall: ref(FLOOR),
   approvers: [ANA],
   entries: [
@@ -136,8 +142,9 @@ async function popFor(key: P256KeyPair, hash: string): Promise<string> {
   return buildPoP({ cnf: { jkt: jwkThumbprint(key.publicJwk) }, aud: VERIFIER, nonce: "n-1", iat: 1, action_hash: hash }, key.privateJwk);
 }
 
-const deps = (over: Partial<AgentUnderPolicyDeps> = {}): AgentUnderPolicyDeps => ({
+const deps = (over: Partial<AgentCallDeps> = {}): AgentCallDeps => ({
   verifier: { did: VERIFIER },
+  resolvePublicKey: () => HUMANOS.publicKey,
   candidates: [keyOf(supportKey, SUPPORT)],
   policy: VERSION,
   loadActionVersion: (id) => ACTIONS.get(id) ?? null,
@@ -146,10 +153,17 @@ const deps = (over: Partial<AgentUnderPolicyDeps> = {}): AgentUnderPolicyDeps =>
   ...over,
 });
 
-async function underPolicy(tool: string, params: Record<string, unknown>, over: Partial<AgentUnderPolicyDeps> = {}, agentDid = SUPPORT) {
+async function underPolicy(tool: string, params: Record<string, unknown>, over: Partial<AgentCallDeps> = {}, agentDid = SUPPORT) {
   const pop = await popFor(supportKey, policyActionHash(POLICY_URN, tool, params));
-  return verifyAgentUnderPolicy({ agentDid, policy: POLICY_URN, pop, action: tool, params }, deps(over));
+  return verifyAgentCall({ agentDid, policy: POLICY_URN, pop, action: tool, params }, deps(over));
 }
+
+/** The same policy with another `default`, or none stated. */
+const withDefault = (d: ViaPolicy["default"]) => {
+  const { default: _stated, ...rest } = POLICY;
+  const content: ViaPolicy = d ? { ...rest, default: d } : rest;
+  return { policy: { content, policyDigest: policyDigest(content) } };
+};
 
 describe("which entry applies (§21.1)", () => {
   const none = () => new Set<string>();
@@ -286,6 +300,13 @@ describe("what may be published (§21.1)", () => {
   });
 
   // @invariant §21.1: two entries at one level for one tool are refused, so order never decides.
+  // @invariant §21.1: every version states its `default`, one of allow, deny and mandate.
+  it("refuses a version that states no default, or another one", () => {
+    const { default: _stated, ...none } = POLICY;
+    expect(policyPublishIssues(none, CONTEXT)).toEqual(["`default` is missing: a version states what a tool no entry applies to gets"]);
+    expect(policyPublishIssues({ ...POLICY, default: "maybe" as never }, CONTEXT)).toEqual(["`default` is none of allow, deny and mandate"]);
+  });
+
   it("refuses two entries at one level for one tool and agent", () => {
     const twice = { ...POLICY, entries: [...POLICY.entries, { tool: "kb_search", effect: "deny" as const }] };
     expect(policyPublishIssues(twice, CONTEXT)).toEqual(["entry 8 (tool kb_search) overlaps another entry for tool kb_search"]);
@@ -332,11 +353,22 @@ describe("a call with no mandate (§21.3, §21.4)", () => {
     expect(await underPolicy("slack_list_channels", {})).toMatchObject({ decision: "allow", unrestricted: true });
   });
 
-  // @invariant §21.3: a tool the policy says nothing about, or marks `mandate`, needs a person's mandate.
-  it("needs a person's mandate for a tool with no entry, a `mandate` entry, or an organization with no policy", async () => {
-    expect(await underPolicy("send_invoice", {})).toMatchObject({ decision: "deny", reason: "mandate_required" });
+  // @invariant §21.3: a tool marked `mandate` needs a person's mandate, and so does one no entry applies to under a
+  // `default` of `mandate`, which says the default decided.
+  it("needs a person's mandate for a `mandate` entry, and for a tool with no entry under a `mandate` default", async () => {
     expect(await underPolicy("issue_credit", {})).toMatchObject({ decision: "deny", reason: "mandate_required" });
-    expect(await underPolicy("kb_search", {}, { policy: null })).toMatchObject({ decision: "deny", reason: "mandate_required" });
+    expect(await underPolicy("issue_credit", {})).not.toHaveProperty("unset");
+    expect(await underPolicy("send_invoice", {})).toMatchObject({ decision: "deny", reason: "mandate_required", unset: true });
+  });
+
+  // @invariant §21.1, §21.3: no entry applying, the version's `default` decides — `allow` observed (`none`), `deny`
+  // refused; a version that states none means `mandate`, as one published before `default` existed.
+  it("gives a tool no entry applies to the version's default, and reads a version stating none as `mandate`", async () => {
+    expect(await underPolicy("send_invoice", {}, withDefault("allow"))).toMatchObject({ decision: "allow", enforcement: "none", unset: true });
+    expect(await underPolicy("send_invoice", {}, withDefault("deny"))).toMatchObject({ decision: "deny", reason: "policy_denied", unset: true });
+    expect(await underPolicy("send_invoice", {}, withDefault(undefined))).toMatchObject({ decision: "deny", reason: "mandate_required", unset: true });
+    // An entry still decides its own tool, whatever the default.
+    expect(await underPolicy("slack_delete_channel", {}, withDefault("allow"))).toMatchObject({ decision: "deny", reason: "policy_denied" });
   });
 
   it("refuses a `deny` entry, and the rules every call must pass", async () => {
@@ -349,38 +381,175 @@ describe("a call with no mandate (§21.3, §21.4)", () => {
     });
   });
 
-  // @invariant §21.3: the step-up an entry's action asks for goes to the entry's approvers — the
-  // policy's when it names none — and with no approver named is refused.
-  it("takes a step-up to the policy's approvers, and refuses it with none named", async () => {
-    expect(await underPolicy("refund_order", { amount: 40 })).toMatchObject({ decision: "rechallenge", stepUp: { trigger: "policy" }, approvers: [ANA, RUI] });
-    expect(await underPolicy("refund_order", { amount: 40 }, { stepUpSatisfied: true })).toMatchObject({ decision: "allow" });
+  // @invariant §21.3: this verifier asks no person — a step-up an entry's action asks for refuses the call.
+  it("refuses a call whose policy action asks a person to confirm it", async () => {
+    expect(await underPolicy("refund_order", { amount: 40 })).toMatchObject({ decision: "deny", reason: "stepup_required" });
     expect(await underPolicy("refund_order", { amount: 400 })).toMatchObject({ decision: "deny", reason: "policy_denied" });
+  });
 
-    const fromPolicy = { ...POLICY, entries: POLICY.entries.map((e) => (e.tool === "refund_order" ? { ...e, approvers: undefined } : e)) };
-    const viaPolicy = await underPolicy("refund_order", { amount: 40 }, { policy: { content: fromPolicy, policyDigest: policyDigest(fromPolicy) } });
-    expect(viaPolicy).toMatchObject({ decision: "rechallenge", approvers: [ANA] });
-
-    const nobody = { ...fromPolicy, approvers: undefined };
-    expect(await underPolicy("refund_order", { amount: 40 }, { policy: { content: nobody, policyDigest: policyDigest(nobody) } })).toMatchObject({
-      decision: "deny",
-      reason: "stepup_required",
-    });
+  // @invariant §2, §16.6: the answer carries the `action_hash` the PoP bound — the call's fingerprint.
+  it("carries the call's fingerprint, the action_hash its PoP bound", async () => {
+    const params = { channel_id: "C-support" };
+    expect(await underPolicy("slack_send_message", params)).toMatchObject({ decision: "allow", actionHash: policyActionHash(POLICY_URN, "slack_send_message", params) });
   });
 
   // @invariant §21.4: the PoP binds the policy — one made for a mandate does not pass here.
   it("refuses a PoP bound to anything but the policy presented", async () => {
     const params = {};
     const forMandate = await popFor(supportKey, actionHash("urn:via:credential:x", "kb_search", params));
-    expect(await verifyAgentUnderPolicy({ agentDid: SUPPORT, policy: POLICY_URN, pop: forMandate, action: "kb_search", params }, deps())).toMatchObject({
+    expect(await verifyAgentCall({ agentDid: SUPPORT, policy: POLICY_URN, pop: forMandate, action: "kb_search", params }, deps())).toMatchObject({
       decision: "deny",
       reason: "action_hash_mismatch",
     });
     const other = "urn:via:policy:someone-else";
     const pop = await popFor(supportKey, policyActionHash(other, "kb_search", params));
-    expect(await verifyAgentUnderPolicy({ agentDid: SUPPORT, policy: other, pop, action: "kb_search", params }, deps())).toMatchObject({
+    expect(await verifyAgentCall({ agentDid: SUPPORT, policy: other, pop, action: "kb_search", params }, deps())).toMatchObject({
       decision: "deny",
       reason: "policy_denied",
     });
+  });
+});
+
+describe("a mandate, read only where the policy leaves the tool to one (§21.3)", () => {
+  /** A customer's mandate under CREDIT: `issue_credit` up to the amount they set. */
+  const CREDIT: ActionDetail = {
+    $id: "urn:via:action:credit",
+    type: "VIAAction",
+    version: "1",
+    for: "mandate",
+    tools: ["issue_credit", "kb_search"],
+    unrestricted: ["kb_search"],
+    userParams: { max: { type: "number" } },
+    executionParams: { amount: { type: "number" } },
+    rules: [{ name: "credit_cap", description: "At most the customer's limit", appliesTo: ["issue_credit"], conditions: [], expression: "executionParams.amount <= userParams.max" }],
+  };
+  let mandate: ViaMandateCredential;
+  let loads: string[];
+
+  beforeAll(() => {
+    mandate = stampMandate(
+      buildMandate({
+        subjectOrg: ORG,
+        grantor: "did:web:humanos.tech:user:customer",
+        authorizedDIDs: [VERIFIER],
+        authorizedAgents: [keyOf(supportKey, SUPPORT)],
+        action: { id: CREDIT.$id, digestSRI: actionDigestSRI(CREDIT), location: "https://api.humanos.tech/actions/credit" },
+        userParams: { max: { description: "The most one credit may be", value: 50 } },
+        validFrom: "2026-01-01T00:00:00.000Z",
+        description: { text: "Credit me up to my limit.", lang: "en", author: "issuer" },
+        enforcement: "rules",
+      }),
+      { privateKey: HUMANOS.privateKey, verificationMethod: HUMANOS_VM },
+    );
+  });
+
+  const call = async (tool: string, params: Record<string, unknown>, over: Partial<AgentCallDeps> = {}, mandateId = mandate.id) => {
+    loads = [];
+    const pop = await popFor(supportKey, actionHash(mandateId, tool, params));
+    return verifyAgentCall(
+      { agentDid: SUPPORT, mandateId, pop, action: tool, params },
+      deps({
+        loadActionVersion: (id) => (id === CREDIT.$id ? CREDIT : ACTIONS.get(id) ?? null),
+        loadMandate: (id) => {
+          loads.push(id);
+          if (id !== mandate.id) return null;
+          return { mandate, record: { status: "ACTIVE", validFrom: "2026-01-01T00:00:00.000Z" }, candidates: [keyOf(supportKey, SUPPORT)] };
+        },
+        ...over,
+      }),
+    );
+  };
+
+  // @invariant §21.3: under a `mandate` entry the mandate decides — its rules, the person's values — on its own
+  // chain, with the policy version it was read under and the call's fingerprint.
+  it("lets the mandate decide a tool the policy leaves to one, on the mandate's chain", async () => {
+    expect(await call("issue_credit", { amount: 40 })).toMatchObject({
+      decision: "allow",
+      credentialId: mandate.id,
+      enforcement: "rules",
+      policyDigest: VERSION.policyDigest,
+      actionHash: actionHash(mandate.id, "issue_credit", { amount: 40 }),
+    });
+    expect(await call("issue_credit", { amount: 80 })).toMatchObject({ decision: "deny", reason: "rule_failed", credentialId: mandate.id });
+  });
+
+  // @invariant §21.3: a mandate presented for any other entry is ignored — never loaded, no use spent — and the
+  // decision is the policy's, on the agent's lane.
+  it("never reads a mandate presented for a tool the policy decides itself", async () => {
+    const searched = await call("kb_search", {});
+    expect(searched).toMatchObject({ decision: "allow", enforcement: "policy", policy: POLICY_URN, agentDid: SUPPORT });
+    expect(searched).not.toHaveProperty("credentialId");
+    expect(loads).toEqual([]);
+  });
+
+  it("answers `mandate_not_found` on the agent's lane for a mandate it does not hold", async () => {
+    const pop = await popFor(supportKey, actionHash("urn:via:credential:unknown", "issue_credit", {}));
+    expect(
+      await verifyAgentCall(
+        { agentDid: SUPPORT, mandateId: "urn:via:credential:unknown", pop, action: "issue_credit", params: {} },
+        deps({ loadMandate: () => null }),
+      ),
+    ).toMatchObject({ decision: "deny", reason: "mandate_not_found", policy: POLICY_URN, agentDid: SUPPORT });
+  });
+
+  // @invariant §21.3: a tool no entry applies to, under a `mandate` default, is read as a `mandate` entry naming no
+  // action — and the decision says the default sent it there.
+  it("takes a tool no entry applies to under a `mandate` default to the mandate, saying so", async () => {
+    const onlyDefault: ViaPolicy = { $id: POLICY_URN, type: "VIAPolicy", version: 5, default: "mandate", entries: [] };
+    const version = { content: onlyDefault, policyDigest: policyDigest(onlyDefault) };
+    expect(await call("issue_credit", { amount: 40 }, { policy: version })).toMatchObject({ decision: "allow", credentialId: mandate.id, unset: true });
+    const observing: ViaPolicy = { ...onlyDefault, default: "allow" };
+    const observed = await call("issue_credit", { amount: 80 }, { policy: { content: observing, policyDigest: policyDigest(observing) } });
+    expect(observed).toMatchObject({ decision: "allow", enforcement: "none", unset: true });
+    expect(loads).toEqual([]);
+  });
+});
+
+describe("issuing a mandate the policy would read (§21.3)", () => {
+  const all = new Map<string, ActionDetail>([[SLACK.$id, SLACK]]);
+  const toolsOf = { guardrailTools: (g: { id: string }) => new Set(all.get(g.id)?.tools ?? []), actionVersions: (a: { id: string }) => new Set([a.id]) };
+  const policy = (d: ViaPolicy["default"], entries: ViaPolicy["entries"]): ViaPolicy => ({ $id: POLICY_URN, type: "VIAPolicy", version: 3, ...(d ? { default: d } : {}), entries });
+
+  // @invariant §21.3: an issuer refuses a mandate for a tool the policy decides itself — the person would consent to
+  // limits that never apply — naming the tools; one left to a mandate, or to a `mandate` default, may be issued.
+  it("names the tools the policy decides itself, whatever the mandate would say of them", async () => {
+    const p = policy("allow", [
+      { tool: "issue_credit", effect: "mandate" },
+      { tool: "kb_search", effect: "allow" },
+      { tool: "slack_delete_channel", effect: "deny" },
+    ]);
+    expect(await toolsNotLeftToMandate(p, { tools: ["issue_credit", "kb_search", "slack_delete_channel", "send_invoice"], action: "urn:via:action:x" }, SUPPORT, toolsOf)).toEqual([
+      "kb_search",
+      "slack_delete_channel",
+      "send_invoice",
+    ]);
+    expect(await toolsNotLeftToMandate(policy("mandate", []), { tools: ["send_invoice"] }, SUPPORT, toolsOf)).toEqual([]);
+    expect(await toolsNotLeftToMandate(policy(undefined, []), { tools: ["send_invoice"] }, SUPPORT, toolsOf)).toEqual([]);
+  });
+
+  it("refuses a mandate under another action where the entry names one, and a plain authorization there", async () => {
+    const p = policy("deny", [{ tool: "issue_credit", effect: "mandate", under: { id: "urn:via:action:credit" } }]);
+    expect(await toolsNotLeftToMandate(p, { tools: ["issue_credit"], action: "urn:via:action:credit" }, SUPPORT, toolsOf)).toEqual([]);
+    expect(await toolsNotLeftToMandate(p, { tools: ["issue_credit"], action: "urn:via:action:other" }, SUPPORT, toolsOf)).toEqual(["issue_credit"]);
+    expect(await toolsNotLeftToMandate(p, { tools: ["issue_credit"] }, SUPPORT, toolsOf)).toEqual(["issue_credit"]);
+  });
+
+  // @invariant §21.2, §21.3: a plain authorization is issued only where some tool reads one — never under version 0.
+  it("issues a plain authorization only where a tool reads one", () => {
+    expect(policyReadsAuthorization(policy("allow", []), SUPPORT)).toBe(false);
+    expect(policyReadsAuthorization(policy("mandate", []), SUPPORT)).toBe(true);
+    expect(policyReadsAuthorization(policy("deny", [{ tool: "issue_credit", effect: "mandate" }]), SUPPORT)).toBe(true);
+    expect(policyReadsAuthorization(policy("deny", [{ tool: "issue_credit", effect: "mandate", under: { id: "urn:via:action:credit" } }]), SUPPORT)).toBe(false);
+    expect(policyReadsAuthorization(policy("deny", [{ tool: "issue_credit", effect: "mandate", agents: [SALES] }]), SUPPORT)).toBe(false);
+  });
+
+  it("reads a guardrail entry for every tool its action lists, and the agent's own entry first", async () => {
+    const p = policy("allow", [
+      { guardrail: { id: SLACK.$id }, effect: "mandate" },
+      { tool: "slack_list_channels", effect: "allow", agents: [SUPPORT] },
+    ]);
+    expect(await toolsNotLeftToMandate(p, { tools: ["slack_send_message", "slack_list_channels"], action: SLACK.$id }, SUPPORT, toolsOf)).toEqual(["slack_list_channels"]);
+    expect(await toolsNotLeftToMandate(p, { tools: ["slack_send_message", "slack_list_channels"], action: SLACK.$id }, SALES, toolsOf)).toEqual([]);
   });
 });
 
@@ -491,6 +660,12 @@ describe("the decisions' chain (§21.5)", () => {
       signer,
     )!;
     expect(decision.credentialSubject).toMatchObject({ id: POLICY_URN, agentDid: SUPPORT, event: "VERIFICATION_APPROVED", policyDigest: VERSION.policyDigest });
+    // §2: the call's fingerprint and the default's mark ride on the decision.
+    const marked = buildVerificationEvent(
+      { policy: { id: POLICY_URN, agentDid: SUPPORT }, decision: "allow", issuer: VERIFIER, agent: env, popNonceRef: "n-2", enforcement: "none", unset: true, actionHash: "sha256-abc" },
+      signer,
+    )!;
+    expect(marked.credentialSubject).toMatchObject({ unset: true, actionHash: "sha256-abc", enforcement: "none" });
     expect(eventScopeOf(decision)).toBe("policy");
     const outcome = buildOutcomeEvent({ policy: { id: POLICY_URN, agentDid: SUPPORT }, outcome: "completed", decision: decision.id, issuer: VERIFIER }, signer);
     expect(eventScopeOf(outcome)).toBe("policy");
@@ -606,7 +781,7 @@ describe("a tool that needs a mandate under an action (`under`, §21.1, §21.3)"
     guardrailTools: (g: { id: string }) => new Set(group(g.id).flatMap((v) => all.get(v)?.tools ?? [])),
     actionVersions: (a: { id: string }) => new Set(group(a.id)),
   };
-  const policy = (entries: ViaPolicy["entries"]): ViaPolicy => ({ $id: POLICY_URN, type: "VIAPolicy", version: 9, entries });
+  const policy = (entries: ViaPolicy["entries"]): ViaPolicy => ({ $id: POLICY_URN, type: "VIAPolicy", version: 9, default: "mandate", entries });
   const run = (p: ViaPolicy, mandate?: "guardrail" | "authorization", mandateAction?: string, over: Partial<typeof deps> = {}) =>
     evaluatePolicy(p, { tool: "issue_credit", params: {}, agent: { did: SUPPORT }, ...(mandate ? { mandate } : {}), ...(mandateAction ? { mandateAction } : {}) }, {
       ...deps,

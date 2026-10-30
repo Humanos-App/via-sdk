@@ -1,13 +1,18 @@
 /**
  * v0.3 §21 — the organization's policy (`VIAPolicy`): what its agents may do, one per organization, over
- * every call of every agent it operates. Under a mandate it caps the call; with no mandate it is the
- * call's only authority, and a tool it says nothing about still needs a person's mandate.
+ * every call of every agent it operates. It decides every call first; a person's mandate is read only for a
+ * tool whose entry is `mandate`, and a tool it says nothing about gets its `default`.
  */
 
-/** §21.1 — what an entry lets a tool do. `mandate` is what a tool with no entry gets anyway, written out. */
+/** §21.1 — what an entry lets a tool do. `mandate`: the call needs a person's mandate, read only then. */
 export type PolicyEffect = "allow" | "deny" | "rules" | "mandate";
 
 export const POLICY_EFFECTS: readonly PolicyEffect[] = ["allow", "deny", "rules", "mandate"];
+
+/** §21.1 — what a tool no entry applies to gets: `allow` (observed, no rule runs), `deny`, or `mandate` (a person's). */
+export type PolicyDefault = "allow" | "deny" | "mandate";
+
+export const POLICY_DEFAULTS: readonly PolicyDefault[] = ["allow", "deny", "mandate"];
 
 /** A published ActionVersion of the organization's own, pinned as a mandate pins one (§20.5). */
 export interface PolicyActionRef {
@@ -50,8 +55,13 @@ export interface ViaPolicy {
   /** `urn:via:policy:{uuid}` — shared by all the policy's versions: an organization has one. */
   $id: string;
   type: "VIAPolicy";
-  /** 1 for the first, one more for each version published after it. */
+  /** 0 for the empty policy every organization starts with, 1 for the first a member publishes, one more for each after it. */
   version: number;
+  /**
+   * §21.1 — what a tool no entry applies to gets. Every version states it (version 0 `allow`); absent, as in one
+   * published before 2026-10-30, `mandate`, what such a version meant. Read it through `policyDefault`.
+   */
+  default?: PolicyDefault;
   /** Rules every call by every agent must pass, whatever the tool. Its action lists no `tools`. */
   everyCall?: PolicyActionRef;
   /** The organization's members, by DID, who may confirm a step-up under the policy (§21.3). */
