@@ -7,6 +7,9 @@ import {
   policyActionHash,
   outcomeParams,
   CALL_PROOF_MAX_LIFETIME,
+  AGENT_RECORD_TYP,
+  buildAgentRecord,
+  type AgentRecordSummary,
   type CallProofCall,
 } from "../src/index.js";
 import { signRaw } from "../src/crypto/ed25519.js";
@@ -157,6 +160,86 @@ describe("§16.16 the call proof", () => {
     const seen: string[] = [];
     await check(proof(), { call: { ...CALL, action: "withdraw" }, consumeJti: (j) => (seen.push(j), true) });
     expect(seen).toEqual([]);
+  });
+});
+
+describe("§16.16 the platform signs: the decision token's verifier, and the record token", () => {
+  const PLATFORM = "did:web:humanos.tech";
+  const PVM = `${PLATFORM}#key-1`;
+  const platformKey = generateEd25519Key();
+  const platformSigner = { privateKey: platformKey.privateKey, verificationMethod: PVM };
+  const resolveBoth = (vm: string) => (vm === PVM ? platformKey.publicKey : resolvePublicKey(vm));
+  const ORG = "did:web:humanos.tech:org:acme";
+  const SUB = "did:web:humanos.tech:agent:a1";
+  const AGENT: AgentRecordSummary = {
+    status: "active",
+    assurance: "pop",
+    binding: "custodial",
+    bootstrapAnchor: "api_key",
+    operator: { org: ORG, level: "verified", method: "kyb-registry", registrar: PLATFORM },
+  };
+  const decision = (over: Partial<Parameters<typeof buildCallProof>[0]> = {}) =>
+    buildCallProof(
+      { iss: PLATFORM, verifier: ORG, sub: SUB, aud: AUD, mandate: MANDATE, decision: "urn:via:event:d1", call: CALL, iat: IAT, jti: "j-1", ...over } as Parameters<typeof buildCallProof>[0],
+      platformSigner,
+    );
+  const claimsOf = (t: string) => JSON.parse(Buffer.from(t.split(".")[1]!, "base64url").toString("utf8")) as Record<string, unknown>;
+  const checkWith = (token: unknown, over: Partial<Parameters<typeof verifyCallProof>[1]> = {}) =>
+    verifyCallProof(token, { audience: AUD, resolvePublicKey: resolveBoth, call: CALL, consumeJti: store(), now: AT, trustedPlatforms: [PLATFORM], ...over });
+
+  it("names the organization it verified for in verifier, accepted under a platform the receiver trusts", async () => {
+    const r = await checkWith(decision());
+    expect(r.ok && [r.claims.iss, r.claims.verifier]).toEqual([PLATFORM, ORG]);
+  });
+
+  // @refusal
+  it.each([
+    ["a platform the receiver does not trust", () => decision(), []],
+    ["a verifier on a token its organization signed", () => resign(proof(), (_h, c) => (c.verifier = ORG)), [PLATFORM]],
+  ])("refuses a verifier under an iss it does not trust — %s", async (_name, token, trustedPlatforms) => {
+    expect(await checkWith(token(), { trustedPlatforms })).toEqual({ ok: false, reason: "issuer_untrusted" });
+  });
+
+  it("gives the receiver the agent's record when the record token comes with it", async () => {
+    const d = decision();
+    const r = await checkWith(d, { agentRecord: buildAgentRecord(d, AGENT, platformSigner) });
+    expect(r.ok && r.agent).toEqual(AGENT);
+  });
+
+  it("binds the record to its decision token: sub, aud, jti and its life are the token's own", () => {
+    const d = decision({ ttlSeconds: 60 });
+    const record = buildAgentRecord(d, AGENT, platformSigner);
+    const header = JSON.parse(Buffer.from(record.split(".")[0]!, "base64url").toString("utf8"));
+    const c = claimsOf(record);
+    expect(header).toEqual({ alg: "EdDSA", typ: AGENT_RECORD_TYP, kid: PVM });
+    expect(c).toEqual({ iss: PLATFORM, sub: SUB, aud: AUD, jti: "j-1", iat: IAT, exp: IAT + 60, agent: AGENT });
+  });
+
+  // @invariant §16.16: nothing in the record token names a person — only the summary's fields are signed.
+  it("signs only the summary's fields, whatever else the record carries", () => {
+    const record = buildAgentRecord(decision(), { ...AGENT, anchoredBy: { actor: "did:web:humanos.tech:user:u1" } } as AgentRecordSummary, platformSigner);
+    expect(claimsOf(record).agent).toEqual(AGENT);
+  });
+
+  // @refusal
+  it("refuses a call without a record token only when the receiver requires one", async () => {
+    expect(await checkWith(decision(), { requireAgentRecord: true })).toEqual({ ok: false, reason: "agent_record_missing" });
+    const r = await checkWith(decision());
+    expect(r.ok && "agent" in r).toBe(false);
+  });
+
+  // @refusal
+  it.each([
+    ["a decision token in its place", (d: string) => d, "agent_record_invalid"],
+    ["a status outside the spec's", (d: string) => resign(buildAgentRecord(d, AGENT, platformSigner), (_h, c) => ((c.agent as AgentRecordSummary).status = "paused" as never), platformKey.privateKey), "agent_record_invalid"],
+    ["a platform the receiver does not trust", (d: string) => buildAgentRecord(d, AGENT, { privateKey: other.privateKey, verificationMethod: "did:web:other-platform.example#key-1" }), "agent_record_untrusted"],
+    ["a signature by another key", (d: string) => resign(buildAgentRecord(d, AGENT, platformSigner), () => {}, other.privateKey), "agent_record_signature_invalid"],
+    ["another call's record", () => buildAgentRecord(decision({ jti: "j-2" }), AGENT, platformSigner), "agent_record_mismatch"],
+    ["a record outliving its decision token", (d: string) => resign(buildAgentRecord(d, AGENT, platformSigner), (_h, c) => (c.exp = IAT + 120), platformKey.privateKey), "agent_record_mismatch"],
+    ["a record past its own life", (d: string) => resign(buildAgentRecord(d, AGENT, platformSigner), (_h, c) => (c.exp = IAT + 1), platformKey.privateKey), "agent_record_expired"],
+  ])("refuses the record — %s", async (_name, record, reason) => {
+    const d = decision({ ttlSeconds: 60 });
+    expect(await checkWith(d, { agentRecord: record(d) })).toEqual({ ok: false, reason });
   });
 });
 

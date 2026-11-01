@@ -154,7 +154,8 @@ Deny reasons: `vp_holder_unknown`, `vp_signature_invalid`, `credential_{status}`
 | Function | Notes |
 |---|---|
 | `outcomeParams(decisionEventId, outcome, error?)` | the `report_outcome` params the agent's PoP binds and the gateway rebuilds (§2.1) |
-| `buildCallProof(input, signer)` / `verifyCallProof(token, opts)` | the `via-call-proof+jwt` a verifier signs on an `allow` and the called party checks offline (§16.16); `CALL_PROOF_HEADER`, `CALL_PROOF_META_KEY` |
+| `buildCallProof(input, signer)` / `verifyCallProof(token, opts)` | the `via-call-proof+jwt` signed on an `allow` and the called party checks offline (§16.16) — the platform's when it verifies for an organization, naming it in `verifier`; with `agentRecord` and `trustedPlatforms`, the record token too (steps 6–7), returned as `agent`; `CALL_PROOF_HEADER`, `CALL_PROOF_META_KEY` |
+| `buildAgentRecord(decisionToken, agent, platformSigner)` | the `via-agent-record+jwt` beside a decision token: the agent's record summary, the same to every receiver, bound by `sub`, `aud`, `jti` (§16.16); `AGENT_RECORD_HEADER`, `AGENT_RECORD_META_KEY` |
 
 ### Compat (secondary, optional)
 `import { compat } from "@humanos/via-sdk"` — the 5 functions + 2 types the platform consumes from the old `@humanos/via-protocol`, in legacy-compatible form (`signWithEd25519Multibase`, `canonicalizeJSON`, `encodePublicKeyMultibase`, `generateChallenge`, `generateDIDKey`). For transitional interop only.

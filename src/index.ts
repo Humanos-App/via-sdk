@@ -370,11 +370,17 @@ export {
   CALL_PROOF_HEADER,
   CALL_PROOF_META_KEY,
   CALL_PROOF_MAX_LIFETIME,
+  AGENT_RECORD_TYP,
+  AGENT_RECORD_HEADER,
+  AGENT_RECORD_META_KEY,
   buildCallProof,
+  buildAgentRecord,
   verifyCallProof,
   type CallProofClaims,
   type CallProofCall,
   type CallProofReason,
+  type AgentRecordClaims,
+  type AgentRecordSummary,
 } from "./agent/call-proof.js";
 
 // Operator Verification (§18 proposal) — the identity axis
