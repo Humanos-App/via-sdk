@@ -154,7 +154,7 @@ Deny reasons: `vp_holder_unknown`, `vp_signature_invalid`, `credential_{status}`
 | Function | Notes |
 |---|---|
 | `outcomeParams(decisionEventId, outcome, error?)` | the `report_outcome` params the agent's PoP binds and the gateway rebuilds (§2.1) |
-| `buildCallProof(input, signer)` / `verifyCallProof(token, opts)` | the `via-call-proof+jwt` signed on an `allow` and the called party checks offline (§16.16) — the platform's when it verifies for an organization, naming it in `verifier`; with `agentRecord` and `trustedPlatforms`, the record token too (steps 6–7), returned as `agent`; `CALL_PROOF_HEADER`, `CALL_PROOF_META_KEY` |
+| `buildCallProof(input, signer)` / `verifyCallProof(token, opts)` | the `via-call-proof+jwt` signed on an `allow` and the called party checks offline (§16.16) — the platform's when it verifies for an organization, naming it in `verifier`, and a policy decision with `policyDigest`; `trustedPlatforms` is required: a token from any other signer is refused before its key is fetched; with `agentRecord`, the record token too (steps 6–7), returned as `agent`; `CALL_PROOF_HEADER`, `CALL_PROOF_META_KEY` |
 | `readCallProof(token, opts)` | a redeemer's read of a decision token: structure, signature and life only — no `aud`, call or `jti` (§16.16) |
 | `buildAgentRecord(decisionToken, agent, platformSigner)` | the `via-agent-record+jwt` beside a decision token: the agent's record summary, the same to every receiver, bound by `sub`, `aud`, `jti` (§16.16); `AGENT_RECORD_HEADER`, `AGENT_RECORD_META_KEY` |
 

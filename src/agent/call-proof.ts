@@ -32,7 +32,7 @@ export const AGENT_RECORD_HEADER = "Humanos-Agent-Record";
 /** Where an MCP `tools/call` carries the record token: `params._meta["tech.humanos/agent-record"]`. */
 export const AGENT_RECORD_META_KEY = "tech.humanos/agent-record";
 
-/** The claims (§16.16). Exactly one of `mandate` and `policy` (§21.4). */
+/** The claims (§16.16). Exactly one of `mandate` and `policy` (§21.4); `policyDigest` with `policy` only. */
 export interface CallProofClaims {
   /** Who signs it: the platform's DID when the platform verifies for an organization, otherwise the verifier's. */
   iss: string;
@@ -44,6 +44,8 @@ export interface CallProofClaims {
   aud: string;
   mandate?: string;
   policy?: string;
+  /** With `policy`: the digest of the version that decided (§21.2) — one URN names every version. */
+  policyDigest?: string;
   /** The `VERIFICATION_APPROVED` event's URN. */
   decision: string;
   action_hash: string;
@@ -108,7 +110,8 @@ const METHODS: readonly string[] = ["dns-challenge", "kyc-doc", "kyb-registry", 
 /**
  * Sign a call proof for an `allow` (§16.16), with the key that signs for `iss` — the platform's when it verifies for
  * an organization, which `verifier` then names. `alg` is `EdDSA` and `kid` the key's verification method, which must
- * be under `iss`. `action_hash` is computed from `call`, bound to `mandate` or, with no mandate, `policy`.
+ * be under `iss`. `action_hash` is computed from `call`, bound to `mandate` or, with no mandate, `policy`, which comes
+ * with the digest of the version that decided.
  */
 export function buildCallProof(
   input: {
@@ -124,7 +127,7 @@ export function buildCallProof(
     /** Defaults to, and may not exceed, {@link CALL_PROOF_MAX_LIFETIME}. */
     ttlSeconds?: number;
     jti?: string;
-  } & ({ mandate: string; policy?: never } | { policy: string; mandate?: never }),
+  } & ({ mandate: string; policy?: never; policyDigest?: never } | { policy: string; policyDigest: string; mandate?: never }),
   signer: EventSigner,
 ): string {
   const ttl = input.ttlSeconds ?? CALL_PROOF_MAX_LIFETIME;
@@ -140,7 +143,7 @@ export function buildCallProof(
     ...(input.verifier !== undefined ? { verifier: input.verifier } : {}),
     sub: input.sub,
     aud: input.aud,
-    ...(input.mandate !== undefined ? { mandate: input.mandate } : { policy: input.policy }),
+    ...(input.mandate !== undefined ? { mandate: input.mandate } : { policy: input.policy, policyDigest: input.policyDigest }),
     decision: input.decision,
     action_hash: _callHash(input, input.call),
     iat,
@@ -173,9 +176,9 @@ export function buildAgentRecord(decisionToken: string, agent: AgentRecordSummar
 }
 
 /**
- * The receiver's check (§16.16), in order; the first failure refuses the call: `typ` and the signature under the key
- * `kid` names, resolved from `iss`'s DID document, and a platform `iss` one the receiver trusts; `aud` is the
- * receiver; `iat ≤ now ≤ exp` within `skewSeconds`; `action_hash` is the call received; `jti` not seen before. Then,
+ * The receiver's check (§16.16), in order; the first failure refuses the call: `typ`, an `iss` the receiver trusts —
+ * checked before its key is fetched, so an unknown signer costs no lookup — and the signature under the key `kid`
+ * names, resolved from `iss`'s DID document; `aud` is the receiver; `iat ≤ now ≤ exp` within `skewSeconds`; `action_hash` is the call received; `jti` not seen before. Then,
  * with a record token: its `typ`, a trusted platform `iss` and its signature; its `sub`, `aud` and `jti` the decision
  * token's, and its life within `now` and the decision token's.
  *
@@ -189,8 +192,11 @@ export async function verifyCallProof(
     resolvePublicKey: ResolvePublicKey;
     call: CallProofCall;
     consumeJti: (jti: string, exp: number) => boolean | Promise<boolean>;
-    /** The platform DIDs this receiver trusts: a decision token naming a `verifier`, and every record token, is signed by one. */
-    trustedPlatforms?: readonly string[];
+    /**
+     * The platform DIDs this receiver trusts. Every decision token and record token must be signed by one: a token
+     * from any other signer proves nothing to this receiver, however well its signature verifies.
+     */
+    trustedPlatforms: readonly string[];
     /** The record token carried beside the decision token. */
     agentRecord?: unknown;
     /** Refuse a call that carries no record token — a receiver MAY require one. */
@@ -203,9 +209,9 @@ export async function verifyCallProof(
   const decoded = _decode(token);
   if (!decoded) return { ok: false, reason: "call_proof_invalid" };
   const { claims } = decoded;
+  const trusted = opts.trustedPlatforms;
+  if (!trusted.includes(claims.iss)) return { ok: false, reason: "issuer_untrusted" };
   if (!(await _signed(decoded, opts.resolvePublicKey))) return { ok: false, reason: "signature_invalid" };
-  const trusted = opts.trustedPlatforms ?? [];
-  if (claims.verifier !== undefined && !trusted.includes(claims.iss)) return { ok: false, reason: "issuer_untrusted" };
 
   const audiences: readonly string[] = typeof opts.audience === "string" ? [opts.audience] : opts.audience;
   if (!audiences.includes(claims.aud)) return { ok: false, reason: "aud_mismatch" };
@@ -321,6 +327,7 @@ function _decode(token: unknown): { kid: string; claims: CallProofClaims; signin
   if (!_strings(c, ["iss", "sub", "aud", "decision", "action_hash", "jti"])) return null;
   if (c.verifier !== undefined && !_strings(c, ["verifier"])) return null;
   if ((typeof c.mandate === "string") === (typeof c.policy === "string")) return null; // exactly one
+  if ((typeof c.policy === "string") !== _strings(c, ["policyDigest"])) return null; // a policy names its version
   return { ...p, claims: c as unknown as CallProofClaims };
 }
 

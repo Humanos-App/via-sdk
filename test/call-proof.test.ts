@@ -45,7 +45,7 @@ const store = () => {
 };
 
 const check = (token: unknown, over: Partial<Parameters<typeof verifyCallProof>[1]> = {}) =>
-  verifyCallProof(token, { audience: AUD, resolvePublicKey, call: CALL, consumeJti: store(), now: AT, ...over });
+  verifyCallProof(token, { audience: AUD, resolvePublicKey, call: CALL, consumeJti: store(), now: AT, trustedPlatforms: [ISS], ...over });
 
 /** Re-sign a proof's header and claims after a change — a forgery by a holder of the key. */
 const resign = (token: string, edit: (h: Record<string, unknown>, c: Record<string, unknown>) => void, privateKey = key.privateKey) => {
@@ -74,10 +74,11 @@ describe("§16.16 the call proof", () => {
     });
   });
 
-  it("binds the policy in place of the mandate for a decision under the organization's policy (§21.4)", async () => {
-    const r = await check(proof({ mandate: undefined, policy: POLICY } as never));
+  it("binds the policy in place of the mandate, with the digest of the version that decided (§21.4)", async () => {
+    const r = await check(proof({ mandate: undefined, policy: POLICY, policyDigest: "sha256-v3" } as never));
     expect(r.ok && r.claims.action_hash).toBe(policyActionHash(POLICY, CALL.action, CALL.params));
     expect(r.ok && "mandate" in r.claims).toBe(false);
+    expect(r.ok && r.claims.policyDigest).toBe("sha256-v3");
   });
 
   it("is signed EdDSA, with the decision signer's verification method as kid", () => {
@@ -97,6 +98,8 @@ describe("§16.16 the call proof", () => {
     ["a header naming another algorithm", (t: string) => resign(t, (h) => (h.alg = "ES256"))],
     ["a kid outside iss", (t: string) => resign(t, (h) => (h.kid = "did:web:other.example#key-1"))],
     ["both a mandate and a policy", (t: string) => resign(t, (_h, c) => (c.policy = POLICY))],
+    ["a policy without the digest of its version", (t: string) => resign(t, (_h, c) => { delete c.mandate; c.policy = POLICY; })],
+    ["a mandate with a policy digest", (t: string) => resign(t, (_h, c) => (c.policyDigest = "sha256-v3"))],
     ["a life over five minutes", (t: string) => resign(t, (_h, c) => (c.exp = (c.iat as number) + CALL_PROOF_MAX_LIFETIME + 1))],
     ["not a JWS", () => "not.a-jws"],
   ])("refuses as invalid — %s", async (_name, mangle) => {
@@ -195,10 +198,18 @@ describe("§16.16 the platform signs: the decision token's verifier, and the rec
 
   // @refusal
   it.each([
-    ["a platform the receiver does not trust", () => decision(), []],
-    ["a verifier on a token its organization signed", () => resign(proof(), (_h, c) => (c.verifier = ORG)), [PLATFORM]],
-  ])("refuses a verifier under an iss it does not trust — %s", async (_name, token, trustedPlatforms) => {
+    ["a platform the receiver does not list", () => decision(), []],
+    ["a signer outside the list, naming no verifier", () => proof(), [PLATFORM]],
+    ["a signer outside the list, naming a verifier", () => resign(proof(), (_h, c) => (c.verifier = ORG)), [PLATFORM]],
+  ])("refuses a token from a signer the receiver does not trust — %s", async (_name, token, trustedPlatforms) => {
     expect(await checkWith(token(), { trustedPlatforms })).toEqual({ ok: false, reason: "issuer_untrusted" });
+  });
+
+  // @invariant §16.16: an untrusted signer's key is never fetched — a DID document anyone can publish proves nothing.
+  it("never resolves the key of a signer it does not trust", async () => {
+    const asked: string[] = [];
+    await checkWith(proof(), { resolvePublicKey: (vm: string) => (asked.push(vm), resolveBoth(vm)) });
+    expect(asked).toEqual([]);
   });
 
   it("gives the receiver the agent's record when the record token comes with it", async () => {
