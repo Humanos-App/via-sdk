@@ -375,6 +375,7 @@ export {
   AGENT_RECORD_META_KEY,
   buildCallProof,
   buildAgentRecord,
+  readCallProof,
   verifyCallProof,
   type CallProofClaims,
   type CallProofCall,

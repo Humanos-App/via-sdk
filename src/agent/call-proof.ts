@@ -233,6 +233,22 @@ export async function verifyCallProof(
   return { ok: true, claims, agent: r.agent };
 }
 
+/**
+ * A redeemer's read of a decision token (§16.16): its structure, the signature under the key `kid` names, and its life.
+ * Not the receiver's `aud`, call or `jti`, which a redeemer need not hold: redemption is a lookup and spends nothing.
+ */
+export async function readCallProof(
+  token: unknown,
+  opts: { resolvePublicKey: ResolvePublicKey; now?: Date; skewSeconds?: number },
+): Promise<{ ok: true; claims: CallProofClaims } | { ok: false; reason: "call_proof_invalid" | "signature_invalid" | "call_proof_expired" }> {
+  const decoded = _decode(token);
+  if (!decoded) return { ok: false, reason: "call_proof_invalid" };
+  if (!(await _signed(decoded, opts.resolvePublicKey))) return { ok: false, reason: "signature_invalid" };
+  const now = Math.floor((opts.now ?? new Date()).getTime() / 1000);
+  if (!_live(decoded.claims, now, opts.skewSeconds ?? 30)) return { ok: false, reason: "call_proof_expired" };
+  return { ok: true, claims: decoded.claims };
+}
+
 /** `action_hash` as the PoP's (§16.6): over `mandate` as `mandateId`, or under a policy, over `policy` (§21.4). */
 function _callHash(authority: { mandate?: string; policy?: string }, call: CallProofCall): string {
   return authority.mandate !== undefined

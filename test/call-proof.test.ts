@@ -9,6 +9,7 @@ import {
   CALL_PROOF_MAX_LIFETIME,
   AGENT_RECORD_TYP,
   buildAgentRecord,
+  readCallProof,
   type AgentRecordSummary,
   type CallProofCall,
 } from "../src/index.js";
@@ -240,6 +241,23 @@ describe("§16.16 the platform signs: the decision token's verifier, and the rec
   ])("refuses the record — %s", async (_name, record, reason) => {
     const d = decision({ ttlSeconds: 60 });
     expect(await checkWith(d, { agentRecord: record(d) })).toEqual({ ok: false, reason });
+  });
+});
+
+describe("§16.16 redemption reads the decision token: signature and life, nothing spent", () => {
+  const read = (token: unknown, now = AT) => readCallProof(token, { resolvePublicKey, now });
+
+  it("reads a decision token whose signature and life hold, without its call or receiver", async () => {
+    expect(await read(proof())).toMatchObject({ ok: true, claims: { iss: ISS, mandate: MANDATE, jti: "j-1" } });
+  });
+
+  // @refusal
+  it.each([
+    ["not a decision token", () => "not.a-jws", AT, "call_proof_invalid"],
+    ["a signature by another key", () => resign(proof(), () => {}, other.privateKey), AT, "signature_invalid"],
+    ["past its life", () => proof(), new Date((IAT + CALL_PROOF_MAX_LIFETIME + 31) * 1000), "call_proof_expired"],
+  ])("refuses to read %s", async (_name, token, now, reason) => {
+    expect(await read(token(), now)).toEqual({ ok: false, reason });
   });
 });
 
