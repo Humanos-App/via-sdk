@@ -5,6 +5,11 @@ mandates, DIDs, actions, presentations, and receipts. Implements the VIA Protoco
 **v0.3** specification: Ed25519 / `eddsa-jcs-2022` / W3C VC 2.0. Section numbers
 below (`§0.7.3`, `§16.16`) are that specification's.
 
+> **Branch `v04` — the v0.4 draft** (npm dist-tag `next`). `main`, the v0.3 line, plus v0.4's
+> additions: capabilities, the `VIAApp` manifest, the policy's `apps`, an action's `checks`, the
+> outcome Humanos records (§13 of the v0.4 draft). It changes no v0.3 code: a fix to v0.3 code lands
+> on `main` and is merged here — `git log v04..main` lists what this branch lacks.
+
 > **Functions-only.** No HTTP, DB, KMS, or network. All I/O — DID-document
 > fetching, key decryption, status reads, persistence — is **injected** by the
 > caller. See [`DESIGN.md`](./DESIGN.md).

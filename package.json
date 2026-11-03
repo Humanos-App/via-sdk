@@ -1,7 +1,7 @@
 {
   "name": "@humanos-ai/via-sdk",
-  "version": "0.8.0",
-  "description": "VIA Protocol SDK — create and verify VIA mandates, DIDs, actions, events, and presentations. Implements the VIA Protocol v0.3 specification (Ed25519 / eddsa-jcs-2022 / W3C VC 2.0).",
+  "version": "1.0.0-v04.0",
+  "description": "VIA Protocol SDK — create and verify VIA mandates, DIDs, actions, events, and presentations. Implements the VIA Protocol v0.4 draft: the v0.3 specification plus the connector router (§13) (Ed25519 / eddsa-jcs-2022 / W3C VC 2.0).",
   "keywords": [
     "via-protocol",
     "verifiable-credentials",
@@ -47,7 +47,8 @@
     "dist"
   ],
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "tag": "next"
   },
   "scripts": {
     "build": "tsup",
