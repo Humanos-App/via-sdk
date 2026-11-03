@@ -1,36 +1,43 @@
 name: release
 
-# A tag `v<version>` publishes that commit to npm. The dist-tag comes from package.json:
+# A GitHub release, created by hand from the GitHub UI, publishes the package to npm once CI passes.
+# Nothing else publishes: a push or a tag alone does not.
+# The version comes from the release tag (v1.2.3 → 1.2.3). The dist-tag comes from package.json:
 # `main` has none (→ latest); `v04` sets publishConfig.tag = "next".
 on:
-  push:
-    tags: ["v*"]
-
-permissions:
-  contents: read
-  id-token: write # npm trusted publishing — no token is stored in the repo
+  release:
+    types: [published]
 
 jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   publish:
+    needs: ci
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-      - name: The tag names package.json's version
-        run: test "$GITHUB_REF_NAME" = "v$(node -p 'require("./package.json").version')"
-      - name: A prerelease never goes to latest
-        run: |
-          node -e '
-            const p = require("./package.json");
-            const tag = p.publishConfig?.tag ?? "latest";
-            if (p.version.includes("-") === (tag === "latest")) {
-              console.error(`version ${p.version} with dist-tag ${tag}: a prerelease goes to next, a release to latest`);
-              process.exit(1);
-            }'
-      - run: npm ci
-      # prepublishOnly runs the typecheck and the tests; prepack rebuilds dist/.
-      # No --provenance: npm attaches provenance only to packages built from a public repository.
-      - run: npm publish
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set version (release tag)
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: npm version "${TAG#v}" --no-git-tag-version --allow-same-version
+
+      # prepublishOnly runs the typecheck and the tests again; prepack rebuilds dist/.
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
