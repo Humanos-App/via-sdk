@@ -384,6 +384,44 @@ describe("verifyAgentDirect — A1–A8 + agent.* CEL (M4)", () => {
     expect(r.reason).toBe("stepup_required");
   });
 
+  // §17.4 `action` — the pinned version lists the tool under `stepUp.tools`. Read only from the caller's
+  // `requiresStepUp` before, a verifier that wired none let the call through unconfirmed.
+  it("rechallenge: the pinned action lists the tool under stepUp.tools, with no requiresStepUp wired", async () => {
+    const params = { amount: 10, action: "transfer" };
+    const asks = { ...ACTION, stepUp: { tools: ["transfer"] } } as unknown as ActionDetail;
+    const call = { pop: await pop(attested, "transfer", params), action: "transfer", params };
+
+    const r = await verifyAgentDirect(mandate, call, deps({ loadActionVersion: async () => asks }));
+
+    expect(r).toMatchObject({ decision: "rechallenge", reason: "stepup_required", stepUp: { trigger: "action" } });
+  });
+
+  it("allow under a pinned action's stepUp.tools once the step-up is satisfied, and only for the tools it lists", async () => {
+    const params = { amount: 10, action: "transfer" };
+    const asks = { ...ACTION, stepUp: { tools: ["transfer"] } } as unknown as ActionDetail;
+    const other = { ...ACTION, stepUp: { tools: ["refund"] } } as unknown as ActionDetail;
+
+    const satisfied = await verifyAgentDirect(
+      mandate,
+      { pop: await pop(attested, "transfer", params), action: "transfer", params },
+      deps({ loadActionVersion: async () => asks, stepUpSatisfied: true }),
+    );
+    const unlisted = await verifyAgentDirect(
+      mandate,
+      { pop: await pop(attested, "transfer", params), action: "transfer", params },
+      deps({ loadActionVersion: async () => other }),
+    );
+
+    expect(satisfied.decision).toBe("allow");
+    expect(unlisted.decision).toBe("allow");
+  });
+
+  it("answers the action_hash the PoP bound, as verifyAgentCall does", async () => {
+    const params = { amount: 10, action: "transfer" };
+    const r = await verifyAgentDirect(mandate, { pop: await pop(attested, "transfer", params), action: "transfer", params }, deps());
+    expect(r).toMatchObject({ decision: "allow", actionHash: actionHash(mandate.id, "transfer", params) });
+  });
+
   it("step-up satisfied → proceeds to allow", async () => {
     const params = { amount: 40000, action: "transfer" };
     const r = await verifyAgentDirect(
