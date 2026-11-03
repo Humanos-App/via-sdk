@@ -1,0 +1,177 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="400" viewBox="0 0 1280 400" role="img" aria-labelledby="t d">
+  <title id="t">VIA Protocol SDK v0.3, @humanos-ai/via-sdk</title>
+  <desc id="d">Blueprint of one agent call. A mandate, a W3C verifiable credential, is issued by an organization, accepted by a person and stamped by Humanos; it pins rules and the agent's key. The agent holds its own P-256 key and signs a proof of possession on every call. The verifier checks the stamp, the agent's live record, the proof of possession and the CEL rules before the tool runs, and answers allow or deny. The called party checks a call proof offline. Every consent, decision and outcome is a signed event in a hash-chained record. Parties are did:web DIDs.</desc>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="40%" r="75%">
+      <stop offset="0" stop-color="#134a86"/>
+      <stop offset="1" stop-color="#0a2f5c"/>
+    </radialGradient>
+    <pattern id="minor" width="16" height="16" patternUnits="userSpaceOnUse">
+      <path d="M16 0H0V16" fill="none" stroke="#ffffff" stroke-opacity="0.05" stroke-width="1"/>
+    </pattern>
+    <pattern id="major" width="80" height="80" patternUnits="userSpaceOnUse">
+      <path d="M80 0H0V80" fill="none" stroke="#ffffff" stroke-opacity="0.11" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <!-- sheet -->
+  <rect width="1280" height="400" rx="10" fill="url(#bg)"/>
+  <rect width="1280" height="400" rx="10" fill="url(#minor)"/>
+  <rect width="1280" height="400" rx="10" fill="url(#major)"/>
+  <rect x="12" y="12" width="1256" height="376" rx="4" fill="none" stroke="#cfe2ff" stroke-opacity="0.6" stroke-width="1.5"/>
+  <rect x="18" y="18" width="1244" height="364" rx="2" fill="none" stroke="#cfe2ff" stroke-opacity="0.25" stroke-width="0.75"/>
+  <g stroke="#cfe2ff" stroke-opacity="0.45" stroke-width="1">
+    <path d="M80 12v6M160 12v6M240 12v6M320 12v6M400 12v6M480 12v6M560 12v6M640 12v9M720 12v6M800 12v6M880 12v6M960 12v6M1040 12v6M1120 12v6M1200 12v6"/>
+    <path d="M80 382v6M160 382v6M240 382v6M320 382v6M400 382v6M480 382v6M560 382v6M640 379v9M720 382v6M800 382v6M880 382v6M960 382v6M1040 382v6M1120 382v6M1200 382v6"/>
+  </g>
+
+  <!-- title -->
+  <g font-family="monospace">
+    <text x="46" y="70" font-size="40" font-weight="700" letter-spacing="2" fill="#f2f8ff">VIA PROTOCOL SDK</text>
+    <rect x="486" y="40" width="80" height="38" rx="3" fill="none" stroke="#7fe0ff" stroke-width="1.5"/>
+    <text x="526" y="67" font-size="22" font-weight="700" fill="#7fe0ff" text-anchor="middle">v0.3</text>
+    <text x="48" y="101" font-size="17" fill="#b9d4f5">@humanos-ai/via-sdk · TypeScript · pure functions, no I/O</text>
+    <text x="1236" y="52" font-size="15" letter-spacing="1.5" fill="#a8c6ea" text-anchor="end">FIG. 1 · ONE AGENT CALL, END TO END</text>
+    <text x="1236" y="76" font-size="15" fill="#a8c6ea" text-anchor="end">parties are did:web DIDs</text>
+    <text x="1236" y="98" font-size="15" fill="#a8c6ea" text-anchor="end">signatures: Ed25519 (eddsa-jcs-2022), P-256</text>
+  </g>
+
+  <!-- datum line through the blocks -->
+  <path d="M30 214H1250" stroke="#cfe2ff" stroke-opacity="0.22" stroke-width="1" stroke-dasharray="18 5 3 5"/>
+
+  <!-- blocks -->
+  <g font-family="monospace">
+    <!-- 01 MANDATE -->
+    <rect x="44" y="128" width="290" height="154" rx="3" fill="#0a2c57" fill-opacity="0.72" stroke="#d8e8ff" stroke-width="1.5"/>
+    <rect x="44" y="128" width="290" height="30" rx="3" fill="#ffffff" fill-opacity="0.07"/>
+    <path d="M44 158H334" stroke="#d8e8ff" stroke-opacity="0.6" stroke-width="1"/>
+    <circle cx="65" cy="143" r="10" fill="none" stroke="#7fe0ff" stroke-width="1.25"/>
+    <text x="65" y="147.5" font-size="12" fill="#7fe0ff" text-anchor="middle">1</text>
+    <text x="84" y="149" font-size="19" font-weight="700" fill="#f2f8ff">MANDATE</text>
+    <text x="58" y="181" font-size="14" fill="#a8c6ea">VIAMandate · a W3C VC 2.0</text>
+    <g fill="none" stroke="#7fe0ff" stroke-width="1.25">
+      <circle cx="64" cy="199" r="6"/><path d="M61 199l2.2 2.4 4-4.6"/>
+      <circle cx="64" cy="221" r="6"/><path d="M61 221l2.2 2.4 4-4.6"/>
+      <circle cx="64" cy="243" r="6"/><path d="M61 243l2.2 2.4 4-4.6"/>
+    </g>
+    <text x="78" y="204" font-size="15" fill="#7fe0ff">ISSUE</text>
+    <text x="150" y="204" font-size="15" fill="#eef6ff">organization</text>
+    <text x="78" y="226" font-size="15" fill="#7fe0ff">ACCEPT</text>
+    <text x="150" y="226" font-size="15" fill="#eef6ff">person</text>
+    <text x="78" y="248" font-size="15" fill="#7fe0ff">STAMP</text>
+    <text x="150" y="248" font-size="15" fill="#eef6ff">Humanos</text>
+    <rect x="232" y="235" width="56" height="18" rx="9" fill="none" stroke="#a8c6ea" stroke-width="1"/>
+    <text x="260" y="248" font-size="12" fill="#a8c6ea" text-anchor="middle">proof</text>
+    <text x="58" y="272" font-size="14" fill="#a8c6ea">pins: CEL rules · agent key</text>
+
+    <!-- 02 AGENT -->
+    <rect x="398" y="128" width="220" height="154" rx="3" fill="#0a2c57" fill-opacity="0.72" stroke="#d8e8ff" stroke-width="1.5"/>
+    <rect x="398" y="128" width="220" height="30" rx="3" fill="#ffffff" fill-opacity="0.07"/>
+    <path d="M398 158H618" stroke="#d8e8ff" stroke-opacity="0.6" stroke-width="1"/>
+    <circle cx="419" cy="143" r="10" fill="none" stroke="#7fe0ff" stroke-width="1.25"/>
+    <text x="419" y="147.5" font-size="12" fill="#7fe0ff" text-anchor="middle">2</text>
+    <text x="438" y="149" font-size="19" font-weight="700" fill="#f2f8ff">AGENT</text>
+    <text x="412" y="181" font-size="14" fill="#a8c6ea">did:web:…:agent:…</text>
+    <g fill="none" stroke="#7fe0ff" stroke-width="1.4">
+      <circle cx="418" cy="199" r="5"/><path d="M423 199h12M431 199v4M435 199v3"/>
+    </g>
+    <text x="442" y="204" font-size="15" fill="#eef6ff">own P-256 key</text>
+    <text x="412" y="226" font-size="15" fill="#eef6ff">held by the agent</text>
+    <text x="412" y="248" font-size="15" fill="#eef6ff">signs a PoP</text>
+    <text x="520" y="248" font-size="15" fill="#7fe0ff">each call</text>
+    <text x="412" y="272" font-size="14" fill="#a8c6ea">via-pop+jwt · ES256</text>
+
+    <!-- 03 VERIFIER -->
+    <rect x="682" y="128" width="280" height="154" rx="3" fill="#0a2c57" fill-opacity="0.72" stroke="#d8e8ff" stroke-width="1.5"/>
+    <rect x="682" y="128" width="280" height="30" rx="3" fill="#ffffff" fill-opacity="0.07"/>
+    <path d="M682 158H962" stroke="#d8e8ff" stroke-opacity="0.6" stroke-width="1"/>
+    <circle cx="703" cy="143" r="10" fill="none" stroke="#7fe0ff" stroke-width="1.25"/>
+    <text x="703" y="147.5" font-size="12" fill="#7fe0ff" text-anchor="middle">3</text>
+    <text x="722" y="149" font-size="19" font-weight="700" fill="#f2f8ff">VERIFIER</text>
+    <text x="696" y="181" font-size="14" fill="#a8c6ea">decides before the tool runs</text>
+    <g fill="none" stroke="#7fe0ff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M697 199l3 3 6-7"/>
+      <path d="M697 221l3 3 6-7"/>
+      <path d="M697 243l3 3 6-7"/>
+      <path d="M697 265l3 3 6-7"/>
+    </g>
+    <text x="714" y="204" font-size="15" fill="#eef6ff">STAMP · status</text>
+    <text x="714" y="226" font-size="15" fill="#eef6ff">agent record, live</text>
+    <text x="714" y="248" font-size="15" fill="#eef6ff">PoP: key · nonce · call</text>
+    <text x="714" y="270" font-size="15" fill="#eef6ff">CEL rules</text>
+    <text x="948" y="270" font-size="15" font-weight="700" fill="#7fe0ff" text-anchor="end">allow | deny</text>
+
+    <!-- 04 CALLED PARTY -->
+    <rect x="1026" y="128" width="210" height="154" rx="3" fill="#0a2c57" fill-opacity="0.72" stroke="#d8e8ff" stroke-width="1.5"/>
+    <rect x="1026" y="128" width="210" height="30" rx="3" fill="#ffffff" fill-opacity="0.07"/>
+    <path d="M1026 158H1236" stroke="#d8e8ff" stroke-opacity="0.6" stroke-width="1"/>
+    <circle cx="1047" cy="143" r="10" fill="none" stroke="#7fe0ff" stroke-width="1.25"/>
+    <text x="1047" y="147.5" font-size="12" fill="#7fe0ff" text-anchor="middle">4</text>
+    <text x="1066" y="149" font-size="19" font-weight="700" fill="#f2f8ff">CALLED PARTY</text>
+    <text x="1040" y="181" font-size="14" fill="#a8c6ea">the service it calls</text>
+    <text x="1040" y="204" font-size="15" fill="#eef6ff">gets a call proof</text>
+    <text x="1040" y="226" font-size="15" fill="#eef6ff">checks it offline:</text>
+    <text x="1040" y="248" font-size="15" fill="#7fe0ff">iss · aud · exp</text>
+    <text x="1040" y="270" font-size="15" fill="#7fe0ff">action_hash · jti</text>
+  </g>
+
+  <!-- flow arrows between blocks, on the datum -->
+  <g stroke="#eef6ff" stroke-width="1.6" fill="none">
+    <path d="M338 214H390"/>
+    <path d="M622 214H674"/>
+    <path d="M966 214H1018"/>
+  </g>
+  <g fill="#eef6ff">
+    <path d="M396 214l-8-4.5v9z"/>
+    <path d="M680 214l-8-4.5v9z"/>
+    <path d="M1024 214l-8-4.5v9z"/>
+  </g>
+  <g font-family="monospace" font-size="13" fill="#b9d4f5" text-anchor="middle">
+    <text x="366" y="204">pins</text>
+    <text x="366" y="233">key</text>
+    <text x="650" y="204">call</text>
+    <text x="650" y="233">+ PoP</text>
+    <text x="994" y="204">allow</text>
+    <text x="994" y="233">+ proof</text>
+  </g>
+
+  <!-- leads into the record -->
+  <g stroke="#7fe0ff" stroke-opacity="0.85" stroke-width="1.25" fill="none" stroke-dasharray="4 4">
+    <path d="M189 282V300"/>
+    <path d="M822 282V300"/>
+  </g>
+  <g fill="#7fe0ff">
+    <path d="M189 305l-4.5-7h9z"/>
+    <path d="M822 305l-4.5-7h9z"/>
+  </g>
+
+  <!-- 05 EVENT RECORD -->
+  <g font-family="monospace">
+    <rect x="44" y="306" width="1192" height="68" rx="3" fill="#0a2c57" fill-opacity="0.6" stroke="#d8e8ff" stroke-opacity="0.8" stroke-width="1.25"/>
+    <g fill="none" stroke="#7fe0ff" stroke-width="1.25">
+      <rect x="58" y="324" width="124" height="32" rx="2"/>
+      <rect x="212" y="324" width="156" height="32" rx="2"/>
+      <rect x="398" y="324" width="300" height="32" rx="2"/>
+      <rect x="728" y="324" width="262" height="32" rx="2"/>
+    </g>
+    <g font-size="14" fill="#eef6ff" text-anchor="middle">
+      <text x="120" y="345">ISSUE · org</text>
+      <text x="290" y="345">ACCEPT · person</text>
+      <text x="548" y="345">VERIFICATION_APPROVED · verifier</text>
+      <text x="859" y="345">ACTION_COMPLETED · verifier</text>
+    </g>
+    <!-- chain links: previousEvent = SRI(prior) -->
+    <g fill="none" stroke="#eef6ff" stroke-width="1.4">
+      <rect x="185" y="336" width="14" height="8" rx="4"/><rect x="195" y="336" width="14" height="8" rx="4"/>
+      <rect x="371" y="336" width="14" height="8" rx="4"/><rect x="381" y="336" width="14" height="8" rx="4"/>
+      <rect x="701" y="336" width="14" height="8" rx="4"/><rect x="711" y="336" width="14" height="8" rx="4"/>
+      <rect x="993" y="336" width="14" height="8" rx="4"/>
+    </g>
+    <text x="1012" y="345" font-size="14" fill="#eef6ff">…</text>
+    <circle cx="1052" cy="328" r="10" fill="none" stroke="#7fe0ff" stroke-width="1.25"/>
+    <text x="1052" y="332.5" font-size="12" fill="#7fe0ff" text-anchor="middle">5</text>
+    <text x="1070" y="333" font-size="15" font-weight="700" fill="#f2f8ff">EVENT RECORD</text>
+    <text x="1042" y="351" font-size="14" fill="#a8c6ea">signed VIAEvents,</text>
+    <text x="1042" y="367" font-size="14" fill="#a8c6ea">chained by SRI(prior)</text>
+  </g>
+</svg>

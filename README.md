@@ -1,13 +1,14 @@
+<p align="center"><img src="https://cdn.jsdelivr.net/npm/@humanos-ai/via-sdk/assets/via-blueprint.svg" width="100%"
+  alt="VIA Protocol SDK v0.3: a person's mandate pins an agent's key; the agent signs a proof of possession on every call; the verifier checks mandate, agent, proof and rules before the tool runs; the called party checks a call proof offline; every step is a signed, hash-chained event."></p>
+
 # @humanos-ai/via-sdk
 
-Functions-only TypeScript SDK for the **VIA Protocol** — create and verify VIA
-mandates, DIDs, actions, presentations, and receipts. Implements the VIA Protocol
-**v0.3** specification: Ed25519 / `eddsa-jcs-2022` / W3C VC 2.0. Section numbers
-below (`§0.7.3`, `§16.16`) are that specification's.
+The TypeScript SDK for the **VIA Protocol v0.3**: a person grants an AI agent a mandate, and every call the agent
+makes is checked against that mandate before the tool runs, with a signed record of each decision. It is a
+functions-only library with no network, database or key store: you supply the keys and every lookup.
 
-> **Functions-only.** No HTTP, DB, KMS, or network. All I/O — DID-document
-> fetching, key decryption, status reads, persistence — is **injected** by the
-> caller. See [`DESIGN.md`](./DESIGN.md).
+Mandates and events are W3C Verifiable Credentials 2.0 signed with Ed25519 (`eddsa-jcs-2022`, RFC 8785 JCS). Agents
+prove possession of their own P-256 key on each call; rules are CEL. `§N` section numbers are the v0.3 spec's.
 
 ## Install
 
@@ -16,180 +17,214 @@ npm install @humanos-ai/via-sdk        # the v0.3 line (dist-tag latest)
 npm install @humanos-ai/via-sdk@next   # the v0.4 draft (branch v04)
 ```
 
-## Quickstart — issue → present → verify
+ESM and CommonJS builds with type declarations; runtime dependencies are bundled. It runs on Node.js (it uses
+`node:crypto`) and is tested on Node 22 and 24.
+
+## Quickstart
+
+Issue a mandate that lets one agent pay invoices up to 2,500 EUR, then verify one call.
 
 ```ts
 import {
-  generateEd25519Key, generateViaDID, VIA_PLATFORM_DID,
+  generateEd25519Key, generateP256Key, jwkThumbprint, generateViaDID, VIA_PLATFORM_DID,
   buildActionVersion, buildActionReference, wrapUserParamsWithAction,
-  buildMandate, addProof, buildPresentation, verify,
+  buildMandate, stampMandate, buildPoP, actionHash, verifyAgentDirect,
 } from "@humanos-ai/via-sdk";
 
-// keys (the platform decrypts these from KMS and passes raw bytes)
-const platform = generateEd25519Key(), org = generateEd25519Key(), user = generateEd25519Key();
-const orgDid = generateViaDID("org"), userDid = generateViaDID("user");
-const vm = (d: string) => `${d}#key-1`;
+// Keys. The platform's Ed25519 key stamps mandates. The agent's P-256 key stays with the agent.
+const platform = generateEd25519Key();
+const platformKey = `${VIA_PLATFORM_DID}#key-1`;
+const agent = await generateP256Key();
+const agentDid = generateViaDID("agent"); // did:web:humanos.tech:agent:<uuid>
+const verifierDid = "did:web:gateway.example.com";
 
-// an Action: CEL rules + the param shapes it evaluates
+// An action: the tools it covers, its parameters, and rules that compile to CEL.
 const action = buildActionVersion({
-  $id: "urn:via:action:pay-1", version: "1",
-  userParams: { maxAmount: { type: "number", required: true, description: "cap" } },
+  $id: "urn:via:action:pay-invoice", version: "1",
+  tools: ["pay_invoice"],
+  userParams: { maxAmount: { type: "number", required: true, description: "Cap per payment, EUR" } },
   executionParams: { amount: { type: "number", required: true } },
-  rules: [{ name: "amount", conditions: [{ left: "executionParams.amount", operator: "<=", right: "userParams.maxAmount" }] }],
+  rules: [{
+    name: "under_cap", description: "A payment is at most the cap.",
+    conditions: [{ left: "executionParams.amount", operator: "<=", right: "userParams.maxAmount" }],
+  }],
 });
 
-// build + sign a mandate (proof set: ISSUE → ACCEPT → STAMP)
-let mandate = buildMandate({
-  subjectOrg: orgDid, grantor: userDid, authorizedDIDs: ["did:web:fidelidade.pt"],
-  action: buildActionReference(action, "https://api.humanos.tech/actions/pay-1"),
+// The mandate: the person's grant. It pins the action, their values and the agent's key.
+const mandate = stampMandate(buildMandate({
+  subjectOrg: generateViaDID("org"),
+  grantor: generateViaDID("user"),
+  authorizedDIDs: [verifierDid],
+  authorizedAgents: [{
+    did: agentDid, cnf: { jwk: agent.publicJwk },
+    assurance: "pop", binding: "self", verifiedAt: new Date().toISOString(),
+  }],
+  action: buildActionReference(action, "https://example.com/actions/pay-invoice/1"),
   userParams: wrapUserParamsWithAction(action, { maxAmount: 2500 }),
+  description: { text: "Pay invoices of up to 2,500 EUR each.", lang: "en", author: "issuer" },
+  enforcement: "rules",
   validFrom: "2026-01-01T00:00:00.000Z",
-});
-mandate = addProof(mandate, { privateKey: org.privateKey, verificationMethod: vm(orgDid), lifecycleAction: "ISSUE" });
-mandate = addProof(mandate, { privateKey: user.privateKey, verificationMethod: vm(userDid), lifecycleAction: "ACCEPT" });
-mandate = addProof(mandate, { privateKey: platform.privateKey, verificationMethod: vm(VIA_PLATFORM_DID), lifecycleAction: "STAMP" });
+}), { privateKey: platform.privateKey, verificationMethod: platformKey });
 
-// present (Humanos-signed VP) and verify
-const vp = buildPresentation({ credential: mandate, holder: VIA_PLATFORM_DID, privateKey: platform.privateKey, verificationMethod: vm(VIA_PLATFORM_DID) });
-const result = await verify({ presentation: vp, executionParams: { amount: 1200 } }, {
-  verifier: { did: "did:web:fidelidade.pt" },
-  resolvePublicKey: async () => platform.publicKey,           // resolve VP signer key
-  loadCredentialRecord: async () => ({ status: "ACTIVE", validFrom: "2026-01-01T00:00:00.000Z" }),
-  loadActionVersion: async (id) => (id === action.$id ? action : null),
+// Per call: the verifier issues a single-use nonce; the agent signs a PoP over this exact call.
+const nonce = "n-81f2c4";
+const call = { action: "pay_invoice", params: { amount: 1200 } };
+const pop = await buildPoP({
+  cnf: { jkt: jwkThumbprint(agent.publicJwk) },
+  aud: verifierDid, nonce, iat: Math.floor(Date.now() / 1000),
+  action_hash: actionHash(mandate.id, call.action, call.params),
+}, agent.privateJwk);
+
+// The verifier decides. Every lookup is a function you supply.
+const result = await verifyAgentDirect(mandate, { pop, ...call }, {
+  verifier: { did: verifierDid },
+  resolvePublicKey: (vm) => {
+    if (vm !== platformKey) throw new Error(`unknown key ${vm}`);
+    return platform.publicKey;
+  },
+  loadCredentialRecord: () => ({ status: "ACTIVE" }),
+  loadActionVersion: (id) => (id === action.$id ? action : null),
+  // Each agent's keys, resolved through its current record (§8). Here, the signed entries.
+  candidates: mandate.credentialSubject.mandate.context.authorizedAgents,
+  validateNonce: (n) => (n === nonce ? "ok" : "pop_replayed"),
 });
-// → { decision: "allow", evaluations: [{ rule: "amount", result: "pass" }], ... }
+
+console.log(result.decision, result.evaluations);
+// allow [ { rule: 'under_cap', result: 'pass' } ]
 ```
 
-## API reference
+With `amount: 4000` the same call is denied (`rule_failed`, with the rule's description). Another tool is
+`tool_not_covered`, a reused nonce `pop_replayed`, and a mandate edited after its stamp `credential_stamp_invalid`.
 
-### Keys & crypto
-| Function | Notes |
-|---|---|
-| `generateEd25519Key()` → `{ publicKey, privateKey }` | raw 32-byte Ed25519 |
-| `publicKeyFromPrivate(priv)` | derive public from a stored private seed |
-| `signRaw` / `signMultibase` / `verifyRaw` / `verifyMultibase` | Ed25519 (raw 64-byte / multibase `z…`) |
-| `encodePublicKeyMultibase` / `decodePublicKeyMultibase` | Multikey (`z6Mk…`, multicodec `0xed01`) |
-| `sha256` / `sha256Hex` / `computeSRI` / `verifySRI` | SRI = `sha256-<base64>` (v0.2) |
-| `canonicalizeRFC8785` / `canonicalizeLegacy` / `canonicalize(value, mode)` | JCS |
-| `createDataIntegrityProof(params)` / `verifyDataIntegrityProof(doc, proof, pub)` | real `eddsa-jcs-2022` |
-| `base58Encode/Decode`, `toBase64(Url)/from…` | encoders |
+### Record the decision and prove it to the service called
 
-### DIDs
-| Function | Notes |
-|---|---|
-| `generateViaDID("org" \| "user", { uuid?, domain? })` | `did:web:humanos.tech:{org\|user}:{uuid}` |
-| `generateDomainDID(domain)` → `{ domain, did }` | graduated `did:web:{domain}` |
-| `buildDidDocument({ did, publicKey, keyFragment?, controller? })` | Multikey doc, both proof purposes |
-| `resolveVerificationKey(doc, vmId, purpose?)` | DID doc → raw public key |
-| `findVerificationMethod` / `isAuthorizedFor` | doc lookups |
-| `didWebToUrl` / `parseDidWeb` / `verifierDomainOf` / `didFromUrl` / `verificationMethodId` | helpers |
-| `VIA_PLATFORM_DID` / `VIA_PLATFORM_DOMAIN` | `did:web:humanos.tech` |
-
-### Actions & CEL
-| Function | Notes |
-|---|---|
-| `buildActionVersion(input)` → `ActionDetail` | generates each rule's CEL `expression` (N13) |
-| `buildActionReference(content, location)` / `verifyActionReference` / `actionDigestSRI` | hash-pinning |
-| `generateCelExpression(conditions, typeOf, valuesOf?)` / `buildTypeResolver` / `buildMapValueResolver` / `operatorsByType` | rule → CEL; a name that is not a CEL identifier reads as `scope["name"]` (`celRef`, §0.6.2) |
-| `expressionMismatches(content)` | the rules whose expression is not what their conditions generate, which publishing refuses (§0.6.2) |
-| `validateExecutionParams` / `validateUserParams` | type/required checks; a `datetime` is an ISO-8601 string or a finite number (§0.6.3) |
-| `wrapUserParamsWithAction` / `unwrapUserParamValues` | `{description,value}` ↔ flat |
-| `evaluateRules(rules, ctx)` / `evaluateRule` | CEL over `{ userParams, executionParams }`, plus the version's `constants` (`constantValues`) |
-| `actionPublishIssues` / `actionForIssues` / `validateConstants` | the issuer's publish check: tools, what a version is `for`, its constants (§0.6.1) |
-| `mandateMayPin` / `policyMayName` / `readsUserParams` | which versions a mandate may pin (§16.4) and the policy may name (§21.1) |
-| `rewriteCelTimestamps(expression)` | the `timestamp()` calls a verifier routes through VIA's string-or-number datetime contract; mixing the two in one comparison is an error (§0.6.3). For an authoring checker that must check the expression the verifier runs |
-
-### Mandates
-| Function | Notes |
-|---|---|
-| `buildMandate(input)` | unsecured VC (proof set added next) |
-| `buildEvidence({ content \| digestSRI, mediaType, location, id? })` | by-reference evidence entry |
-| `addProof(credential, { privateKey, verificationMethod, lifecycleAction, created? })` | append to the `proof` set |
-| `verifyMandateProofs(credential, resolvePublicKey)` | verify every proof |
-
-### Status
-| Function | Notes |
-|---|---|
-| `new StatusList(url, purpose?, lengthBits?)` | `.allocateIndex/.set/.get/.entry/.toStatusListCredential` |
-| `buildCredentialStatusEntry({ statusListCredential, statusListIndex, statusPurpose? })` | credential entry |
-| `checkCredentialStatus(entry, statusListCredential)` → `{ statusPurpose, value }` | offline revocation check |
-| `createBitstring/setBit/getBit/encodeList/decodeList` | Bitstring Status List v1.0 |
-
-### Presentations
-| Function | Notes |
-|---|---|
-| `buildPresentation(input)` / `verifyPresentation(vp, resolvePublicKey)` | full VP (Humanos-signed) |
-| `generateChallenge(ctx?)` / `domainMatches(bound, verifierDomain)` | audience binding (§0.7.3) |
-| `buildSdJwtMandate(input)` / `presentSdJwt(input)` / `verifySdJwtPresentation(input)` | SD-JWT VC selective disclosure (`dc+sd-jwt`) |
-
-### Verify
-| Function | Notes |
-|---|---|
-| `verify({ presentation, executionParams }, deps)` | §0.8 flow |
-| `verifyAny(...)` | dual-accept legacy + v0.2 during migration; reports `result.format` |
-
-`deps` (injected I/O):
+Continuing from the quickstart: the verifier signs its decision as an event, the outcome links to it by hash, and the
+service the agent calls gets a short-lived call proof that it checks offline (§16.16).
 
 ```ts
-{
-  verifier: { did: string; domain?: string };
-  resolvePublicKey: (vmId) => Uint8Array | Promise<Uint8Array>;
-  loadCredentialRecord: (urn) => { status; validFrom?; validUntil? } | Promise<…>;
-  loadActionVersion: (urn) => ActionDetail | null | Promise<…>;
-  validateChallenge?: (challenge, mandateId) => string | Promise<string>; // "ok" or a deny reason
-  now?: Date;
-  platformDid?: string;
-}
+import {
+  buildVerificationEvent, buildOutcomeEvent, eventChainLink, walkEventChain, buildCallProof, verifyCallProof,
+} from "@humanos-ai/via-sdk";
+
+const verifierKey = generateEd25519Key();
+const signer = { privateKey: verifierKey.privateKey, verificationMethod: `${verifierDid}#key-1` };
+
+// The decision, signed by the verifier. On a live chain, previousEvent: eventChainLink(<the last event>).
+const decision = buildVerificationEvent({
+  mandateId: mandate.id, decision: "allow", issuer: verifierDid,
+  agent: result.agent!, popNonceRef: nonce, enforcement: result.enforcement,
+  evaluations: result.evaluations, actionHash: actionHash(mandate.id, call.action, call.params),
+}, signer)!;
+
+// The outcome the agent reports (with its own PoP, §2.1), chained to the decision.
+const outcome = buildOutcomeEvent({
+  mandateId: mandate.id, outcome: "completed", decision: decision.id, issuer: verifierDid,
+  previousEvent: eventChainLink(decision),
+}, signer);
+console.log(await walkEventChain([decision, outcome])); // { ok: true }
+
+// A call proof covers one call, for one receiver, for at most 300 seconds.
+const receiver = "https://api.payments.example";
+const token = buildCallProof({
+  iss: verifierDid, sub: agentDid, aud: receiver, mandate: mandate.id, decision: decision.id, call,
+}, signer);
+
+// The receiver's check: trusted signer, signature, audience, lifetime, the call itself, single use.
+const seen = new Set<string>();
+const check = await verifyCallProof(token, {
+  audience: receiver,
+  trustedPlatforms: [verifierDid],                // the signers this receiver trusts
+  resolvePublicKey: () => verifierKey.publicKey,  // in practice: the `kid` key from iss's DID document
+  call,                                           // the call as it arrived
+  consumeJti: (jti) => (seen.has(jti) ? false : (seen.add(jti), true)),
+});
+console.log(check.ok); // true
 ```
 
-Deny reasons: `vp_holder_unknown`, `vp_signature_invalid`, `credential_{status}`, `not_yet_valid`, `expired`, `vp_domain_mismatch`, `vp_challenge_replay`/`challenge_expired`, `verifier_not_authorized`, `action_not_found`/`action_invalid`, `execution_params_invalid:{msg}`, `rule_failed`.
+## How verification works
 
-### Receipts
-| Function | Notes |
+`verifyAgentDirect` checks a call under a mandate (§8, §16.7, §16.11). Checks run in order; the first failure denies
+with one reason code, and every result carries `enforcement`, which says what governed it.
+
+1. **The mandate.** The verifier's own copy, loaded by id, never one the agent sends. Its `STAMP` must verify
+   (`credential_stamp_invalid`); its spec version and critical extensions must be ones this SDK implements
+   (`unsupported_spec_version`, `extension_unsupported`); `enforcement` must fit its shape (`enforcement_invalid`).
+2. **Status and audience.** From your record, not the credential: `ACTIVE` (`credential_revoked`, …), within its
+   dates (`not_yet_valid`, `expired`), and the verifier listed in `authorizedDIDs` (`verifier_not_authorized`).
+3. **The agent.** Its usable keys, resolved through its current record (`candidates`). With none, the call is
+   denied (`actor_unresolvable`): there is no offline profile for a bound agent.
+4. **The PoP** (A1–A8). Well-formed `via-pop+jwt`; the key selected by thumbprint (`agent_not_bound`); the signature
+   checked with the algorithm the key implies, never the header's (`pop_invalid`); `aud` (`aud_mismatch`); the nonce,
+   through your `validateNonce` (`pop_replayed`, `nonce_expired`); `action_hash` equal to this call
+   (`action_hash_mismatch`); the attestation within its window (`attestation_stale`).
+5. **The action.** Found and matching its pinned digest (`action_not_found`, `action_invalid`), covering the tool
+   (`tool_not_covered`), and the parameters matching their declared types (`execution_params_invalid:…`).
+6. **The rules.** Every rule that governs the call must pass, evaluated in CEL over `userParams`, `executionParams`,
+   `constants` and the agent's rung as `agent.*` (`rule_failed`, `required_param_missing`,
+   `agent_assurance_insufficient`, …). A `semantic` mandate asks the reviewer you inject instead.
+7. **Policy and step-up.** An organization policy passed as `policy` can only narrow the result. When the mandate asks
+   for a step-up on every call (`stepUp.triggers` includes `mandate`), or your `requiresStepUp` says the call needs one,
+   the answer is `rechallenge` until a fresh grantor approval is shown (`stepUpSatisfied`).
+
+A verifier wired without a nonce check throws instead of verifying. Two other entry points share these checks:
+
+- `verifyAgentCall` decides a call the way §21.3 does: the organization's `VIAPolicy` first, reading a mandate only
+  when the policy's entry for the tool says `mandate`. It never answers `rechallenge`.
+- `verify` checks a Humanos-signed presentation (§0.7.1, §0.8). A mandate that binds agents is denied there
+  (`pop_invalid`): such mandates are verified agent-direct only.
+
+## API by job
+
+Everything below is exported from `@humanos-ai/via-sdk` unless noted. Types ship with each function.
+
+| Job | Functions |
 |---|---|
-| `buildReceipt(input)` / `signReceipt(receipt, signer)` / `verifyReceipt(receipt, resolvePublicKey)` | `VIAReceipt` VCs |
+| Keys | `generateEd25519Key`, `publicKeyFromPrivate`, `generateP256Key`, `jwkThumbprint`, `signRaw` / `verifyRaw`, `signES256` / `verifyES256` |
+| DIDs and DID documents | `generateViaDID`, `generateDomainDID`, `buildDidDocument`, `resolveVerificationKey`, `resolveVerificationJwk`, `parseDidWeb`, `didWebToUrl`, `didFromUrl`, `VIA_PLATFORM_DID` |
+| Actions and rules | `buildActionVersion`, `actionPublishIssues`, `buildActionReference`, `verifyActionReference`, `actionDigestSRI`, `validateExecutionParams`, `evaluateRules`, `generateCelExpression`, `constraintsToRules` (assurance floors and similar, as CEL) |
+| Mandates | `buildMandate`, `stampMandate`, `verifyStamp`, `buildEvidence`, `wrapUserParamsWithAction`, `unwrapUserParamValues`, `validateMandateDescription` (§20) |
+| Consent | `buildIssuanceEvents` (`ISSUE` and each grantor's `ACCEPT`/`REJECT`, then the `STAMP`), `buildGrantorBinding`, `buildOtpGrantorBinding`, `verifyGrantorAssertion` (passkeys, §17) |
+| Agent registration (§16.5) | `registerChallenge`, `registerAgentKey`, `buildRegistrationProof`, `verifyRegistrationProof`, `validateWebauthnAttestation`, `validateCoseAttestation` |
+| Agent calls | `buildPoP`, `actionHash`, `verifyAgentDirect`, `verifyAgentCall`, `verifyAgentBinding` (A1–A6 and A8 alone), `outcomeParams` |
+| Events and the record | `buildEvent`, `signEvent`, `verifyEvent`, `buildChainedEvent`, `eventChainLink`, `walkEventChain`, `auditEventChain`, `buildVerificationEvent`, `buildOutcomeEvent` |
+| Call proofs (§16.16) | `buildCallProof`, `verifyCallProof`, `readCallProof`, `buildAgentRecord`, `CALL_PROOF_HEADER`, `AGENT_RECORD_HEADER` |
+| Organization policy (§21) | `evaluatePolicy`, `policyDigest`, `policyPublishIssues`, `policyDefault` |
+| Actor records (§3–§5) | `foldActorChain`, `foldActorRecord`, `auditActorRecord`, `resolveSuccession`, `resolvePinnedKeys`, `projectAgentContext` |
+| Accreditation (§18) | `buildAccreditation`, `verifyAccreditation`, `buildAffiliation`, `verifyAffiliation` |
+| Presentations | `buildPresentation`, `verifyPresentation`, `verify`; SD-JWT VC: `buildSdJwtMandate`, `presentSdJwt`, `verifySdJwtPresentation` |
+| Status lists | `StatusList`, `buildCredentialStatusEntry`, `checkCredentialStatus` (W3C Bitstring Status List) |
+| Low-level | `canonicalizeRFC8785`, `computeSRI`, `createDataIntegrityProof`, `verifyDataIntegrityProof`, `detectSpecVersion` |
 
-### Agent outcomes & call proofs
-| Function | Notes |
+`addProof` and `verifyMandateProofs` remain as deprecated shims: a mandate has one proof, the `STAMP`
+(`stampMandate`, `verifyStamp`). Consents are `VIAEvent`s on the mandate's chain, not proofs on the credential.
+
+Two more entry points are kept out of the main one on purpose:
+
+| Import | What it is |
 |---|---|
-| `outcomeParams(decisionEventId, outcome, error?)` | the `report_outcome` params the agent's PoP binds and the gateway rebuilds (§2.1) |
-| `buildCallProof(input, signer)` / `verifyCallProof(token, opts)` | the `via-call-proof+jwt` signed on an `allow` and the called party checks offline (§16.16) — the platform's when it verifies for an organization, naming it in `verifier`, and a policy decision with `policyDigest`; `trustedPlatforms` is required: a token from any other signer is refused before its key is fetched; with `agentRecord`, the record token too (steps 6–7), returned as `agent`; `CALL_PROOF_HEADER`, `CALL_PROOF_META_KEY` |
-| `readCallProof(token, opts)` | a redeemer's read of a decision token: structure, signature and life only — no `aud`, call or `jti` (§16.16) |
-| `buildAgentRecord(decisionToken, agent, platformSigner)` | the `via-agent-record+jwt` beside a decision token: the agent's record summary, the same to every receiver, bound by `sub`, `aud`, `jti` (§16.16); `AGENT_RECORD_HEADER`, `AGENT_RECORD_META_KEY` |
+| `@humanos-ai/via-sdk/action/cel` | The rule-to-CEL generator (`generateCelExpression`, `buildTypeResolver`, `operatorsByType`, …). It does not load `node:crypto`, so a browser form can build rules with it. |
+| `@humanos-ai/via-sdk/agent/sim` | **Development and tests only.** `mintNitroCa`, `buildCoseAttestation`: a test CA and AWS Nitro-shaped attestations, so the attested tier can be exercised without hardware. A verifier pinning production roots rejects them. |
 
-### Compat (secondary, optional)
-`import { compat } from "@humanos-ai/via-sdk"` — the 5 functions + 2 types the platform consumes from the old `@humanos/via-protocol`, in legacy-compatible form (`signWithEd25519Multibase`, `canonicalizeJSON`, `encodePublicKeyMultibase`, `generateChallenge`, `generateDIDKey`). For transitional interop only.
+## What you inject
 
-## Decentralized verification (no trusted DB)
+The SDK fetches nothing, stores nothing and holds no keys: signing functions take raw key material (`privateKey`
+bytes or a private JWK), and protecting it is yours. Time is the system clock unless you pass `now`. A verifier
+passes in:
 
-Compose external/offline verification from primitives:
+- `resolvePublicKey(verificationMethod)`: a signer's public key, normally from its DID document.
+- `loadCredentialRecord(id)`: the mandate's status, validity and current `authorizedDIDs` from your record.
+- `loadActionVersion(id)`: the pinned action's content.
+- `candidates`: each agent's usable keys, resolved through its current record (§8). This is the step that lets a
+  suspension, a revoked key or a rotation reach a live mandate.
+- `validateNonce(nonce, authority)`: your single-use nonce store. Required.
+- Optional: `policy`, `review` (a semantic reviewer), `requiresStepUp`, `loadAccreditation`, `now`.
 
-```ts
-const vpOk   = await verifyPresentation(vp, resolveKey);                         // outer Humanos proof
-const vcOk   = await verifyMandateProofs(vp.verifiableCredential, resolveKey);   // ISSUE/ACCEPT/STAMP
-const status = checkCredentialStatus(vc.credentialStatus, statusListCred);        // offline revocation
-const eval   = evaluateRules(action.rules, { userParams, executionParams });      // CEL
-// resolveKey = (vmId) => resolveVerificationKey(fetchedDidDoc, vmId)
-```
+## Status and spec versions
 
-## Format modes
-
-Default is **`v0.2`** (spec-correct). A **`legacy`** mode (and the `compat` shim) reproduce the deployed platform's current wire format byte-for-byte for the migration window only.
-
-## Status
-
-The v0.3 line's reference implementation — 725 tests (incl. frozen per-version wire fixtures),
-KAT-guarded crypto, typechecks and builds. Not yet audited; the caller supplies real key material.
-Selective disclosure (SD-JWT) is additive/opt-in.
-
-## Scripts
-
-```bash
-npm test          # vitest (builds first)
-npm run typecheck # tsc --noEmit
-npm run build     # tsup → dist (ESM + CJS + d.ts, runtime dependencies bundled)
-npm run platform-drift   # what the Humanos platform's copy holds that this SDK does not
-```
+New artifacts carry `specVersion: "0.3"` (`VIA_SPEC_VERSION`). Verification reads `"0.2"` and `"0.3"`
+(`SUPPORTED_SPEC_VERSIONS`), so mandates signed under v0.2 keep verifying, and fails closed on any other value
+(`unsupported_spec_version`). The suite has 725 tests, including frozen per-version wire fixtures and known-answer
+tests for the cryptography. The SDK has **not been independently audited**, and the v0.3 specification is a draft.
 
 ## Branches and releases
 
@@ -198,17 +233,20 @@ npm run platform-drift   # what the Humanos platform's copy holds that this SDK 
 | `main` | v0.3, the line in use | `latest` | `0.8.x` |
 | `v04` | the v0.4 draft: `main` plus v0.4's additions | `next` | `1.0.0-v04.N` |
 
-A fix to v0.3 code lands on `main` first and is merged into `v04`; `git log v04..main` lists what
-`v04` lacks. `v04`'s `package.json` sets `publishConfig.tag` to `next`, so nothing published from it
-reaches `latest`.
+A fix to v0.3 code lands on `main` first and is merged into `v04`. `v04`'s `package.json` sets `publishConfig.tag`
+to `next`, so nothing published from it reaches `latest`. Packages are published from a GitHub release, after CI
+(typecheck and tests) passes; a push or a tag alone publishes nothing.
 
-To release: on GitHub, create a release with a new tag `v<version>` targeting `main` (or `v04`, with a
-`1.0.0-v04.N` version), and publish it. The `release` workflow runs CI (typecheck and tests), sets the
-version from the tag and publishes to npm with the repository's `NPM_TOKEN` secret; it publishes nothing
-when CI fails. A push or a tag alone publishes nothing. The workflow does not commit the version, so bump
-`version` in `package.json` (`npm version <new> --no-git-tag-version`) in a PR first to keep the repository
-in step with npm.
+## Development
 
-Until the Humanos platform installs this package from npm, it holds a copy of `src/` in
-`packages/via-sdk`, written by its `pnpm sync:via-sdk`; `npm run platform-drift` lists the edits made
-there that are not here yet. Run it before changing this SDK and before a release.
+```bash
+npm test           # builds dist/, then runs the vitest suite
+npm run typecheck  # tsc --noEmit
+npm run build      # tsup: ESM + CJS + d.ts, runtime dependencies bundled
+```
+
+Maintainers: release steps and the pre-change checks are in `CONTRIBUTING.md` in the repository.
+
+## License
+
+[Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0). The `LICENSE` file ships in the package.
