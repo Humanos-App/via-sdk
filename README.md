@@ -209,7 +209,7 @@ reaches `latest`.
 
 To release: bump `version` in `package.json` (and the lockfile — `npm version <new> --no-git-tag-version`),
 commit, tag `v<version>` on that commit and push the branch and the tag. The `release` workflow checks
-that the tag names the version, runs the tests and publishes to npm with provenance.
+that the tag names the version, runs the tests and publishes to npm through npm trusted publishing (no token in the repository).
 
 Until the Humanos platform installs this package from npm, it holds a copy of `src/` in
 `packages/via-sdk`, written by its `pnpm sync:via-sdk`; `npm run platform-drift` lists the edits made

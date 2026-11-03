@@ -8,7 +8,7 @@ on:
 
 permissions:
   contents: read
-  id-token: write # npm trusted publishing and provenance — no token is stored in the repo
+  id-token: write # npm trusted publishing — no token is stored in the repo
 
 jobs:
   publish:
@@ -32,4 +32,5 @@ jobs:
             }'
       - run: npm ci
       # prepublishOnly runs the typecheck and the tests; prepack rebuilds dist/.
-      - run: npm publish --provenance
+      # No --provenance: npm attaches provenance only to packages built from a public repository.
+      - run: npm publish
