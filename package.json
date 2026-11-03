@@ -12,10 +12,7 @@
     "sd-jwt",
     "humanos"
   ],
-  "homepage": "https://github.com/Humanos-App/via-sdk#readme",
-  "bugs": {
-    "url": "https://github.com/Humanos-App/via-sdk/issues"
-  },
+  "homepage": "https://humanos.tech",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Humanos-App/via-sdk.git"
@@ -44,7 +41,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "assets"
   ],
   "publishConfig": {
     "access": "public",

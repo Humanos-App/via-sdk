@@ -396,18 +396,23 @@ export async function verifyAgentDirect(
     { validateNonce: deps.validateNonce, now },
   );
   if (!pop.ok || !pop.agent) return deny(pop.reason ?? "pop_invalid", urn, enforcement);
+  // §2, §16.6 — what the call's PoP bound, on every answer after it, as `verifyAgentCall` gives it.
+  const proof = pop.actionHash ? { actionHash: pop.actionHash } : {};
+  const done = (result: AgentDirectResult): AgentDirectResult => ({ ...result, ...proof });
   // §16.6: the call names its action once. When the params carry a discriminator (`tool`, or
   // `action`), it MUST be the action presented — otherwise the step-up decision reads one name and
   // the rules another, and a call named `Wire_Transfer` with `params.tool: "wire_transfer"` passes
   // the rules for the real tool while dodging the step-up that tool requires.
-  if (discriminatorMismatch(req.action, req.params)) return deny("action_mismatch", urn, enforcement);
+  if (discriminatorMismatch(req.action, req.params)) return done(deny("action_mismatch", urn, enforcement));
 
   // A step-up is decided AFTER authority (S7). It used to be raised here, before the params and
   // the rules were looked at, so a call the rules would deny sent a person to their authenticator
   // first — consent fatigue bought with a decision that was wrong anyway.
-  // Two sources ask before a call settles (§17.4): the pinned action (`action`, the caller's
-  // `requiresStepUp`) and the mandate itself (`mandate` in `mandate.stepUp.triggers` — every call).
-  const actionAsks = deps.requiresStepUp ? await deps.requiresStepUp(req.action, req.params) : false;
+  // Two sources ask before a call settles (§17.4): the pinned action (`action` — the tool in its
+  // `stepUp.tools`, or the caller's `requiresStepUp`) and the mandate itself (`mandate` in
+  // `mandate.stepUp.triggers` — every call). The action's own list is read once the mandate's pass
+  // has loaded it, below.
+  const callerAsks = deps.requiresStepUp ? await deps.requiresStepUp(req.action, req.params) : false;
   const mandateAsks = m.stepUp?.triggers?.includes("mandate") ?? false;
   // §21.3 step 4 — the organization's policy caps the call: after the mandate's rules, before the step-up.
   // A `deny` or a failing `rules` entry refuses, and so does a `mandate` entry naming an `under` this mandate is not
@@ -470,24 +475,25 @@ export async function verifyAgentDirect(
 
   // 6–9. What the mandate itself says of the call: its words, or its pinned action, the call inputs and the rules.
   const passed = await decideUnderMandate(mandate, req, pop.agent, deps);
-  if (!("pass" in passed)) return passed;
+  if (!("pass" in passed)) return done(passed);
   const named = passed.reviewer ? { reviewer: passed.reviewer } : {};
   // §17.4: the reviewer may take a call to the person only where the mandate permits it —
   // `verifier` in `triggers`, and the reason in `reasons` when that list is present. Otherwise
   // the call it could not settle is a deny: nobody agreed to be asked.
   if (passed.escalate && !deps.stepUpSatisfied) {
-    if (!verifierMayEscalate(m.stepUp, "semantic_review")) return { ...deny("semantic_review", urn, enforcement), ...named };
-    return { ...askStepUp("verifier", "semantic_review"), ...named };
+    if (!verifierMayEscalate(m.stepUp, "semantic_review")) return done({ ...deny("semantic_review", urn, enforcement), ...named });
+    return done({ ...askStepUp("verifier", "semantic_review"), ...named });
   }
   const capRefused = await capped();
-  if (capRefused) return { ...capRefused, evaluations: [...passed.evaluations, ...capRefused.evaluations], ...named };
+  if (capRefused) return done({ ...capRefused, evaluations: [...passed.evaluations, ...capRefused.evaluations], ...named });
   // Authority passed — NOW a step-up is worth a person's attention (S7).
+  const actionAsks = passed.stepUpTool === true || callerAsks;
   if ((mandateAsks || actionAsks) && !deps.stepUpSatisfied) {
-    return { ...askStepUp(mandateAsks ? "mandate" : "action", "stepup_required", passed.evaluations), ...named };
+    return done({ ...askStepUp(mandateAsks ? "mandate" : "action", "stepup_required", passed.evaluations), ...named });
   }
   const staff = askApprovers(passed.evaluations);
-  if (staff) return { ...staff, ...named };
-  return {
+  if (staff) return done({ ...staff, ...named });
+  return done({
     decision: "allow",
     credentialId: urn,
     evaluations: passed.evaluations,
@@ -496,7 +502,7 @@ export async function verifyAgentDirect(
     ...(passed.unrestricted ? { unrestricted: true as const } : {}),
     ...policyMark,
     ...named,
-  };
+  });
 }
 
 /**

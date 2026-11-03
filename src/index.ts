@@ -1,8 +1,8 @@
 /**
- * VIA Protocol SDK (v0.2)
+ * VIA Protocol SDK — the VIA Protocol v0.3 (the v0.4 draft on the `v04` branch).
  *
- * Functions-only library implementing spec/via-protocol-spec-v0.2.md:
- * Ed25519 / `eddsa-jcs-2022` / W3C VC 2.0. No HTTP, DB, or KMS — all I/O is injected.
+ * Functions-only: W3C VC 2.0, `eddsa-jcs-2022`, Ed25519 and P-256. No HTTP, DB, or KMS — all I/O
+ * is injected. See DESIGN.md.
  */
 
 // Config & types
