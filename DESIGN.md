@@ -1,124 +1,67 @@
-# VIA SDK — Design
+# via-sdk — Design
 
-**Implements:** the VIA Protocol specification (v0.3 on `main`, the v0.4 draft on `v04`) — the source of truth.
+A pure, functions-only TypeScript implementation of the VIA Protocol: v0.3 on `main`, the v0.4 draft on `v04`.
+The specification is the source of truth; section numbers below are v0.3's. Usage is in `README.md`, branches and
+releases in `CONTRIBUTING.md`.
 
-## Priorities
+## Principles
 
-1. **Primary — be the spec-correct reference.** The SDK implements v0.2 exactly: real `eddsa-jcs-2022`, RFC-8785 JCS, a `proof` set with `lifecycleAction` (no `actionProof`), standard-base64 SRI, `credentialStatus`, Ed25519/Multikey `did:web`, Action/ActionVersion + CEL, full + SD-JWT presentations, receipts. **Default behavior is v0.2-correct.**
-2. **Secondary — optional, transitional compatibility.** A clearly-isolated `legacy` mode + `@humanos/via-protocol`-shaped re-exports exist *only* to ease platform migration. They are not the organizing principle and may be dropped once the platform migrates.
+- **The spec decides.** A mismatch between this code and the spec is fixed in one of the two, never worked around
+  in a caller.
+- **No I/O.** No HTTP, database, KMS or network. Everything a check reads (a credential's record, an action version,
+  an actor's keys, a nonce's freshness) and every signing key is passed in by the caller.
+- **Fail closed.** An artifact whose `specVersion` this SDK does not support is refused (`unsupported_spec_version`);
+  so is a critical extension it does not implement (§19.2). A verifier must wire its nonce check
+  (`requireNonceCheck`).
+- **One implementation.** The Humanos platform and agent-sdk run this code, not their own copy of the protocol.
 
-The SDK is a **pure, functions-only library** — no HTTP/endpoints, no DB, no KMS, no network. All I/O (DID resolution, ActionVersion fetch, status reads, KMS decrypt) is **injected** by the caller. The platform's API layer wraps it.
+## Layout
 
-## Structure
+| `src/`                                   | What                                                                                                   |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `crypto/`                                | RFC 8785 canonicalization, SRI digests, Ed25519 and P-256 signing, `eddsa-jcs-2022` proofs, WebAuthn  |
+| `did/`                                   | `did:web` identifiers, and the DID document as a projection of an actor's keys                         |
+| `action/`, `cel/`                        | action versions, their execution parameters, CEL rules generated and evaluated                         |
+| `mandate/`, `credential/`                | the mandate credential, and the STAMP that secures it (§0.5.4)                                         |
+| `event/`                                 | the signed `VIAEvent` (§0.5)                                                                           |
+| `status/`                                | Bitstring status lists                                                                                 |
+| `presentation/`, `verify/`               | full and SD-JWT presentations, and verifying one                                                       |
+| `agent/`                                 | agent binding (§16): registration and attestation, the PoP, `verifyAgentDirect`, `verifyAgentCall`, audit events, the call proof (§16.16) |
+| `actor/`                                 | the `VIAActor` record folded from its chain (§3–§5)                                                    |
+| `grantor/`, `operator/`                  | grantor binding (§17) and operator verification (§18)                                                  |
+| `policy/`                                | the organization's `VIAPolicy` (§21): building a version and evaluating a call against it              |
+| `signal/`                                | the SD-JWT `VIASignal`                                                                                 |
+| `context/`                               | the JSON-LD context shipped with the package                                                           |
 
-```
-sdk/src/
-  index.ts                  # public v0.2 surface (primary)
-  config.ts                 # FormatMode: 'v0.2' (DEFAULT) | 'legacy'
-  crypto/
-    ed25519.ts              # sign/verify (raw + multibase), base58btc
-    canonicalize.ts         # canonicalizeRFC8785() [primary]; canonicalizeLegacy() [compat]
-    digest.ts               # computeSRI() base64 [primary] / base64url [compat], sha256
-    proof.ts                # createDataIntegrityProof()/verifyProof() — real eddsa-jcs-2022
-  did/                      # generateViaDID, generateDomainDID, generateEd25519Key,
-                            # encodePublicKeyMultibase, buildDidDocument, parseDidWeb, didWebToUrl
-  mandate/                  # buildMandate, addProof (ISSUE/ACCEPT/REJECT/STAMP/REVOKE/CANCELED_STAMP),
-                            # verifyMandateProofs
-  action/                   # buildActionVersion, generateCelExpression (N13),
-                            # validateExecutionParams, actionDigestSRI
-  status/                   # buildCredentialStatusEntry, BitstringStatusList build/encode/decode (N15)
-  presentation/             # buildPresentation (full, secured VC), buildSdJwtPresentation (D-f),
-                            # verifyPresentation
-  verify/                   # verify({ presentation, executionParams }, deps) — §0.8 flow
-  receipt/                  # buildReceipt, signReceipt, verifyReceipt
-  cel/                      # @marcbachmann/cel-js wrapper (evaluate rules)
-  context/via-ns-v1.json    # the JSON-LD context (§0.4.4) shipped with the package
-  compat/                   # [SECONDARY] legacy.ts: old @humanos/via-protocol export names,
-                            # legacy-mode byte-compatible behavior; isolated, optional
-```
+`src/index.ts` is the public surface, with two subpaths beside it: `./action/cel` (the rule generator alone, for a
+browser) and `./agent/sim` (a simulated Nitro attestation, for development and tests only).
 
-## Coverage (spec §0.11)
+## Two verifiers
 
-| Area | Functions |
-|------|-----------|
-| Keys/DID | `generateEd25519Key`, `encodePublicKeyMultibase`, `generateViaDID`, `generateDomainDID`, `buildDidDocument`, `parseDidWeb`, `didWebToUrl` |
-| Canonicalize/crypto | `canonicalizeRFC8785`, `createDataIntegrityProof`, `verifyProof`, `computeSRI`, `sha256`, base58 |
-| Mandate | `buildMandate`, `addProof`, `verifyMandateProofs` |
-| Action | `buildActionVersion`, `generateCelExpression`, `validateExecutionParams`, `actionDigestSRI` |
-| Status | `buildCredentialStatusEntry`, `encodeStatusList`, `decodeStatusList`, `buildStatusListCredential` |
-| Presentation | `buildPresentation`, `buildSdJwtPresentation`, `verifyPresentation` |
-| Verify | `verify({ presentation, executionParams }, deps)` → `{ decision, evaluations, reason? }`; `verifyAny(...)` dual-accepts legacy + v0.2 (reports `format`) for the migration window |
-| Receipts | `buildReceipt`, `signReceipt`, `verifyReceipt` |
+- **`verifyAgentCall`** — the platform's: one call under the organization's policy first (§21.3), then the mandate
+  it presents when the policy leaves the tool to one. Nobody is asked to confirm a call: what would need a step-up
+  is refused `stepup_required`.
+- **`verifyAgentDirect`** — a relying party checking an agent's mandate itself (§16.11). It can answer `rechallenge`
+  when the mandate, its pinned action (`stepUp.tools`) or the caller asks a person to confirm (§17.4).
 
-### Dependency injection for `verify`
+Both check the PoP once against the agent's keys and answer the `action_hash` it bound.
 
-```ts
-verify(
-  { presentation, executionParams },
-  {
-    resolveVerifier: (apiKey) => Promise<{ did: string; domain?: string }>,
-    loadCredentialRecord: (urn) => Promise<{ status: CredentialStatus; validFrom; validUntil }>,
-    loadActionVersion: (urn) => Promise<ActionVersion | null>,
-    now?: () => Date,
-  },
-): Promise<VerifyResult>
-```
+## Crypto and libraries
 
-Signing functions take **raw Ed25519 private key bytes** (the platform decrypts via KMS and passes them in).
-
-## FormatMode
-
-`FormatMode` defaults to **`v0.2`** (correct). `legacy` is opt-in (global or per-call) and only affects: canonicalization (`canonicalizeLegacy`), SRI (`base64url`), proof shape (`proofs[]` + `actionProof`, doc-only signing). It exists for the transition window and is documented as secondary.
-
-## End goal — the SDK owns the protocol logic
-
-All VIA protocol logic currently scattered across the old SDK and the platform moves **into** the SDK v0.2; the platform keeps only platform concerns and calls the SDK.
-
-| Platform today | → replaced by SDK v0.2 |
-|---|---|
-| old SDK `signWithEd25519Multibase`, `canonicalizeJSON`, `generateDIDKey`, `encodePublicKeyMultibase`, `generateChallenge` | `crypto/*`, `did/*`, `presentation/challenge` |
-| `apps/api/.../helpers/signature.utils.ts` `verifyEd25519Multibase` | `crypto/ed25519` |
-| `shared-backend/.../via/w3cCredential.ts` `signCredential`, `buildW3CCredential`, `computeSRI` | `mandate/*`, `crypto/digest` |
-| `shared-backend/.../via/actors.ts` `generateViaDID`, `generateDomainDID` | `did/web` |
-| `shared-backend/.../request/generate/user-params.ts` `validate*Params`, `wrap/unwrapUserParams` | `action/execution-params` |
-| `frontend/.../mandate/cel.ts` `generateCelExpression` | `action/cel` |
-| `apps/api/.../cel-evaluator.service.ts` | `cel` |
-| `apps/api/.../presentation.service.ts` `createPresentation` + verify flow | `presentation/*`, `verify` |
-| receipt VC building (`receipt.service.ts`) | `receipt/*` |
-| (none yet) | `status/*` (N15) |
-
-**Stays in the platform** (injected into the SDK's pure functions): Nest/HTTP, Prisma/DB, KMS encrypt/decrypt, OTP/SMS delivery, `VpChallengeService` (challenge storage + replay state), `ActionCache`, billing, webhooks/activity events, DID-resolution transport.
-
-## Compatibility (secondary, optional — a tiny shim)
-
-Verified: the platform imports only **5 functions + 2 types** from `@humanos/via-protocol` (`signWithEd25519Multibase`, `canonicalizeJSON`, `generateDIDKey`, `encodePublicKeyMultibase`, `generateChallenge`; types `DataIntegrityProof`, `VerifiablePresentation`). So `compat/legacy.ts` only needs to re-export those, in `legacy` mode (byte-identical to today), to be a zero-change drop-in. The old SDK's higher-level builders/clients (`createDataIntegrityProof` with `ecdsa-2019`, `createVerifiablePresentation`, `did:key`, `VIAClient`) are **not** consumed and are not reproduced. If compat proves unnecessary it can be deleted without touching the core.
-
-## Crypto choices
-
-- Ed25519 via Node `crypto`/WebCrypto (matches platform); base58btc + multibase `z`; multicodec `0xed01` for keys.
-- RFC-8785 JCS: a vetted implementation, validated against test vectors (legacy canonicalizer ported verbatim for compat).
-- SD-JWT VC via a maintained library (Ed25519), `dc+sd-jwt` typ (accept `vc+sd-jwt`), `vct: https://via.humanos.tech/vct/mandate`.
-- CEL via [`@marcbachmann/cel-js`](https://www.npmjs.com/package/@marcbachmann/cel-js)
-  — a maintained, dependency-free, near-complete CEL implementation. The platform
-  currently runs ChromeGG `cel-js@0.8.2` (now deprecated / GitHub-archived); the SDK
-  deliberately diverges to the maintained engine. Every form the rule generator emits
-  was verified to evaluate identically (operator KATs in `test/cel.test.ts`), so this
-  is an engine upgrade, not a semantics change — see RECONCILIATION.md N31/N39.
+- **Ed25519** for issuer and organization signatures (`eddsa-jcs-2022` over JCS); **P-256** (ES256) for an
+  agent's key; a passkey's own algorithm for a grantor's assertion (§17.1).
+- **SD-JWT VC** through `@sd-jwt/core` and `@sd-jwt/sd-jwt-vc`; JOSE through `jose`; CBOR through `cbor-x`
+  (Nitro attestation documents).
+- **CEL** through `@marcbachmann/cel-js`, a maintained, dependency-free engine.
 
 ## Versioning
 
-Four independent axes (spec §0.13, `spec/VERSIONING.md`): the **spec version** (signed
-`specVersion` marker on every artifact, `VIA_SPEC_VERSION`), the **JSON-LD context**
-version (`…/ns/v1`), the **crypto wire format** (`FormatMode`), and the **package**
-semver. Builders stamp `specVersion`; `detectSpecVersion()` reads it; `verify`/`verifyAny`
-attach it and **fail closed** (`unsupported_spec_version`) on an unknown value. A
-**marker-less** credential is treated as `legacy` and still verified — back-compat with
-mandates issued before the marker existed (N40).
-
-## Out of scope (🔮 Planned — not built)
-
-`did:via` agents; multi-`scope[]` + `appliesTo`; `history`/`now`/velocity CEL; `authorizationPolicy`; suspension/resume; broad receipt taxonomy; external (non-Humanos) issuers.
+Every artifact carries `specVersion` (`VIA_SPEC_VERSION`, `"0.3"` on `main`); `detectSpecVersion()` reads it and
+anything unsupported reads as `unknown`. The package's own version is separate: `0.x` on npm's `latest` from `main`,
+`1.0.0-v04.N` on `next` from `v04`.
 
 ## Testing
 
-Unit tests per module; round-trip tests (build → sign → verify); W3C conformance assertions (proof shape, contexts, status list, SD-JWT); and — for the optional `legacy` mode — byte-equality against platform test vectors.
+`npm test` (vitest): each module's own tests, round trips (build → sign → verify), known-answer tests for the
+crypto (`crypto-kat.test.ts`), CEL operator semantics pinned to the engine (`cel.test.ts`), and frozen artifacts of
+shipped versions that current code must still verify (`wire-fixtures.test.ts`).
