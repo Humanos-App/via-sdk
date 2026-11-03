@@ -1,0 +1,952 @@
+// §16.5 — agent registration + attestation validators (ported from kya/crypto.test.ts,
+// adapted to the SDK's injected deps). Proves: valid custody → custodial; valid COSE
+// quote → hardware/attested; regNonce mismatch → attestation_nonce_invalid; embedded
+// key ≠ cnf → attestation_key_mismatch; broken chain → attestation_chain_invalid; and
+// an unverifiable quote DEGRADES to pop/self (§16.5 normative — never fails open).
+import { describe, expect, it } from "vitest";
+import { Encoder } from "cbor-x";
+import {
+  generateP256Key,
+  jwkThumbprint,
+  validateCustody,
+  validateCoseAttestation,
+  validateWebauthnAttestation,
+  readAttestationNonce,
+  registerChallenge,
+  registerAgentKey,
+  createRegChallengeStore,
+  buildRegistrationProof,
+  buildPoP,
+  sha256,
+  computeSRI,
+  toBase64Url,
+  fromBase64Url,
+  type Jwk,
+  type CustodyRef,
+  type KeyDescription,
+} from "../src/index.js";
+import { mintNitroCa, restoreNitroCa, buildCoseAttestation } from "./helpers/sim-attest.js";
+
+const te = new TextEncoder();
+
+/** The verifier's DID a registration proof names (§16.5). */
+const AUD = "did:web:verifier.test";
+
+/** A `via-reg+jwt` by `key` over `regNonce` — the key proving it is held (§16.5, 2026-10-14). */
+function proofBy(key: { publicJwk: Jwk; privateJwk: Jwk }, regNonce: string, over: { aud?: string; nonce?: string } = {}): Promise<string> {
+  return buildRegistrationProof(
+    { cnf: { jkt: jwkThumbprint(key.publicJwk) }, aud: over.aud ?? AUD, nonce: over.nonce ?? regNonce, iat: 1 },
+    key.privateJwk,
+  );
+}
+
+/** A CA whose leaf is `a`'s but whose intermediate is `b`'s: the quote's own signature verifies, the chain does not link. */
+async function brokenChainCa() {
+  const a = await mintNitroCa();
+  const b = await mintNitroCa();
+  return restoreNitroCa({
+    rootPem: a.rootPem,
+    chainPems: [a.chainPems[0]!, b.chainPems[1]!],
+    leafPublicJwk: a.leafPublicJwk,
+    leafPrivateJwk: a.leafPrivateJwk!,
+  });
+}
+
+const CUSTODY_REF: CustodyRef = {
+  provider: "sim-kms",
+  region: "eu-west-1",
+  keySpec: "ECC_NIST_P256",
+  keyId: "key-abc",
+  arnClass: "arn:aws:kms:...",
+};
+
+// A DescribeKey oracle that vouches for `cnf` as a non-exportable P-256 custody key.
+function describeKeyFor(cnf: Jwk, over: Partial<KeyDescription> = {}) {
+  return async (): Promise<KeyDescription> => ({
+    origin: "SIM_KMS",
+    exportable: false,
+    keySpec: "ECC_NIST_P256",
+    keyId: CUSTODY_REF.keyId,
+    publicJwk: cnf,
+    ...over,
+  });
+}
+
+describe("validateCustody (§16.5 · custodial)", () => {
+  it("non-exportable + advertised key == cnf → pop/CUSTODIAL (the oracle fact lives in `binding`)", async () => {
+    const { publicJwk } = await generateP256Key();
+    const res = await validateCustody(CUSTODY_REF, publicJwk, describeKeyFor(publicJwk));
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.assurance).toBe("pop");
+      expect(res.binding).toBe("custodial");
+      expect(res.custodyRef).toEqual(CUSTODY_REF);
+      expect(jwkThumbprint(res.cnf.jwk)).toBe(jwkThumbprint(publicJwk));
+    }
+  });
+
+  it("exportable key → custody_reference_invalid (fail closed)", async () => {
+    const { publicJwk } = await generateP256Key();
+    const res = await validateCustody(CUSTODY_REF, publicJwk, describeKeyFor(publicJwk, { exportable: true }));
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("custody_reference_invalid");
+  });
+
+  it("advertised key ≠ cnf → custody_reference_invalid", async () => {
+    const a = await generateP256Key();
+    const b = await generateP256Key();
+    const res = await validateCustody(CUSTODY_REF, b.publicJwk, describeKeyFor(a.publicJwk));
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("custody_reference_invalid");
+  });
+
+  it("no answer (oracle returns null) degrades to pop/self — unverifiable, not wrong", async () => {
+    const { publicJwk } = await generateP256Key();
+    const res = await validateCustody(CUSTODY_REF, publicJwk, async () => null);
+    expect(res.ok && [res.assurance, res.binding]).toEqual(["pop", "self"]);
+  });
+});
+
+describe("validateCoseAttestation (§16.5 · attested / Nitro)", () => {
+  it("valid quote chained to the pinned root → hardware/attested/aws-nitro, cnf round-trips", async () => {
+    const ca = await mintNitroCa();
+    const key = await generateP256Key();
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: key.publicJwk, nonceB64: toBase64Url(te.encode("nonce-1")) });
+    const res = await validateCoseAttestation(doc, { device: [], hardware: [ca.rootPem] });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.assurance).toBe("hardware");
+      expect(res.binding).toBe("attested");
+      expect(res.root).toBe("aws-nitro");
+      // The re-attest window is the mandate author's (§16.4); registration sets none.
+      expect(res.maxAttestationStaleness).toBeUndefined();
+      expect(jwkThumbprint(res.cnf.jwk)).toBe(jwkThumbprint(key.publicJwk));
+    }
+  });
+
+  it("a sound chain to a root NOT pinned degrades to pop/self, the quote's key bound", async () => {
+    const ca = await mintNitroCa();
+    const other = await mintNitroCa();
+    const key = await generateP256Key();
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: key.publicJwk });
+    const res = await validateCoseAttestation(doc, { device: [], hardware: [other.rootPem] });
+    expect(res.ok && [res.assurance, res.binding, res.root]).toEqual(["pop", "self", undefined]);
+    if (res.ok) expect(jwkThumbprint(res.cnf.jwk)).toBe(jwkThumbprint(key.publicJwk));
+  });
+
+  it("a chain that does not link → attestation_chain_invalid, pinned roots or not", async () => {
+    const broken = await brokenChainCa();
+    const key = await generateP256Key();
+    const doc = await buildCoseAttestation(broken, { publicKeyJwk: key.publicJwk });
+    for (const roots of [{ device: [], hardware: [] }, { device: [], hardware: [broken.rootPem] }]) {
+      const res = await validateCoseAttestation(doc, roots);
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.reason).toBe("attestation_chain_invalid");
+    }
+  });
+
+  it("tampered payload (signature no longer covers it) → attestation_chain_invalid", async () => {
+    const ca = await mintNitroCa();
+    const key = await generateP256Key();
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: key.publicJwk });
+    const raw = fromBase64Url(doc);
+    raw[raw.length - 10] ^= 0xff;
+    const res = await validateCoseAttestation(toBase64Url(raw), { device: [], hardware: [ca.rootPem] });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("attestation_chain_invalid");
+  });
+
+  it("no pinned roots at all → pop/self, never above (never fails open)", async () => {
+    const ca = await mintNitroCa();
+    const key = await generateP256Key();
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: key.publicJwk });
+    const res = await validateCoseAttestation(doc, { device: [], hardware: [] });
+    expect(res.ok && [res.assurance, res.binding]).toEqual(["pop", "self"]);
+  });
+});
+
+const SIM_REF = {
+  provider: "sim-kms",
+  region: "dev-1",
+  keySpec: "ECC_NIST_P256",
+  keyId: "ladder-test",
+  arnClass: "key",
+};
+
+describe("restoreNitroCa — a dev CA that outlives its process", () => {
+  it("a restored CA signs quotes the ORIGINAL root still validates", async () => {
+    // Root pinning is out-of-band by design: the verifier has the root before any attestation
+    // arrives. So testing the attested path end to end means mint -> restart the verifier with the
+    // root -> sign, and the CA has to survive that restart. `leafSign` is a closure, so this is
+    // what makes the sequence possible at all.
+    const original = await mintNitroCa();
+    const saved = JSON.parse(
+      JSON.stringify({
+        rootPem: original.rootPem,
+        chainPems: original.chainPems,
+        leafPublicJwk: original.leafPublicJwk,
+        leafPrivateJwk: original.leafPrivateJwk,
+      }),
+    );
+
+    const restored = await restoreNitroCa(saved);
+    const { publicJwk } = await generateP256Key();
+    const doc = await buildCoseAttestation(restored, { publicKeyJwk: publicJwk });
+
+    // Validated against the ORIGINAL root — the point being that the restored signer is the same
+    // authority, not merely a working one.
+    const res = await validateCoseAttestation(doc, { device: [], hardware: [original.rootPem] });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.assurance).toBe("hardware");
+  });
+
+  it("a restored CA earns nothing above pop under an unrelated root", async () => {
+    const a = await mintNitroCa();
+    const restored = await restoreNitroCa({
+      rootPem: a.rootPem, chainPems: a.chainPems,
+      leafPublicJwk: a.leafPublicJwk, leafPrivateJwk: a.leafPrivateJwk!,
+    });
+    const { publicJwk } = await generateP256Key();
+    const doc = await buildCoseAttestation(restored, { publicKeyJwk: publicJwk });
+    const other = await mintNitroCa();
+    const res = await validateCoseAttestation(doc, { device: [], hardware: [other.rootPem] });
+    expect(res.ok && res.assurance).toBe("pop");
+  });
+});
+
+describe("the assurance ladder (§16.5) — the rung is which ANCHOR you reached", () => {
+  /**
+   * `assurance` is "the strength of confinement the verifier could PROVE", and `hardware` is
+   * defined as "a hardware root chained to a pinned anchor". So the rung tracks what is
+   * TRANSFERABLE — what a verifier could hand an insurer — not where the key happens to live.
+   *
+   * `binding` carries the storage fact separately, and `custodial` is defined as "a custody oracle
+   * reports it". Crediting that oracle report as `assurance: hardware` too would double-count one
+   * fact across both axes, which is what the two-axis split exists to prevent.
+   */
+  it("nothing but a pinned chain earns above `pop`", async () => {
+    const key = await generateP256Key();
+    const { publicJwk } = key;
+    const store = createRegChallengeStore();
+    const fresh = async () => (await registerChallenge({ store })).regNonce;
+
+    // no evidence at all registers nothing: it does not even show the key is held (2026-10-14)
+    const n0 = await fresh();
+    const none = await registerAgentKey({ cnf: { jwk: publicJwk }, evidence: { type: "none" }, regNonce: n0 }, { store, audience: AUD });
+    expect(none.ok).toBe(false);
+
+    // the key's own signature, plus an ASSERTION of non-exportability — possession, and no more proof
+    const n1 = await fresh();
+    const asserted = await registerAgentKey(
+      { cnf: { jwk: publicJwk }, evidence: { type: "device-self", nonExportable: true, proof: await proofBy(key, n1) }, regNonce: n1 },
+      { store, audience: AUD },
+    );
+    expect(asserted.ok && [asserted.assurance, asserted.binding]).toEqual(["pop", "self"]);
+
+    // an ORACLE-verified non-exportable KMS key: the verifier did real, unforgeable work, and the
+    // fact is recorded — in `binding`. The response is unsigned, so it is testimony, not a document.
+    const n2 = await fresh();
+    const custody = await registerAgentKey(
+      { cnf: { jwk: publicJwk }, evidence: { type: "custody", ref: SIM_REF, proof: await proofBy(key, n2) }, regNonce: n2 },
+      { store, audience: AUD, describeKey: () => ({ exportable: false, publicJwk, keySpec: "ECC_NIST_P256" }) },
+    );
+    expect(custody.ok && [custody.assurance, custody.binding]).toEqual(["pop", "custodial"]);
+
+    // a COSE_Sign1 chained to a PINNED root — transferable evidence, and the only thing here that
+    // is. The root vouches for a quote bound to the nonce, so it needs no proof of its own.
+    const ca = await mintNitroCa();
+    const n3 = await fresh();
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: publicJwk, nonceB64: n3 });
+    const attested = await registerAgentKey(
+      { cnf: { jwk: publicJwk }, evidence: { type: "attestation-eat", docB64: doc }, regNonce: n3 },
+      { store, nitroRoots: { device: [], hardware: [ca.rootPem] } },
+    );
+    expect(attested.ok && [attested.assurance, attested.binding]).toEqual(["hardware", "attested"]);
+
+    // …and the SAME document without the root pinned earns pop at most, and only with the key's proof.
+    const n4 = await fresh();
+    const doc4 = await buildCoseAttestation(ca, { publicKeyJwk: publicJwk, nonceB64: n4 });
+    const unpinned = await registerAgentKey(
+      { cnf: { jwk: publicJwk }, evidence: { type: "attestation-eat", docB64: doc4, proof: await proofBy(key, n4) }, regNonce: n4 },
+      { store, audience: AUD, nitroRoots: { device: [], hardware: [] } },
+    );
+    expect(unpinned.ok && [unpinned.assurance, unpinned.binding]).toEqual(["pop", "self"]);
+  });
+});
+
+describe("PCR pinning (§16.5) — WHICH workload, not merely which vendor", () => {
+  const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
+
+  it("matching PCRs still grant hardware/attested", async () => {
+    const ca = await mintNitroCa();
+    const { publicJwk } = await generateP256Key();
+    const pcrs = { 0: new Uint8Array(48).fill(0xab), 1: new Uint8Array(48).fill(0xcd) };
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: publicJwk, pcrs });
+    const res = await validateCoseAttestation(doc, { device: [], hardware: [ca.rootPem] }, { "0": hex(pcrs[0]), "1": hex(pcrs[1]) });
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.assurance).toBe("hardware");
+  });
+
+  it("a DIFFERENT workload on the SAME trusted hardware is refused", async () => {
+    // The attack roots alone cannot see: an attacker who can rent the same vendor's enclaves gets
+    // a document that passes chain validation. Only the measurements distinguish their image.
+    const ca = await mintNitroCa();
+    const { publicJwk } = await generateP256Key();
+    const doc = await buildCoseAttestation(ca, {
+      publicKeyJwk: publicJwk,
+      pcrs: { 0: new Uint8Array(48).fill(0x99) }, // some other image
+    });
+    const res = await validateCoseAttestation(doc, { device: [], hardware: [ca.rootPem] }, { "0": hex(new Uint8Array(48).fill(0xab)) });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("attestation_pcr_mismatch");
+  });
+
+  it("a PCR the document does not carry is a mismatch, not a pass", async () => {
+    const ca = await mintNitroCa();
+    const { publicJwk } = await generateP256Key();
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: publicJwk, pcrs: { 0: new Uint8Array(48) } });
+    const res = await validateCoseAttestation(doc, { device: [], hardware: [ca.rootPem] }, { "8": hex(new Uint8Array(48).fill(0x11)) });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("attestation_pcr_mismatch");
+  });
+
+  it("pinning NOTHING skips the check — the weaker claim, asked for explicitly", async () => {
+    const ca = await mintNitroCa();
+    const { publicJwk } = await generateP256Key();
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: publicJwk, pcrs: { 0: new Uint8Array(48).fill(0x99) } });
+    for (const pins of [undefined, {}]) {
+      const res = await validateCoseAttestation(doc, { device: [], hardware: [ca.rootPem] }, pins);
+      expect(res.ok).toBe(true);
+    }
+  });
+
+  it("registerAgentKey passes the pins through", async () => {
+    const ca = await mintNitroCa();
+    const { publicJwk } = await generateP256Key();
+    const store = createRegChallengeStore();
+    const { regNonce } = await registerChallenge({ store });
+    const doc = await buildCoseAttestation(ca, {
+      publicKeyJwk: publicJwk,
+      pcrs: { 0: new Uint8Array(48).fill(0x99) },
+      nonceB64: regNonce,
+    });
+    const res = await registerAgentKey(
+      { cnf: { jwk: publicJwk }, evidence: { type: "attestation-eat", docB64: doc }, regNonce },
+      { store, nitroRoots: { device: [], hardware: [ca.rootPem] }, expectedPcrs: { "0": hex(new Uint8Array(48).fill(0xab)) } },
+    );
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("attestation_pcr_mismatch");
+  });
+});
+
+describe("readAttestationNonce", () => {
+  it("round-trips the embedded challenge nonce; null when absent", async () => {
+    const ca = await mintNitroCa();
+    const key = await generateP256Key();
+    const nonceB64 = toBase64Url(te.encode("reg-nonce-xyz"));
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: key.publicJwk, nonceB64 });
+    expect(readAttestationNonce(doc)).toBe(nonceB64);
+    const noNonce = await buildCoseAttestation(ca, { publicKeyJwk: key.publicJwk });
+    expect(readAttestationNonce(noNonce)).toBeNull();
+  });
+});
+
+// A synthetic 'packed' attestation drives the STRICT verifier: the statement signature
+// is actually checked and the x5c must chain to a pinned root before hardware/attested.
+describe("validateWebauthnAttestation (packed) — strict verification + honest degrade", () => {
+  const cbor = new Encoder({ useRecords: false, mapsAsObjects: true, tagUint8Array: false });
+  const RP_ID = "example.com";
+  const ORIGIN = "https://example.com";
+
+  function pemToDer(pem: string): Uint8Array {
+    const b = pem.replace(/-----BEGIN CERTIFICATE-----/g, "").replace(/-----END CERTIFICATE-----/g, "").replace(/\s+/g, "");
+    return new Uint8Array(Buffer.from(b, "base64"));
+  }
+  function concatAll(parts: Uint8Array[]): Uint8Array {
+    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let o = 0;
+    for (const p of parts) { out.set(p, o); o += p.length; }
+    return out;
+  }
+  function buildAuthData(credJwk: Jwk, opts?: { be?: boolean; aaguid?: Uint8Array }): Uint8Array {
+    const rpIdHash = sha256(te.encode(RP_ID));
+    // UP | AT, plus BE (0x08) when the credential is backup-eligible (a synced passkey).
+    const flags = new Uint8Array([0x41 | (opts?.be ? 0x08 : 0)]);
+    const signCount = new Uint8Array([0, 0, 0, 1]);
+    const aaguid = opts?.aaguid ?? new Uint8Array(16);
+    const credId = new Uint8Array([9, 9, 9, 9]);
+    const credIdLen = new Uint8Array([0, credId.length]);
+    const x = fromBase64Url(String(credJwk.x));
+    const y = fromBase64Url(String(credJwk.y));
+    const coseKey = new Uint8Array(cbor.encode(new Map<number, unknown>([[1, 2], [3, -7], [-1, 1], [-2, Buffer.from(x)], [-3, Buffer.from(y)]])));
+    return concatAll([rpIdHash, flags, signCount, aaguid, credIdLen, credId, coseKey]);
+  }
+  async function credKey(): Promise<Jwk> {
+    const { publicJwk } = await generateP256Key();
+    return publicJwk;
+  }
+  async function buildPacked(
+    ca: Awaited<ReturnType<typeof mintNitroCa>>,
+    credJwk: Jwk,
+    opts?: { forgeSig?: boolean; be?: boolean; aaguid?: Uint8Array },
+  ): Promise<{ aoB64: string; clientDataJSONB64: string }> {
+    const clientDataJSON = te.encode(JSON.stringify({ type: "webauthn.create", challenge: toBase64Url(te.encode("reg-challenge")), origin: ORIGIN }));
+    const authData = buildAuthData(credJwk, opts);
+    const verificationData = concatAll([authData, sha256(clientDataJSON)]);
+    const sig = new Uint8Array(await ca.leafSign(verificationData));
+    if (opts?.forgeSig) sig[0] ^= 0xff;
+    const ao = cbor.encode({
+      fmt: "packed",
+      attStmt: { alg: -7, sig: Buffer.from(sig), x5c: [Buffer.from(pemToDer(ca.chainPems[0]!)), Buffer.from(pemToDer(ca.chainPems[1]!))] },
+      authData: Buffer.from(authData),
+    });
+    return { aoB64: toBase64Url(new Uint8Array(ao)), clientDataJSONB64: toBase64Url(clientDataJSON) };
+  }
+
+  it("grades by WHICH list the root is in — device list → device, not hardware", async () => {
+    // The F10 rule. One flat list made "a vendor I trust" and "this earns hardware" the same
+    // statement; a TPM vendor root belongs in `device` and must grade there.
+    const ca = await mintNitroCa();
+    const jwk = await credKey();
+    const { aoB64, clientDataJSONB64 } = await buildPacked(ca, jwk);
+    const res = await validateWebauthnAttestation(aoB64, clientDataJSONB64, { device: [ca.rootPem], hardware: [] });
+    expect(res.ok && res.assurance).toBe("device");
+  });
+
+  it("a root in BOTH lists grades as the LOWER rung", async () => {
+    // Duplication is a config mistake, and the generous reading of a mistake over-claims.
+    const ca = await mintNitroCa();
+    const jwk = await credKey();
+    const { aoB64, clientDataJSONB64 } = await buildPacked(ca, jwk);
+    const res = await validateWebauthnAttestation(aoB64, clientDataJSONB64, { device: [ca.rootPem], hardware: [ca.rootPem] });
+    expect(res.ok && res.assurance).toBe("device");
+  });
+
+  it("BACKUP ELIGIBLE (BE=1) degrades to pop even with a perfect chain", async () => {
+    // A syncable credential can reach devices this attestation never described, so the quote
+    // proves where the key was BORN, not where it lives — and a rung is about where it lives.
+    const ca = await mintNitroCa();
+    const jwk = await credKey();
+    const { aoB64, clientDataJSONB64 } = await buildPacked(ca, jwk, { be: true });
+    const res = await validateWebauthnAttestation(aoB64, clientDataJSONB64, { device: [], hardware: [ca.rootPem] });
+    expect(res.ok && [res.assurance, res.binding]).toEqual(["pop", "self"]);
+  });
+
+  it("captures the AAGUID, flags and matched root fingerprint as evidence", async () => {
+    const ca = await mintNitroCa();
+    const jwk = await credKey();
+    const aaguid = new Uint8Array(16).fill(0xab);
+    const { aoB64, clientDataJSONB64 } = await buildPacked(ca, jwk, { aaguid });
+    const res = await validateWebauthnAttestation(aoB64, clientDataJSONB64, { device: [], hardware: [ca.rootPem] });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.evidence?.aaguid).toBe("abababab-abab-abab-abab-ababababab" + "ab");
+      expect(res.evidence?.authDataFlags).toBe(0x41);
+      expect(res.evidence?.rootFingerprint).toMatch(/^[0-9a-f]{64}$/);
+    }
+  });
+
+  it("records evidence on a DEGRADE too — the case most worth auditing", async () => {
+    const ca = await mintNitroCa();
+    const jwk = await credKey();
+    const { aoB64, clientDataJSONB64 } = await buildPacked(ca, jwk);
+    const res = await validateWebauthnAttestation(aoB64, clientDataJSONB64, { device: [], hardware: [] });
+    expect(res.ok && res.assurance).toBe("pop");
+    if (res.ok) expect(res.evidence?.rootFingerprint).toBeNull();
+  });
+
+  it("packed statement + PINNED root → hardware/attested/fido, cnf == credential key", async () => {
+    const ca = await mintNitroCa();
+    const jwk = await credKey();
+    const { aoB64, clientDataJSONB64 } = await buildPacked(ca, jwk);
+    const res = await validateWebauthnAttestation(aoB64, clientDataJSONB64, { device: [], hardware: [ca.rootPem] });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.assurance).toBe("hardware");
+      expect(res.binding).toBe("attested");
+      expect(res.root).toBe("fido");
+      expect(jwkThumbprint(res.cnf.jwk)).toBe(jwkThumbprint(jwk));
+    }
+  });
+
+  it("valid statement but NO pinned root → DEGRADE to pop/self, key still bound (never fails open)", async () => {
+    const ca = await mintNitroCa();
+    const jwk = await credKey();
+    const { aoB64, clientDataJSONB64 } = await buildPacked(ca, jwk);
+    const res = await validateWebauthnAttestation(aoB64, clientDataJSONB64, { device: [], hardware: [] });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.assurance).toBe("pop");
+      expect(res.binding).toBe("self");
+      expect(jwkThumbprint(res.cnf.jwk)).toBe(jwkThumbprint(jwk));
+    }
+  });
+
+  it("a chain that does not link → attestation_chain_invalid, not a degrade", async () => {
+    const broken = await brokenChainCa();
+    const jwk = await credKey();
+    const { aoB64, clientDataJSONB64 } = await buildPacked(broken, jwk);
+    const res = await validateWebauthnAttestation(aoB64, clientDataJSONB64, { device: [], hardware: [] });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("attestation_chain_invalid");
+  });
+
+  it("FORGED statement signature (root pinned) → attestation_chain_invalid", async () => {
+    const ca = await mintNitroCa();
+    const jwk = await credKey();
+    const { aoB64, clientDataJSONB64 } = await buildPacked(ca, jwk, { forgeSig: true });
+    const res = await validateWebauthnAttestation(aoB64, clientDataJSONB64, { device: [], hardware: [ca.rootPem] });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("attestation_chain_invalid");
+  });
+
+  it("fmt 'none' (synced passkey) → DEGRADE to pop/self", async () => {
+    const jwk = await credKey();
+    const ao = cbor.encode({ fmt: "none", attStmt: {}, authData: Buffer.from(buildAuthData(jwk)) });
+    const res = await validateWebauthnAttestation(toBase64Url(new Uint8Array(ao)), toBase64Url(te.encode("{}")), { device: [], hardware: [] });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.assurance).toBe("pop");
+      expect(res.binding).toBe("self");
+    }
+  });
+});
+
+describe("registerChallenge / registerAgentKey (§16.5)", () => {
+  // Evidence is UNTRUSTED client input. A validator documented as fail-closed has to fail closed
+  // on the malformed payload too, not only the invalid-but-well-formed one. Before this, an
+  // unrecognised discriminator matched no switch arm, left `result` unassigned and THREW on the
+  // `result.ok` read — an unhandled exception on the endpoint that mints identities, reachable by
+  // anyone who can send a request body.
+  //
+  // The `{kind:"none"}` case is not hypothetical: that is exactly what the agent SDK's
+  // `RegistrationEvidence` looks like, and it discriminates on `kind`, not `type`.
+  it.each([
+    ["unknown type", { type: "bogus" }],
+    ["no discriminator", {}],
+    ["the agent SDK's `kind` shape", { kind: "none" }],
+    ["null", null],
+    ["undefined", undefined],
+    ["a string", "none"],
+    ["a number", 42],
+  ])("malformed evidence (%s) is REFUSED, never thrown", async (_label, evidence) => {
+    const { publicJwk } = await generateP256Key();
+    const res = await registerAgentKey({
+      cnf: { jwk: publicJwk },
+      evidence: evidence as never,
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("custody_reference_invalid");
+  });
+
+  // @refusal — §16.5 (2026-10-14): `none` shows nothing about who holds the key.
+  it("refuses evidence 'none' — it does not show the key is held", async () => {
+    const { publicJwk } = await generateP256Key();
+    const store = createRegChallengeStore();
+    const { regNonce } = await registerChallenge({ store });
+    const res = await registerAgentKey({ cnf: { jwk: publicJwk }, evidence: { type: "none" }, regNonce }, { store, audience: AUD });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("pop_invalid");
+  });
+
+  it("evidence 'device-self' with the key's proof → pop/self — a claim is not evidence", async () => {
+    const key = await generateP256Key();
+    const store = createRegChallengeStore();
+    const { regNonce } = await registerChallenge({ store });
+    const res = await registerAgentKey(
+      { cnf: { jwk: key.publicJwk }, evidence: { type: "device-self", nonExportable: true, proof: await proofBy(key, regNonce) }, regNonce },
+      { store, audience: AUD },
+    );
+    expect(res.ok && [res.assurance, res.binding]).toEqual(["pop", "self"]);
+    if (res.ok) expect(jwkThumbprint(res.cnf.jwk)).toBe(jwkThumbprint(key.publicJwk));
+  });
+
+  // @invariant §16.2 — the bound key is signed into the chain and published: its private half, sent by
+  // mistake, and WebCrypto's export members are not.
+  it("binds the public half of the key only, whatever else the client sent", async () => {
+    const key = await generateP256Key();
+    const store = createRegChallengeStore();
+    const { regNonce } = await registerChallenge({ store });
+    const sent = { ...key.privateJwk, ext: true, key_ops: ["sign"] };
+    const res = await registerAgentKey(
+      { cnf: { jwk: sent }, evidence: { type: "device-self", proof: await proofBy(key, regNonce) }, regNonce },
+      { store, audience: AUD },
+    );
+    expect(res.ok && res.cnf.jwk).toEqual({ kty: "EC", crv: "P-256", x: key.publicJwk.x, y: key.publicJwk.y });
+  });
+
+  // @refusal — the proof must be the registered key's own signature over THIS verifier's nonce.
+  it.each([
+    ["no proof", async () => undefined],
+    ["a proof by another key", async (n: string) => proofBy(await generateP256Key(), n)],
+    ["a proof for another verifier", async (n: string, k: Awaited<ReturnType<typeof generateP256Key>>) => proofBy(k, n, { aud: "did:web:elsewhere.test" })],
+    ["a proof over another nonce", async (n: string, k: Awaited<ReturnType<typeof generateP256Key>>) => proofBy(k, n, { nonce: "not-this-one" })],
+    [
+      "a call's PoP instead of a registration proof",
+      async (n: string, k: Awaited<ReturnType<typeof generateP256Key>>) =>
+        buildPoP({ cnf: { jkt: jwkThumbprint(k.publicJwk) }, aud: AUD, nonce: n, iat: 1, action_hash: "sha256-x" }, k.privateJwk),
+    ],
+  ])("refuses a registration whose key is not shown to be held — %s", async (_label, makeProof) => {
+    const key = await generateP256Key();
+    const store = createRegChallengeStore();
+    const { regNonce } = await registerChallenge({ store });
+    const proof = await makeProof(regNonce, key);
+    const res = await registerAgentKey(
+      { cnf: { jwk: key.publicJwk }, evidence: { type: "device-self", ...(proof ? { proof } : {}) } as never, regNonce },
+      { store, audience: AUD },
+    );
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("pop_invalid");
+  });
+
+  // @refusal — a verifier that does not say who it is can check no proof.
+  it("refuses a proof when the verifier names no audience", async () => {
+    const key = await generateP256Key();
+    const store = createRegChallengeStore();
+    const { regNonce } = await registerChallenge({ store });
+    const res = await registerAgentKey(
+      { cnf: { jwk: key.publicJwk }, evidence: { type: "device-self", proof: await proofBy(key, regNonce) }, regNonce },
+      { store },
+    );
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("pop_invalid");
+  });
+
+  // @refusal — §16.5: the nonce binds every kind, not only the attested ones.
+  it("refuses a proven key whose challenge is not outstanding", async () => {
+    const key = await generateP256Key();
+    const store = createRegChallengeStore();
+    const res = await registerAgentKey(
+      { cnf: { jwk: key.publicJwk }, evidence: { type: "device-self", proof: await proofBy(key, "never-issued") }, regNonce: "never-issued" },
+      { store, audience: AUD },
+    );
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("attestation_nonce_invalid");
+  });
+
+  it("custody evidence via injected DescribeKey, with the key's proof → pop/custodial", async () => {
+    const key = await generateP256Key();
+    const { publicJwk } = key;
+    const store = createRegChallengeStore();
+    const { regNonce } = await registerChallenge({ store });
+    const res = await registerAgentKey(
+      { cnf: { jwk: publicJwk }, evidence: { type: "custody", ref: CUSTODY_REF, proof: await proofBy(key, regNonce) }, regNonce },
+      { store, audience: AUD, describeKey: describeKeyFor(publicJwk) },
+    );
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.assurance).toBe("pop");
+      expect(res.binding).toBe("custodial");
+      expect(res.custodyRef).toEqual(CUSTODY_REF);
+    }
+  });
+
+  it("attested registration with a matching, single-use regNonce → hardware/attested + pinned digest", async () => {
+    const ca = await mintNitroCa();
+    const key = await generateP256Key();
+    const store = createRegChallengeStore();
+    const { regNonce } = await registerChallenge({ store });
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: key.publicJwk, nonceB64: regNonce });
+
+    const res = await registerAgentKey(
+      { cnf: { jwk: key.publicJwk }, evidence: { type: "attestation-eat", docB64: doc }, regNonce },
+      { store, nitroRoots: { device: [], hardware: [ca.rootPem] } },
+    );
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.assurance).toBe("hardware");
+      expect(res.binding).toBe("attested");
+      expect(res.root).toBe("aws-nitro");
+      expect(res.attestationDigestSRI).toBe(computeSRI(fromBase64Url(doc)));
+    }
+
+    // Single-use: the very same nonce cannot be replayed for a second binding.
+    const replay = await registerAgentKey(
+      { cnf: { jwk: key.publicJwk }, evidence: { type: "attestation-eat", docB64: doc }, regNonce },
+      { store, nitroRoots: { device: [], hardware: [ca.rootPem] } },
+    );
+    expect(replay.ok).toBe(false);
+    if (!replay.ok) expect(replay.reason).toBe("attestation_nonce_invalid");
+  });
+
+  it("regNonce mismatch (quote echoes a different nonce) → attestation_nonce_invalid", async () => {
+    const ca = await mintNitroCa();
+    const key = await generateP256Key();
+    const store = createRegChallengeStore();
+    const { regNonce } = await registerChallenge({ store });
+    // Quote echoes SOME nonce, but the caller presents a different (also-outstanding) one.
+    const otherChallenge = await registerChallenge({ store });
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: key.publicJwk, nonceB64: otherChallenge.regNonce });
+
+    const res = await registerAgentKey(
+      { cnf: { jwk: key.publicJwk }, evidence: { type: "attestation-eat", docB64: doc }, regNonce },
+      { store, nitroRoots: { device: [], hardware: [ca.rootPem] } },
+    );
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("attestation_nonce_invalid");
+  });
+
+  it("expired regNonce → attestation_nonce_invalid", async () => {
+    const ca = await mintNitroCa();
+    const key = await generateP256Key();
+    const store = createRegChallengeStore();
+    let clock = 1_000_000;
+    const { regNonce } = await registerChallenge({ store, now: () => clock, ttlSeconds: 60 });
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: key.publicJwk, nonceB64: regNonce });
+    clock += 61_000; // past the 60s window
+
+    const res = await registerAgentKey(
+      { cnf: { jwk: key.publicJwk }, evidence: { type: "attestation-eat", docB64: doc }, regNonce },
+      { store, nitroRoots: { device: [], hardware: [ca.rootPem] }, now: () => clock },
+    );
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("attestation_nonce_invalid");
+  });
+
+  it("embedded attested key ≠ submitted cnf → attestation_key_mismatch", async () => {
+    const ca = await mintNitroCa();
+    const attested = await generateP256Key(); // the key the quote actually attests
+    const other = await generateP256Key(); // a DIFFERENT key the client claims
+    const store = createRegChallengeStore();
+    const { regNonce } = await registerChallenge({ store });
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: attested.publicJwk, nonceB64: regNonce });
+
+    const res = await registerAgentKey(
+      { cnf: { jwk: other.publicJwk }, evidence: { type: "attestation-eat", docB64: doc }, regNonce },
+      { store, nitroRoots: { device: [], hardware: [ca.rootPem] } },
+    );
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("attestation_key_mismatch");
+  });
+
+  // @refusal — an unanchored quote anyone could mint naming any key: it degrades only with the key's own proof.
+  it("an attested quote that does NOT chain to a pinned root degrades to pop/self only with the key's proof", async () => {
+    const ca = await mintNitroCa();
+    const other = await mintNitroCa();
+    const key = await generateP256Key();
+    const store = createRegChallengeStore();
+    const deps = { store, audience: AUD, nitroRoots: { device: [], hardware: [other.rootPem] } }; // wrong pinned root
+
+    const n1 = (await registerChallenge({ store })).regNonce;
+    const doc1 = await buildCoseAttestation(ca, { publicKeyJwk: key.publicJwk, nonceB64: n1 });
+    const bare = await registerAgentKey({ cnf: { jwk: key.publicJwk }, evidence: { type: "attestation-eat", docB64: doc1 }, regNonce: n1 }, deps);
+    expect(bare.ok).toBe(false);
+    if (!bare.ok) expect(bare.reason).toBe("pop_invalid");
+
+    const n2 = (await registerChallenge({ store })).regNonce;
+    const doc2 = await buildCoseAttestation(ca, { publicKeyJwk: key.publicJwk, nonceB64: n2 });
+    const proven = await registerAgentKey(
+      { cnf: { jwk: key.publicJwk }, evidence: { type: "attestation-eat", docB64: doc2, proof: await proofBy(key, n2) }, regNonce: n2 },
+      deps,
+    );
+    expect(proven.ok && [proven.assurance, proven.binding]).toEqual(["pop", "self"]);
+  });
+
+  // @refusal — §16.5 (2026-10-14): wrong evidence refuses; it is not merely unverifiable.
+  it("refuses an attested quote whose chain does not link — attestation_chain_invalid, not a degrade", async () => {
+    const broken = await brokenChainCa();
+    const key = await generateP256Key();
+    const store = createRegChallengeStore();
+    const { regNonce } = await registerChallenge({ store });
+    const doc = await buildCoseAttestation(broken, { publicKeyJwk: key.publicJwk, nonceB64: regNonce });
+    const res = await registerAgentKey(
+      { cnf: { jwk: key.publicJwk }, evidence: { type: "attestation-eat", docB64: doc, proof: await proofBy(key, regNonce) }, regNonce },
+      { store, audience: AUD, nitroRoots: { device: [], hardware: [broken.rootPem] } },
+    );
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("attestation_chain_invalid");
+  });
+
+  it("unverifiable webauthn quote (no pinned FIDO root) DEGRADES to pop/self via registerAgentKey", async () => {
+    const ca = await mintNitroCa();
+    const key = await generateP256Key();
+    const store = createRegChallengeStore();
+    const { regNonce } = await registerChallenge({ store });
+    // Reuse the packed builder shape inline: a valid statement, but the registrar pins no FIDO root.
+    const cbor = new Encoder({ useRecords: false, mapsAsObjects: true, tagUint8Array: false });
+    const rpIdHash = sha256(te.encode("example.com"));
+    const x = fromBase64Url(String(key.publicJwk.x));
+    const y = fromBase64Url(String(key.publicJwk.y));
+    const coseKey = new Uint8Array(cbor.encode(new Map<number, unknown>([[1, 2], [3, -7], [-1, 1], [-2, Buffer.from(x)], [-3, Buffer.from(y)]])));
+    const authData = new Uint8Array([...rpIdHash, 0x41, 0, 0, 0, 1, ...new Uint8Array(16), 0, 4, 9, 9, 9, 9, ...coseKey]);
+    const clientDataJSON = te.encode(JSON.stringify({ type: "webauthn.create", challenge: regNonce, origin: "https://example.com" }));
+    const verificationData = new Uint8Array([...authData, ...sha256(clientDataJSON)]);
+    const sig = new Uint8Array(await ca.leafSign(verificationData));
+    const ao = cbor.encode({ fmt: "packed", attStmt: { alg: -7, sig: Buffer.from(sig), x5c: [Buffer.from(pemToDerLocal(ca.chainPems[0]!)), Buffer.from(pemToDerLocal(ca.chainPems[1]!))] }, authData: Buffer.from(authData) });
+
+    const res = await registerAgentKey(
+      {
+        cnf: { jwk: key.publicJwk },
+        evidence: {
+          type: "webauthn",
+          attestationObjectB64: toBase64Url(new Uint8Array(ao)),
+          clientDataJSONB64: toBase64Url(clientDataJSON),
+          proof: await proofBy(key, regNonce), // an unanchored attestation proves no possession
+        },
+        regNonce,
+      },
+      { store, audience: AUD, fidoRoots: { device: [], hardware: [] } }, // registrar pins NO fido root → provenance unverifiable → degrade
+    );
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.assurance).toBe("pop");
+      expect(res.binding).toBe("self");
+      expect(jwkThumbprint(res.cnf.jwk)).toBe(jwkThumbprint(key.publicJwk));
+    }
+  });
+
+  /**
+   * §16.5: "The verifier MUST bind the attestation to the `regNonce`: the quote MUST embed it, and
+   * the nonce MUST be outstanding, unexpired, and single-use."
+   *
+   * The webauthn row used to skip this entirely — only the COSE row was gated. It matters MORE here:
+   * the bound key is derived from `authData`, so the submitter proves nothing by submitting. A
+   * captured {attestationObject, clientDataJSON} pair therefore re-registered the same credential
+   * under any actor, in any organization, at the full attested rung.
+   */
+  describe("webauthn registration is bound to the challenge (§16.5)", () => {
+    /** A valid packed attestation over whatever clientDataJSON it is handed. */
+    async function packed(clientData: Record<string, unknown>) {
+      const ca = await mintNitroCa();
+      const key = await generateP256Key();
+      const cbor = new Encoder({ useRecords: false, mapsAsObjects: true, tagUint8Array: false });
+      const rpIdHash = sha256(te.encode("example.com"));
+      const x = fromBase64Url(String(key.publicJwk.x));
+      const y = fromBase64Url(String(key.publicJwk.y));
+      const coseKey = new Uint8Array(cbor.encode(new Map<number, unknown>([[1, 2], [3, -7], [-1, 1], [-2, Buffer.from(x)], [-3, Buffer.from(y)]])));
+      const authData = new Uint8Array([...rpIdHash, 0x41, 0, 0, 0, 1, ...new Uint8Array(16), 0, 4, 9, 9, 9, 9, ...coseKey]);
+      const clientDataJSON = te.encode(JSON.stringify(clientData));
+      const sig = new Uint8Array(await ca.leafSign(new Uint8Array([...authData, ...sha256(clientDataJSON)])));
+      const ao = cbor.encode({
+        fmt: "packed",
+        attStmt: { alg: -7, sig: Buffer.from(sig), x5c: [Buffer.from(pemToDerLocal(ca.chainPems[0]!)), Buffer.from(pemToDerLocal(ca.chainPems[1]!))] },
+        authData: Buffer.from(authData),
+      });
+      return {
+        key,
+        evidence: { type: "webauthn" as const, attestationObjectB64: toBase64Url(new Uint8Array(ao)), clientDataJSONB64: toBase64Url(clientDataJSON) },
+      };
+    }
+
+    it("refuses a challenge that is not the presented regNonce", async () => {
+      const store = createRegChallengeStore();
+      const { regNonce } = await registerChallenge({ store });
+      const other = await registerChallenge({ store }); // also outstanding — still not THIS registration's
+      const { key, evidence } = await packed({ type: "webauthn.create", challenge: other.regNonce, origin: "https://example.com" });
+
+      const res = await registerAgentKey({ cnf: { jwk: key.publicJwk }, evidence, regNonce }, { store, fidoRoots: { device: [], hardware: [] } });
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.reason).toBe("attestation_nonce_invalid");
+    });
+
+    it("refuses evidence with no regNonce at all", async () => {
+      const store = createRegChallengeStore();
+      const { key, evidence } = await packed({ type: "webauthn.create", challenge: "x", origin: "https://example.com" });
+
+      const res = await registerAgentKey({ cnf: { jwk: key.publicJwk }, evidence }, { store, fidoRoots: { device: [], hardware: [] } });
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.reason).toBe("attestation_nonce_invalid");
+    });
+
+    it("refuses an ASSERTION replayed as a registration", async () => {
+      const store = createRegChallengeStore();
+      const { regNonce } = await registerChallenge({ store });
+      // webauthn.get is a login; reusing one to register a key is not a registration ceremony.
+      const { key, evidence } = await packed({ type: "webauthn.get", challenge: regNonce, origin: "https://example.com" });
+
+      const res = await registerAgentKey({ cnf: { jwk: key.publicJwk }, evidence, regNonce }, { store, fidoRoots: { device: [], hardware: [] } });
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.reason).toBe("attestation_nonce_invalid");
+    });
+
+    it("is single-use: the same evidence cannot register twice", async () => {
+      const store = createRegChallengeStore();
+      const { regNonce } = await registerChallenge({ store });
+      const { key, evidence: bare } = await packed({ type: "webauthn.create", challenge: regNonce, origin: "https://example.com" });
+      const evidence = { ...bare, proof: await proofBy(key, regNonce) }; // unanchored, so the key proves it is held
+      const deps = { store, audience: AUD, fidoRoots: { device: [], hardware: [] } };
+
+      expect((await registerAgentKey({ cnf: { jwk: key.publicJwk }, evidence, regNonce }, deps)).ok).toBe(true);
+      const replay = await registerAgentKey({ cnf: { jwk: key.publicJwk }, evidence, regNonce }, deps);
+      expect(replay.ok).toBe(false);
+      if (!replay.ok) expect(replay.reason).toBe("attestation_nonce_invalid");
+    });
+  });
+});
+
+function pemToDerLocal(pem: string): Uint8Array {
+  const b = pem.replace(/-----BEGIN CERTIFICATE-----/g, "").replace(/-----END CERTIFICATE-----/g, "").replace(/\s+/g, "");
+  return new Uint8Array(Buffer.from(b, "base64"));
+}
+
+// ── the TEE collector (v0.3 §9.4ter) ─────────────────────────────────────────
+
+describe("runtime: tee — measurement pinning on its own axis", () => {
+  const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
+  it("a matching image grants runtime:tee and records WHICH image", async () => {
+    const ca = await mintNitroCa();
+    const { publicJwk } = await generateP256Key();
+    const pcrs = { 0: new Uint8Array(48).fill(0x11), 1: new Uint8Array(48).fill(0x22) };
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: publicJwk, pcrs });
+    const res = await validateCoseAttestation(doc, { device: [], hardware: [ca.rootPem] }, undefined, {
+      "release-2026-09": { "0": hex(pcrs[0]), "1": hex(pcrs[1]) },
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.assurance).toBe("hardware");
+      expect(res.runtime?.class).toBe("tee");
+      expect(res.runtime?.measurementId).toBe("release-2026-09");
+    }
+  });
+
+  it("a NON-matching image keeps the rung and withholds tee — the axes are separate", async () => {
+    const ca = await mintNitroCa();
+    const { publicJwk } = await generateP256Key();
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: publicJwk, pcrs: { 0: new Uint8Array(48).fill(0x11) } });
+    const res = await validateCoseAttestation(doc, { device: [], hardware: [ca.rootPem] }, undefined, {
+      "some-other-release": { "0": hex(new Uint8Array(48).fill(0x99)) },
+    });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.assurance).toBe("hardware"); // the key IS in a trusted enclave
+      expect(res.runtime).toBeUndefined();    // we just don't know it runs our image
+    }
+  });
+
+  // @invariant §9.4ter(d) — `tee` needs a hardware-list root AND a measurement match: a device-list root
+  // (a general-purpose host's secure element) earns its rung and no runtime, whatever its PCRs.
+  it("withholds tee on a device-list root, however the measurements match", async () => {
+    const ca = await mintNitroCa();
+    const { publicJwk } = await generateP256Key();
+    const pcrs = { 0: new Uint8Array(48).fill(0x11) };
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: publicJwk, pcrs });
+    const res = await validateCoseAttestation(doc, { device: [ca.rootPem], hardware: [] }, undefined, {
+      "release-2026-09": { "0": hex(pcrs[0]) },
+    });
+    expect(res.ok && res.assurance).toBe("device");
+    expect(res.ok && res.runtime).toBeUndefined();
+  });
+
+  it("matches ANY pinned image, so a fleet can run several releases", async () => {
+    const ca = await mintNitroCa();
+    const { publicJwk } = await generateP256Key();
+    const pcrs = { 0: new Uint8Array(48).fill(0x33) };
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: publicJwk, pcrs });
+    const res = await validateCoseAttestation(doc, { device: [], hardware: [ca.rootPem] }, undefined, {
+      old: { "0": hex(new Uint8Array(48).fill(0x11)) },
+      current: { "0": hex(pcrs[0]) },
+    });
+    expect(res.ok && res.runtime?.measurementId).toBe("current");
+  });
+
+  it("a PARTIAL match is not a match — absence is never agreement", async () => {
+    const ca = await mintNitroCa();
+    const { publicJwk } = await generateP256Key();
+    const doc = await buildCoseAttestation(ca, { publicKeyJwk: publicJwk, pcrs: { 0: new Uint8Array(48).fill(0x44) } });
+    const res = await validateCoseAttestation(doc, { device: [], hardware: [ca.rootPem] }, undefined, {
+      // index 1 is pinned and the document does not carry it
+      rel: { "0": hex(new Uint8Array(48).fill(0x44)), "1": hex(new Uint8Array(48).fill(0x55)) },
+    });
+    expect(res.ok && res.runtime).toBeUndefined();
+  });
+});

@@ -1,0 +1,422 @@
+{
+  "version": 17,
+  "chains": {
+    "organization": {
+      "accreditation": {
+        "level": "verified",
+        "method": "kyb-registry",
+        "registrar": "did:web:humanos.tech",
+        "validUntil": "2028-01-02T00:00:00.000Z",
+        "verifiedAt": "2026-01-02T00:00:00.000Z"
+      },
+      "actorType": "organization",
+      "assurance": "pop",
+      "binding": "custodial",
+      "bootstrapAnchor": "manual",
+      "existedSince": "2024-03-01T00:00:00.000Z",
+      "id": "did:web:golden.example",
+      "keys": [
+        {
+          "assurance": "pop",
+          "binding": "custodial",
+          "id": "did:web:golden.example#key-1",
+          "publicKeyMultibase": "z6MkGolden",
+          "status": "active",
+          "verifiedAt": "2025-05-01T00:00:00.000Z"
+        }
+      ],
+      "operator": {
+        "affiliationEvent": "sha256-A/NkHGyRXiZVxfNsWJqh3QUNix+F08WdBId7LohiDZU=",
+        "org": "did:web:golden-prod.example",
+        "relation": "sandbox_of"
+      },
+      "policy": {
+        "event": "sha256-R/fg6lEiI/7mEd3AmNf5ddqPAbzafOX4WrdUhFhJaSg=",
+        "id": "urn:via:policy:golden",
+        "policyDigest": "sha256-golden-policy",
+        "publishedBy": "did:web:humanos.tech:user:golden-email",
+        "version": 1
+      },
+      "status": "active",
+      "verifiedAt": "2025-05-01T00:00:00.000Z"
+    },
+    "agent": {
+      "actorType": "agent",
+      "assurance": "hardware",
+      "binding": "attested",
+      "bootstrapAnchor": "api_key",
+      "existedSince": "2026-01-01T00:00:00.000Z",
+      "id": "did:web:humanos.tech:agent:golden-1",
+      "keys": [
+        {
+          "assurance": "hardware",
+          "attestation": {
+            "event": "sha256-lkIqugZSmLj7NiBx4lfTSAhMExKzYTFifHOdCphiFDM=",
+            "kind": "attestation-eat"
+          },
+          "binding": "attested",
+          "id": "did:web:humanos.tech:agent:golden-1#key-1",
+          "publicKeyJwk": {
+            "crv": "P-256",
+            "kty": "EC",
+            "x": "k1",
+            "y": "k1-y"
+          },
+          "root": "aws-nitro",
+          "rotatedTo": "did:web:humanos.tech:agent:golden-1#key-3",
+          "runtime": {
+            "at": "2026-01-07T00:00:00.000Z",
+            "class": "tee",
+            "measurementId": "m-golden",
+            "mechanism": "nitro"
+          },
+          "status": "rotated",
+          "verifiedAt": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "assurance": "pop",
+          "binding": "custodial",
+          "id": "did:web:humanos.tech:agent:golden-1#key-2",
+          "publicKeyJwk": {
+            "crv": "P-256",
+            "kty": "EC",
+            "x": "k2",
+            "y": "k2-y"
+          },
+          "status": "revoked",
+          "verifiedAt": "2026-01-06T00:00:00.000Z"
+        },
+        {
+          "assurance": "hardware",
+          "attestation": {
+            "event": "sha256-snLNeAN6E2oHeBtayaHEi0sjnfgGed3DMendbmchcx8=",
+            "kind": "attestation-eat"
+          },
+          "binding": "attested",
+          "id": "did:web:humanos.tech:agent:golden-1#key-3",
+          "publicKeyJwk": {
+            "crv": "P-256",
+            "kty": "EC",
+            "x": "k3",
+            "y": "k3-y"
+          },
+          "status": "active",
+          "verifiedAt": "2026-01-05T00:00:00.000Z"
+        }
+      ],
+      "operator": {
+        "affiliationEvent": "sha256-ACMIBn7LoP9473h0oKUNeBML9TpyqHR/ELQpI7kFIZs=",
+        "org": "did:web:golden.example",
+        "relation": "operates"
+      },
+      "status": "active",
+      "verifiedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "legacyAgentAffiliation": {
+      "actorType": "agent",
+      "assurance": "pop",
+      "binding": "self",
+      "bootstrapAnchor": "api_key",
+      "existedSince": "2026-01-01T00:00:00.000Z",
+      "id": "did:web:humanos.tech:agent:golden-legacy",
+      "keys": [
+        {
+          "assurance": "pop",
+          "binding": "self",
+          "id": "did:web:humanos.tech:agent:golden-legacy#key-1",
+          "publicKeyJwk": {
+            "crv": "P-256",
+            "kty": "EC",
+            "x": "kl",
+            "y": "kl-y"
+          },
+          "status": "active",
+          "verifiedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ],
+      "operator": {
+        "affiliationEvent": "sha256-CtdOOeFwoNtrDzBJyO7Dnme1SISm7ZMSLdWRuMr6hw8=",
+        "org": "did:web:golden.example",
+        "relation": "operates"
+      },
+      "status": "active",
+      "verifiedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "legacyOrgAccreditation": {
+      "accreditation": {
+        "level": "domain",
+        "method": "dns-challenge",
+        "registrar": "did:web:humanos.tech",
+        "validUntil": "2027-01-02T00:00:00.000Z",
+        "verifiedAt": "2026-01-02T00:00:00.000Z"
+      },
+      "actorType": "organization",
+      "assurance": "pop",
+      "binding": "custodial",
+      "bootstrapAnchor": "manual",
+      "existedSince": "2026-01-01T00:00:00.000Z",
+      "id": "did:web:golden-legacy.example",
+      "keys": [
+        {
+          "assurance": "pop",
+          "binding": "custodial",
+          "id": "did:web:golden-legacy.example#key-1",
+          "publicKeyMultibase": "z6MkLegacy",
+          "status": "active",
+          "verifiedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ],
+      "status": "active",
+      "verifiedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "person": {
+      "actorType": "user",
+      "aliases": [
+        {
+          "did": "did:web:humanos.tech:user:golden-phone",
+          "reason": "merge"
+        }
+      ],
+      "assurance": "pop",
+      "binding": "self",
+      "bootstrapAnchor": "manual",
+      "existedSince": "2023-06-01T00:00:00.000Z",
+      "id": "did:web:humanos.tech:user:golden-email",
+      "keys": [
+        {
+          "assurance": "pop",
+          "binding": "custodial",
+          "id": "did:web:humanos.tech:user:golden-email#key-1",
+          "publicKeyMultibase": "z6MkPerson",
+          "status": "active",
+          "verifiedAt": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "assurance": "device",
+          "binding": "self",
+          "id": "did:web:humanos.tech:user:golden-email#key-2",
+          "publicKeyJwk": {
+            "crv": "P-256",
+            "kty": "EC",
+            "x": "pk",
+            "y": "pk-y"
+          },
+          "status": "active",
+          "verifiedAt": "2026-01-02T00:00:00.000Z"
+        },
+        {
+          "assurance": "pop",
+          "binding": "custodial",
+          "id": "did:web:humanos.tech:user:golden-email#key-3",
+          "publicKeyMultibase": "z6MkChannel",
+          "status": "active",
+          "verifiedAt": "2026-01-03T00:00:00.000Z"
+        }
+      ],
+      "status": "active",
+      "verifiedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "noUsableKey": {
+      "actorType": "agent",
+      "bootstrapAnchor": "api_key",
+      "existedSince": "2026-01-01T00:00:00.000Z",
+      "id": "did:web:humanos.tech:agent:golden-revoked",
+      "keys": [
+        {
+          "assurance": "hardware",
+          "binding": "attested",
+          "id": "did:web:humanos.tech:agent:golden-revoked#key-1",
+          "publicKeyJwk": {
+            "crv": "P-256",
+            "kty": "EC",
+            "x": "kr",
+            "y": "kr-y"
+          },
+          "root": "aws-nitro",
+          "status": "revoked",
+          "verifiedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ],
+      "status": "active"
+    },
+    "runglessKey": {
+      "actorType": "agent",
+      "assurance": "pop",
+      "binding": "self",
+      "bootstrapAnchor": "api_key",
+      "existedSince": "2026-01-01T00:00:00.000Z",
+      "id": "did:web:humanos.tech:agent:golden-rungless",
+      "keys": [
+        {
+          "assurance": "hardware",
+          "binding": "attested",
+          "id": "did:web:humanos.tech:agent:golden-rungless#key-1",
+          "publicKeyJwk": {
+            "crv": "P-256",
+            "kty": "EC",
+            "x": "rk1",
+            "y": "rk1-y"
+          },
+          "root": "aws-nitro",
+          "status": "active",
+          "verifiedAt": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "assurance": "pop",
+          "binding": "self",
+          "id": "did:web:humanos.tech:agent:golden-rungless#key-2",
+          "publicKeyJwk": {
+            "crv": "P-256",
+            "kty": "EC",
+            "x": "rk2",
+            "y": "rk2-y"
+          },
+          "status": "active",
+          "verifiedAt": "2026-01-02T00:00:00.000Z"
+        }
+      ],
+      "status": "active",
+      "verifiedAt": "2026-01-01T00:00:00.000Z"
+    },
+    "mergedSurvivor": {
+      "actorType": "agent",
+      "aliases": [
+        {
+          "did": "did:web:humanos.tech:agent:golden-absorbed",
+          "reason": "merge"
+        },
+        {
+          "did": "did:web:humanos.tech:agent:golden-absorbed-old",
+          "reason": "inherited"
+        }
+      ],
+      "assurance": "pop",
+      "binding": "self",
+      "bootstrapAnchor": "api_key",
+      "existedSince": "2026-01-01T00:00:00.000Z",
+      "id": "did:web:humanos.tech:agent:golden-survivor",
+      "keys": [
+        {
+          "assurance": "hardware",
+          "binding": "attested",
+          "id": "did:web:humanos.tech:agent:golden-survivor#key-1",
+          "publicKeyJwk": {
+            "crv": "P-256",
+            "kty": "EC",
+            "x": "s1",
+            "y": "s1-y"
+          },
+          "root": "aws-nitro",
+          "status": "active",
+          "verifiedAt": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "assurance": "pop",
+          "binding": "self",
+          "id": "did:web:humanos.tech:agent:golden-absorbed#key-1",
+          "publicKeyJwk": {
+            "crv": "P-256",
+            "kty": "EC",
+            "x": "a1",
+            "y": "a1-y"
+          },
+          "rotatedTo": "did:web:humanos.tech:agent:golden-absorbed#key-2",
+          "status": "rotated",
+          "verifiedAt": "2025-11-01T00:00:00.000Z"
+        },
+        {
+          "assurance": "device",
+          "attestation": {
+            "event": "sha256-golden-att",
+            "kind": "attestation-eat"
+          },
+          "binding": "custodial",
+          "id": "did:web:humanos.tech:agent:golden-absorbed#key-2",
+          "publicKeyJwk": {
+            "crv": "P-256",
+            "kty": "EC",
+            "x": "a2",
+            "y": "a2-y"
+          },
+          "runtime": {
+            "class": "tee",
+            "measurementId": "m-absorbed",
+            "mechanism": "nitro"
+          },
+          "status": "active",
+          "verifiedAt": "2025-12-01T00:00:00.000Z"
+        }
+      ],
+      "status": "active",
+      "verifiedAt": "2025-11-01T00:00:00.000Z"
+    },
+    "mergedAbsorbed": {
+      "actorType": "agent",
+      "assurance": "pop",
+      "binding": "self",
+      "bootstrapAnchor": "api_key",
+      "existedSince": "2026-01-01T00:00:00.000Z",
+      "id": "did:web:humanos.tech:agent:golden-absorbed",
+      "keySuccession": {
+        "did:web:humanos.tech:agent:golden-absorbed#key-1": "did:web:humanos.tech:agent:golden-absorbed#key-1",
+        "did:web:humanos.tech:agent:golden-absorbed#key-2": "did:web:humanos.tech:agent:golden-absorbed#key-2"
+      },
+      "keys": [
+        {
+          "assurance": "pop",
+          "binding": "self",
+          "id": "did:web:humanos.tech:agent:golden-absorbed#key-1",
+          "publicKeyJwk": {
+            "crv": "P-256",
+            "kty": "EC",
+            "x": "a1",
+            "y": "a1-y"
+          },
+          "rotatedTo": "did:web:humanos.tech:agent:golden-absorbed#key-2",
+          "status": "rotated",
+          "verifiedAt": "2025-11-01T00:00:00.000Z"
+        },
+        {
+          "assurance": "device",
+          "binding": "custodial",
+          "id": "did:web:humanos.tech:agent:golden-absorbed#key-2",
+          "publicKeyJwk": {
+            "crv": "P-256",
+            "kty": "EC",
+            "x": "a2",
+            "y": "a2-y"
+          },
+          "status": "active",
+          "verifiedAt": "2025-12-01T00:00:00.000Z"
+        }
+      ],
+      "status": "retired",
+      "succeededBy": "did:web:humanos.tech:agent:golden-survivor",
+      "verifiedAt": "2025-11-01T00:00:00.000Z"
+    },
+    "absorbedChannel": {
+      "actorType": "user",
+      "assurance": "pop",
+      "binding": "custodial",
+      "bootstrapAnchor": "manual",
+      "existedSince": "2025-02-01T00:00:00.000Z",
+      "id": "did:web:humanos.tech:user:golden-phone",
+      "keySuccession": {
+        "did:web:humanos.tech:user:golden-phone#key-1": "did:web:humanos.tech:user:golden-email#key-3"
+      },
+      "keys": [
+        {
+          "assurance": "pop",
+          "binding": "custodial",
+          "id": "did:web:humanos.tech:user:golden-phone#key-1",
+          "publicKeyMultibase": "z6MkChannel",
+          "status": "active",
+          "verifiedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ],
+      "status": "retired",
+      "succeededBy": "did:web:humanos.tech:user:golden-email",
+      "verifiedAt": "2026-01-01T00:00:00.000Z"
+    }
+  }
+}

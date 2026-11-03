@@ -1,0 +1,36 @@
+name: release
+
+# A tag `v<version>` publishes that commit to npm. The dist-tag comes from package.json:
+# `main` has none (→ latest); `v04` sets publishConfig.tag = "next".
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  id-token: write # npm trusted publishing — no token is stored in the repo
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: The tag names package.json's version
+        run: test "$GITHUB_REF_NAME" = "v$(node -p 'require("./package.json").version')"
+      - name: A prerelease never goes to latest
+        run: |
+          node -e '
+            const p = require("./package.json");
+            const tag = p.publishConfig?.tag ?? "latest";
+            if (p.version.includes("-") === (tag === "latest")) {
+              console.error(`version ${p.version} with dist-tag ${tag}: a prerelease goes to next, a release to latest`);
+              process.exit(1);
+            }'
+      - run: npm ci
+      # prepublishOnly runs the typecheck and the tests; prepack rebuilds dist/.
+      # No --provenance: npm attaches provenance only to packages built from a public repository.
+      - run: npm publish

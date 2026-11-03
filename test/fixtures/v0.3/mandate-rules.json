@@ -1,0 +1,72 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/credentials/v2",
+    "https://via.humanos.tech/ns/v1"
+  ],
+  "id": "urn:via:credential:fixture-v03-rules",
+  "type": [
+    "VerifiableCredential",
+    "VIAMandate"
+  ],
+  "specVersion": "0.3",
+  "issuer": "did:web:humanos.tech",
+  "validFrom": "2026-09-22T10:00:00.000Z",
+  "validUntil": "2026-10-22T10:00:00.000Z",
+  "credentialSubject": {
+    "id": "did:web:humanos.tech:org:fixture-org",
+    "mandate": {
+      "grantor": "did:web:humanos.tech:user:fixture-user",
+      "scope": "humanos.credential.request",
+      "context": {
+        "authorizedDIDs": [
+          "did:web:fidelidade.pt"
+        ]
+      },
+      "action": {
+        "id": "urn:via:action:fixture-slack-1",
+        "digestSRI": "sha256-xCMlXNotVZbzMQKxOMHoWgcwjQr6X7J1CYvPjzuzRmQ=",
+        "location": "https://api.humanos.tech/actions/fixture-slack-1",
+        "version": 5
+      },
+      "userParams": {
+        "allowed_tools": {
+          "description": "the tools the person allowed",
+          "value": [
+            "slack_read_channel",
+            "slack_send_message"
+          ]
+        },
+        "allowed_channels": {
+          "description": "the channels the person allowed",
+          "value": [
+            "C0BVB1KBPG8"
+          ]
+        }
+      },
+      "description": {
+        "text": "Read and post in one Slack channel (C0BVB1KBPG8), up to 20 times, until 22 Oct 2026.",
+        "lang": "en",
+        "author": "issuer"
+      },
+      "enforcement": "rules",
+      "initiator": {
+        "actor": "did:web:humanos.tech:agent:fixture-agent",
+        "role": "execution",
+        "at": "2026-09-22T09:59:00.000Z"
+      },
+      "maxExecutions": 20,
+      "extensions": [
+        "maxExecutions"
+      ]
+    }
+  },
+  "proof": {
+    "type": "DataIntegrityProof",
+    "cryptosuite": "eddsa-jcs-2022",
+    "created": "2026-09-22T10:00:00.000Z",
+    "verificationMethod": "did:web:humanos.tech#key-1",
+    "proofPurpose": "assertionMethod",
+    "event": "STAMP",
+    "proofValue": "z5VqeBVkakAmG4uzYnhCTcSKFDt2PL6WqxTBJtYrPZ1e2s7CXr9ZNFDX9ZqP4AEFMa1UaDAubfTMD2kfNeNDz1xVb"
+  }
+}

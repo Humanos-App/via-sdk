@@ -1,0 +1,31 @@
+{
+  "$id": "urn:via:action:fixture-pay-1",
+  "type": "VIAAction",
+  "version": "1",
+  "userParams": {
+    "maxAmount": {
+      "type": "number",
+      "required": true,
+      "description": "claim cap (EUR)"
+    }
+  },
+  "executionParams": {
+    "amount": {
+      "type": "number",
+      "required": true
+    }
+  },
+  "rules": [
+    {
+      "name": "amt",
+      "conditions": [
+        {
+          "left": "executionParams.amount",
+          "operator": "<=",
+          "right": "userParams.maxAmount"
+        }
+      ],
+      "expression": "executionParams.amount <= userParams.maxAmount"
+    }
+  ]
+}

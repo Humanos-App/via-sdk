@@ -1,0 +1,55 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/credentials/v2",
+    "https://via.humanos.tech/ns/v1"
+  ],
+  "id": "urn:via:event:fixture-v03-verification",
+  "type": [
+    "VerifiableCredential",
+    "VIAEvent"
+  ],
+  "specVersion": "0.3",
+  "issuer": "did:web:humanos.tech",
+  "validFrom": "2026-09-22T10:05:00.000Z",
+  "credentialSubject": {
+    "id": "urn:via:credential:fixture-v03-rules",
+    "event": "VERIFICATION_APPROVED",
+    "actor": "did:web:fidelidade.pt",
+    "previousEvent": "sha256-b94FjYIwSmRX5kGwCRuo8NaiqIS+l18ptflCflq5r1M=",
+    "evaluations": [
+      {
+        "rule": "allowed_tools",
+        "result": "pass"
+      },
+      {
+        "rule": "allowed_channels",
+        "result": "pass"
+      }
+    ],
+    "executionParams": {
+      "tool": "slack_send_message",
+      "channel_id": "C0BVB1KBPG8"
+    },
+    "targetVerifier": "fidelidade.pt",
+    "stepUp": {
+      "id": "urn:via:stepup:fixture-v03",
+      "method": "otp",
+      "termsDigest": "sha384-fixture",
+      "tool": "slack_send_message",
+      "trigger": "verifier",
+      "reason": "semantic_review",
+      "reviewer": {
+        "id": "reys",
+        "version": "2026-09-14"
+      }
+    }
+  },
+  "proof": {
+    "type": "DataIntegrityProof",
+    "cryptosuite": "eddsa-jcs-2022",
+    "created": "2026-09-22T10:05:00.000Z",
+    "verificationMethod": "did:web:humanos.tech#key-1",
+    "proofPurpose": "assertionMethod",
+    "proofValue": "z2xvngNeSfgwgyQWbGZ4k5QD6Gap9jM2noyTUtrPDhvCC1ey6Hhd3RybQS4vABgPVXgpTmuRZ6QnoVFtq4BVtnSWt"
+  }
+}

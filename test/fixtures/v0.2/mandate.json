@@ -1,0 +1,53 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/credentials/v2",
+    "https://via.humanos.tech/ns/v1"
+  ],
+  "id": "urn:via:credential:fixture-0001",
+  "type": [
+    "VerifiableCredential",
+    "VIAMandate"
+  ],
+  "specVersion": "0.2",
+  "issuer": "did:web:humanos.tech",
+  "validFrom": "2026-01-01T00:00:00.000Z",
+  "credentialSubject": {
+    "id": "did:web:humanos.tech:org:fixture-org",
+    "mandate": {
+      "grantor": "did:web:humanos.tech:user:fixture-user",
+      "scope": "humanos.credential.request",
+      "context": {
+        "authorizedDIDs": [
+          "did:web:fidelidade.pt"
+        ]
+      },
+      "action": {
+        "id": "urn:via:action:fixture-pay-1",
+        "digestSRI": "sha256-6bvvfZRotjamAW7MDhm3/eUiBI2V6qaIqTsYoaBO5Uo=",
+        "location": "https://api.humanos.tech/actions/fixture-pay-1"
+      },
+      "userParams": {
+        "maxAmount": {
+          "description": "claim cap (EUR)",
+          "value": 2500
+        }
+      }
+    }
+  },
+  "credentialStatus": {
+    "id": "https://status.humanos.tech/list/1#0",
+    "type": "BitstringStatusListEntry",
+    "statusPurpose": "revocation",
+    "statusListIndex": "0",
+    "statusListCredential": "https://status.humanos.tech/list/1"
+  },
+  "proof": {
+    "type": "DataIntegrityProof",
+    "cryptosuite": "eddsa-jcs-2022",
+    "created": "2026-01-03T00:00:00.000Z",
+    "verificationMethod": "did:web:humanos.tech#key-1",
+    "proofPurpose": "assertionMethod",
+    "event": "STAMP",
+    "proofValue": "z34mVbjZbXvQBM3X1EXjLGGaUmqL8idsuCLmxrdKUqjD1XfiJErGhQDeLTy7oKnkeoM2YYkHs7T5ruHBgqKcqe5nZ"
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "name": "@humanos-ai/via-sdk",
+  "version": "0.8.0",
+  "description": "VIA Protocol SDK — create and verify VIA mandates, DIDs, actions, events, and presentations. Implements the VIA Protocol v0.3 specification (Ed25519 / eddsa-jcs-2022 / W3C VC 2.0).",
+  "keywords": [
+    "via-protocol",
+    "verifiable-credentials",
+    "did",
+    "mandate",
+    "ai-agents",
+    "ed25519",
+    "sd-jwt",
+    "humanos"
+  ],
+  "homepage": "https://github.com/Humanos-App/via-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/Humanos-App/via-sdk/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Humanos-App/via-sdk.git"
+  },
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": "Humanos",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./action/cel": {
+      "types": "./dist/action/cel.d.ts",
+      "import": "./dist/action/cel.js",
+      "require": "./dist/action/cel.cjs"
+    },
+    "./agent/sim": {
+      "types": "./dist/agent/sim.d.ts",
+      "import": "./dist/agent/sim.js",
+      "require": "./dist/agent/sim.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "platform-drift": "node scripts/platform-drift.mjs",
+    "pretest": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run typecheck && npm test",
+    "prepack": "tsup"
+  },
+  "dependencies": {
+    "@marcbachmann/cel-js": "^8.0.0",
+    "@sd-jwt/core": "^0.23.0",
+    "@sd-jwt/sd-jwt-vc": "^0.23.0",
+    "cbor-x": "^1.6.6",
+    "jose": "^6.2.12"
+  },
+  "devDependencies": {
+    "@peculiar/x509": "^2.2.0",
+    "@types/node": "^25.9.9",
+    "canonicalize": "^5.1.0",
+    "reflect-metadata": "^0.2.2",
+    "tsup": "^9.0.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  }
+}
