@@ -11,7 +11,8 @@ export default defineConfig({
   format: ["esm", "cjs"],
   dts: true,
   clean: true,
-  sourcemap: true,
+  // No source maps: they would carry the original TypeScript, comments included, into the public npm package.
+  sourcemap: false,
   target: "es2022",
   // Bundle ALL runtime deps so the dist is fully self-contained CJS — no consumer
   // ever loads raw ESM from node_modules. `canonicalize` has no CJS-resolvable

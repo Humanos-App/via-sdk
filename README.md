@@ -207,9 +207,12 @@ A fix to v0.3 code lands on `main` first and is merged into `v04`; `git log v04.
 `v04` lacks. `v04`'s `package.json` sets `publishConfig.tag` to `next`, so nothing published from it
 reaches `latest`.
 
-To release: bump `version` in `package.json` (and the lockfile — `npm version <new> --no-git-tag-version`),
-commit, tag `v<version>` on that commit and push the branch and the tag. The `release` workflow checks
-that the tag names the version, runs the tests and publishes to npm through npm trusted publishing (no token in the repository).
+To release: on GitHub, create a release with a new tag `v<version>` targeting `main` (or `v04`, with a
+`1.0.0-v04.N` version), and publish it. The `release` workflow runs CI (typecheck and tests), sets the
+version from the tag and publishes to npm with the repository's `NPM_TOKEN` secret; it publishes nothing
+when CI fails. A push or a tag alone publishes nothing. The workflow does not commit the version, so bump
+`version` in `package.json` (`npm version <new> --no-git-tag-version`) in a PR first to keep the repository
+in step with npm.
 
 Until the Humanos platform installs this package from npm, it holds a copy of `src/` in
 `packages/via-sdk`, written by its `pnpm sync:via-sdk`; `npm run platform-drift` lists the edits made
