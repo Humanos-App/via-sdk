@@ -1,7 +1,25 @@
 {
-  "name": "@humanos/via-sdk-v03",
+  "name": "@humanos-ai/via-sdk",
   "version": "0.8.0",
-  "description": "VIA Protocol SDK — create and verify VIA mandates, DIDs, actions, events, and presentations. Implements via-protocol-spec v0.3 (Ed25519 / eddsa-jcs-2022 / W3C VC 2.0).",
+  "description": "VIA Protocol SDK — create and verify VIA mandates, DIDs, actions, events, and presentations. Implements the VIA Protocol v0.3 specification (Ed25519 / eddsa-jcs-2022 / W3C VC 2.0).",
+  "keywords": [
+    "via-protocol",
+    "verifiable-credentials",
+    "did",
+    "mandate",
+    "ai-agents",
+    "ed25519",
+    "sd-jwt",
+    "humanos"
+  ],
+  "homepage": "https://github.com/Humanos-App/via-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/Humanos-App/via-sdk/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Humanos-App/via-sdk.git"
+  },
   "type": "module",
   "license": "Apache-2.0",
   "author": "Humanos",
@@ -28,13 +46,18 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "platform-drift": "node scripts/platform-drift.mjs",
     "pretest": "tsup",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run typecheck && npm test",
+    "prepack": "tsup"
   },
   "dependencies": {
     "@marcbachmann/cel-js": "^8.0.0",

@@ -1,6 +1,6 @@
 # VIA SDK — Design
 
-**Implements:** [`spec/via-protocol-spec-v0.2.md`](../spec/via-protocol-spec-v0.2.md) (the reconciled spec — the source of truth).
+**Implements:** the VIA Protocol specification (v0.3 on `main`, the v0.4 draft on `v04`) — the source of truth.
 
 ## Priorities
 

@@ -2,7 +2,7 @@
  * Build-output contract — guards the platform's integration surface.
  *
  * The platform (`apps/api`, `shared-backend`, CommonJS) `require()`s the BUILT dual-format
- * package: `@humanos/via-sdk/compat` (Phase 0) and `@humanos/via-sdk` (Phase 1). The other
+ * package: `@humanos-ai/via-sdk/compat` (Phase 0) and `@humanos-ai/via-sdk` (Phase 1). The other
  * suites import `src`, so a tsup-config regression (dropping the CJS format, the `compat`
  * entry, the `exports` map, or un-bundling `canonicalize`) would pass them yet break the
  * platform silently. This fails first.
@@ -30,7 +30,7 @@ const COMPAT_FNS = [
 ];
 
 describe.skipIf(!built)("built dual-format /compat contract", () => {
-  it("CJS require('@humanos/via-sdk/compat') exposes the 5 platform fns + is self-contained", () => {
+  it("CJS require('@humanos-ai/via-sdk/compat') exposes the 5 platform fns + is self-contained", () => {
     const c = require(compatCjs); // throws if a bundled dep (e.g. canonicalize) isn't inlined
     for (const fn of COMPAT_FNS) expect(typeof c[fn]).toBe("function");
     expect(c.canonicalizeJSON({ b: 2, a: 1 })).toBe('{"a":1,"b":2}');

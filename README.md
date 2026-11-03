@@ -1,9 +1,9 @@
-# @humanos/via-sdk
+# @humanos-ai/via-sdk
 
 Functions-only TypeScript SDK for the **VIA Protocol** — create and verify VIA
-mandates, DIDs, actions, presentations, and receipts. Implements
-[`spec/via-protocol-spec-v0.2.md`](../spec/via-protocol-spec-v0.2.md):
-Ed25519 / `eddsa-jcs-2022` / W3C VC 2.0.
+mandates, DIDs, actions, presentations, and receipts. Implements the VIA Protocol
+**v0.3** specification: Ed25519 / `eddsa-jcs-2022` / W3C VC 2.0. Section numbers
+below (`§0.7.3`, `§16.16`) are that specification's.
 
 > **Functions-only.** No HTTP, DB, KMS, or network. All I/O — DID-document
 > fetching, key decryption, status reads, persistence — is **injected** by the
@@ -12,7 +12,8 @@ Ed25519 / `eddsa-jcs-2022` / W3C VC 2.0.
 ## Install
 
 ```bash
-npm install @humanos/via-sdk
+npm install @humanos-ai/via-sdk        # the v0.3 line (dist-tag latest)
+npm install @humanos-ai/via-sdk@next   # the v0.4 draft (branch v04)
 ```
 
 ## Quickstart — issue → present → verify
@@ -22,7 +23,7 @@ import {
   generateEd25519Key, generateViaDID, VIA_PLATFORM_DID,
   buildActionVersion, buildActionReference, wrapUserParamsWithAction,
   buildMandate, addProof, buildPresentation, verify,
-} from "@humanos/via-sdk";
+} from "@humanos-ai/via-sdk";
 
 // keys (the platform decrypts these from KMS and passes raw bytes)
 const platform = generateEd25519Key(), org = generateEd25519Key(), user = generateEd25519Key();
@@ -58,8 +59,6 @@ const result = await verify({ presentation: vp, executionParams: { amount: 1200 
 });
 // → { decision: "allow", evaluations: [{ rule: "amount", result: "pass" }], ... }
 ```
-
-A complete runnable script: [`examples/healthcare-claims.ts`](../examples/healthcare-claims.ts) (`npm run example:claims`). Sample artifacts: `npm run samples`.
 
 ## API reference
 
@@ -159,7 +158,7 @@ Deny reasons: `vp_holder_unknown`, `vp_signature_invalid`, `credential_{status}`
 | `buildAgentRecord(decisionToken, agent, platformSigner)` | the `via-agent-record+jwt` beside a decision token: the agent's record summary, the same to every receiver, bound by `sub`, `aud`, `jti` (§16.16); `AGENT_RECORD_HEADER`, `AGENT_RECORD_META_KEY` |
 
 ### Compat (secondary, optional)
-`import { compat } from "@humanos/via-sdk"` — the 5 functions + 2 types the platform consumes from the old `@humanos/via-protocol`, in legacy-compatible form (`signWithEd25519Multibase`, `canonicalizeJSON`, `encodePublicKeyMultibase`, `generateChallenge`, `generateDIDKey`). For transitional interop only.
+`import { compat } from "@humanos-ai/via-sdk"` — the 5 functions + 2 types the platform consumes from the old `@humanos/via-protocol`, in legacy-compatible form (`signWithEd25519Multibase`, `canonicalizeJSON`, `encodePublicKeyMultibase`, `generateChallenge`, `generateDIDKey`). For transitional interop only.
 
 ## Decentralized verification (no trusted DB)
 
@@ -175,26 +174,38 @@ const eval   = evaluateRules(action.rules, { userParams, executionParams });    
 
 ## Format modes
 
-Default is **`v0.2`** (spec-correct). A **`legacy`** mode (and the `compat` shim) reproduce the deployed platform's current wire format byte-for-byte for the migration window only — see [`../spec/MIGRATION.md`](../spec/MIGRATION.md).
+Default is **`v0.2`** (spec-correct). A **`legacy`** mode (and the `compat` shim) reproduce the deployed platform's current wire format byte-for-byte for the migration window only.
 
 ## Status
 
-`v0.2.0` reference implementation — 120 tests (incl. frozen per-version wire fixtures), KAT-guarded crypto, typechecks and builds. Not yet audited; the platform supplies real KMS-backed key material. Selective disclosure (SD-JWT) is additive/opt-in.
+The v0.3 line's reference implementation — 725 tests (incl. frozen per-version wire fixtures),
+KAT-guarded crypto, typechecks and builds. Not yet audited; the caller supplies real key material.
+Selective disclosure (SD-JWT) is additive/opt-in.
 
 ## Scripts
 
 ```bash
-npm test          # vitest
+npm test          # vitest (builds first)
 npm run typecheck # tsc --noEmit
-npm run build     # tsup → dist (ESM + d.ts)
-npm run platform-drift   # what the platform's copy holds that this SDK does not
+npm run build     # tsup → dist (ESM + CJS + d.ts, runtime dependencies bundled)
+npm run platform-drift   # what the Humanos platform's copy holds that this SDK does not
 ```
 
-**The platform's copy.** `agent-mandate-protocol/packages/via-sdk` is a copy of `src/` and
-`tsup.config.ts`, written by its `pnpm sync:via-sdk`. Its `sync.json` records the version, the commit
-and every file's hash. The platform's CI fails on an edit there that a sync did not write, unless the
-edit is recorded as pending upstream. `npm run platform-drift` lists, for `origin/dev`, `origin/stage`
-and `origin/main` (or the refs given, or `-- --all`), the pending and unrecorded edits to bring here,
-and the files not synced yet. Run it before changing this SDK and before a release. A change here
-reaches the platform through `pnpm sync:via-sdk`, which refuses to erase an edit this SDK does not
-hold. It reaches agents through agent-sdk's `npm run vendor:sdk-v03`.
+## Branches and releases
+
+| Branch | Implements | npm dist-tag | Versions |
+|---|---|---|---|
+| `main` | v0.3, the line in use | `latest` | `0.8.x` |
+| `v04` | the v0.4 draft: `main` plus v0.4's additions | `next` | `1.0.0-v04.N` |
+
+A fix to v0.3 code lands on `main` first and is merged into `v04`; `git log v04..main` lists what
+`v04` lacks. `v04`'s `package.json` sets `publishConfig.tag` to `next`, so nothing published from it
+reaches `latest`.
+
+To release: bump `version` in `package.json` (and the lockfile — `npm version <new> --no-git-tag-version`),
+commit, tag `v<version>` on that commit and push the branch and the tag. The `release` workflow checks
+that the tag names the version, runs the tests and publishes to npm with provenance.
+
+Until the Humanos platform installs this package from npm, it holds a copy of `src/` in
+`packages/via-sdk`, written by its `pnpm sync:via-sdk`; `npm run platform-drift` lists the edits made
+there that are not here yet. Run it before changing this SDK and before a release.

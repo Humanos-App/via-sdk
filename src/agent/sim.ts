@@ -11,7 +11,7 @@
  * pinning production roots rejects that same quote with `attestation_chain_invalid`. That
  * asymmetry is the point: the path is testable without hardware, and untrustworthy without it.
  *
- * It is a SEPARATE ENTRY POINT (`@humanos/via-sdk-v03/agent/sim`) rather than a barrel export
+ * It is a SEPARATE ENTRY POINT (`@humanos-ai/via-sdk/agent/sim`) rather than a barrel export
  * because it pulls in `@peculiar/x509`, and tsup bundles every dependency — exporting it from
  * `index.ts` would inline an X.509 stack into the dist every consumer ships.
  */
