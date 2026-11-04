@@ -65,7 +65,7 @@
     "jose": "^6.2.15"
   },
   "devDependencies": {
-    "@peculiar/x509": "^2.2.0",
+    "@peculiar/x509": "^3.1.0",
     "@types/node": "^25.9.9",
     "canonicalize": "^5.1.0",
     "reflect-metadata": "^0.2.2",
