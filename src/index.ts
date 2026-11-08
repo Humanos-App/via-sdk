@@ -429,6 +429,7 @@ export {
   type WebauthnGrantorBinding,
   type OtpGrantorBinding,
   type GrantorChannel,
+  type GrantorCeremonyPage,
   type LegacyGrantorBinding,
   type GrantorReasonCode,
   type GrantorTerms,

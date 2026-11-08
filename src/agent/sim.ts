@@ -15,7 +15,7 @@
  * because it pulls in `@peculiar/x509`, and tsup bundles every dependency — exporting it from
  * `index.ts` would inline an X.509 stack into the dist every consumer ships.
  */
-// First: `@peculiar/x509` 2 resolves through tsyringe, which needs the Reflect metadata API at
+// First: `@peculiar/x509` (2 and 3) resolves through tsyringe, which needs the Reflect metadata API at
 // load and no longer brings the polyfill itself. tsup bundles it into this entry only.
 import "reflect-metadata";
 import { webcrypto } from "node:crypto";
