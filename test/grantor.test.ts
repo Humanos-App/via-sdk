@@ -121,6 +121,22 @@ describe("§17 grantor binding (M5)", () => {
     expect(grantorBindingMethod(gb)).toBe("webauthn");
   });
 
+  it("records where the ceremony ran: its origin, and the page around it only when framed (§17.1–§17.2)", () => {
+    const at = "2026-11-08T10:00:00.000Z";
+    const jo = "did:web:humanos.tech:user:jo";
+    expect(
+      buildGrantorBinding(jo, "jkt-1", at, "sha256-terms", { origin: "https://app.humanos.tech", topOrigin: "https://loans.bank.example" }),
+    ).toMatchObject({ origin: "https://app.humanos.tech", topOrigin: "https://loans.bank.example" });
+    const topLevel = buildGrantorBinding(jo, "jkt-1", at, undefined, { origin: "https://app.humanos.id" });
+    expect(topLevel).toMatchObject({ origin: "https://app.humanos.id" });
+    expect(topLevel).not.toHaveProperty("topOrigin");
+    expect(buildGrantorBinding(jo, "jkt-1", at)).not.toHaveProperty("origin");
+  });
+
+  it("reads `method: \"passkey\"` as the passkey arm before any issuer writes it (§17.2, readers first)", () => {
+    expect(grantorBindingMethod({ grantor: GRANTOR, cnf: { jkt: cnf }, method: "passkey", verifiedAt: "x" })).toBe("webauthn");
+  });
+
   it("reads the v0.2 encoding (`assurance: \"passkey\"`) as the same fact, and nothing else as one", () => {
     expect(grantorBindingMethod({ grantor: GRANTOR, cnf: { jkt: cnf }, assurance: "passkey", verifiedAt: "2026-01-01T00:00:00.000Z" })).toBe("webauthn");
     expect(grantorBindingMethod({ grantor: GRANTOR, cnf: { jkt: cnf }, assurance: "hardware", verifiedAt: "x" })).toBeNull();
