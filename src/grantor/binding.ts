@@ -38,6 +38,20 @@ export interface WebauthnGrantorBinding {
    * a weaker one, and the difference is now legible instead of inferred.
    */
   termsDigest?: string;
+  /**
+   * §17.1–§17.2 — the issuer's page the ceremony ran on, the assertion's signed `origin`. Written on every
+   * new passkey binding, so absent means only "not recorded" (a binding from before the field).
+   */
+  origin?: string;
+  /** The page around it, the signed `topOrigin` — present only when the ceremony ran in another page's frame. */
+  topOrigin?: string;
+}
+
+/** Where a passkey ceremony ran, as the assertion's client data signed it (§17.1–§17.2). */
+export interface GrantorCeremonyPage {
+  origin: string;
+  /** Only when the ceremony ran in a frame another page embeds. */
+  topOrigin?: string;
 }
 
 /**
@@ -69,7 +83,9 @@ export function grantorBindingMethod(
   gb: GrantorBinding | LegacyGrantorBinding | Record<string, unknown>,
 ): "webauthn" | "otp" | null {
   const o = gb as Record<string, unknown>;
-  if (o.method === "webauthn") return "webauthn";
+  // §17.2 (2026-11-08): `"passkey"` is the method's name; readers learn it before any issuer writes it,
+  // so the label returned stays `"webauthn"` until the writers switch (OPEN #633).
+  if (o.method === "webauthn" || o.method === "passkey") return "webauthn";
   if (o.method === "otp") return "otp";
   if (o.assurance === "passkey") return "webauthn"; // v0.2 encoding (§17.2)
   return null;
@@ -193,6 +209,7 @@ export function buildGrantorBinding(
   thumbprint: string,
   verifiedAt: string,
   termsDigest?: string,
+  page?: GrantorCeremonyPage,
 ): WebauthnGrantorBinding {
   return {
     grantor: grantorDid,
@@ -200,6 +217,7 @@ export function buildGrantorBinding(
     method: "webauthn",
     verifiedAt,
     ...(termsDigest ? { termsDigest } : {}),
+    ...(page ? { origin: page.origin, ...(page.topOrigin ? { topOrigin: page.topOrigin } : {}) } : {}),
   };
 }
 
