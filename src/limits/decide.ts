@@ -18,11 +18,11 @@ export interface LimitsCall {
   /** `agent.*` (v0.3 §9.3); its `did` is what an exception names. */
   agent: Record<string, unknown>;
   /**
-   * §15.3 — the hash of the definition the caller made the call from, as it reports it. A record of the tool is only
-   * as fresh as its last declaration, so a call from another definition is refused `tool_changed` at once, without
-   * waiting for the next one. Where the agent makes the call itself this is its word, as its inputs are.
+   * §15.3 — the hash of the definition the caller made the call from, as it reports it. Required: a record of the
+   * tool is only as fresh as its last declaration, so a call from another definition, or one that names none, is
+   * refused `tool_changed` at once. Where the agent makes the call itself this is its word, as its inputs are.
    */
-  madeFrom?: string;
+  madeFrom: string;
 }
 
 /** A mandate presented with the call, already held to its own authority by the caller. */
@@ -60,6 +60,8 @@ export interface LimitsDecision {
   grantors?: string[] | "any";
   /** With `param_undeclared`: the input, as a path. */
   input?: string;
+  /** In words, where the code alone would mislead: a `tool_changed` for a call that named no definition. */
+  detail?: string;
   /** On an allow under a mandate, and on a refusal that needs it: the policy asks for the reviewer on this tool (§15.2). */
   reviewerRequired?: true;
 }
@@ -121,7 +123,8 @@ export async function decideLimits(policy: LimitsPolicy, call: LimitsCall, manda
 
   // 3. The definition the call was made from, the one the policy pins, and the inputs the tool declares.
   const hash = toolDefinitionHash(call.definition);
-  if (call.madeFrom !== undefined && call.madeFrom !== hash) return deny("tool_changed");
+  if (typeof call.madeFrom !== "string" || !call.madeFrom) return deny("tool_changed", "policy", { detail: "the call names no definition of the tool" });
+  if (call.madeFrom !== hash) return deny("tool_changed", "policy", { detail: "the call was made from another definition than the one on record" });
   if (entry.hash !== undefined && entry.hash !== hash) return deny("tool_changed");
   const undeclared = undeclaredInput(call.definition.inputSchema, call.params);
   if (undeclared) return deny("param_undeclared", "policy", { input: undeclared });

@@ -35,8 +35,11 @@ export interface LimitsCallRequest {
   mandateId?: string;
   /** With no mandate presented: the policy the PoP binds, as the challenge named it (v0.3 §21.4). */
   policy?: string;
-  /** §15.3 — the hash of the definition the call was made from, as the caller reports it. */
-  toolHash?: string;
+  /**
+   * §15.3 — the hash of the definition the call was made from, as the caller reports it. Required, and under the
+   * PoP (`limitsActionHash`): a call that names none is refused `tool_changed`.
+   */
+  toolHash: string;
 }
 
 export interface LimitsCallDeps extends Pick<AgentDirectDeps, "resolvePublicKey" | "review" | "agentEnvExtras" | "loadAccreditation" | "now"> {
@@ -86,6 +89,8 @@ export interface LimitsCallResult {
   grantors?: string[] | "any";
   /** With `param_undeclared`: the input, as a path. */
   input?: string;
+  /** In words, where the code alone would mislead. */
+  detail?: string;
   /** §15.8 — on a decision under a mandate: what the reviewer did. */
   reviewed?: ReviewerPart;
   /** v0.3 §20.6 — the reviewer that took part, for the audit record. */
@@ -125,12 +130,14 @@ export async function verifyLimitsCall(req: LimitsCallRequest, deps: LimitsCallD
     ...extra,
   });
   if (!deps.candidates?.length) return onLane("deny", { reason: "agent_not_bound" });
+  // §15.3 — the proof covers the definition the call was made from, so one that names none cannot be checked at all.
+  if (typeof req.toolHash !== "string" || !req.toolHash) return onLane("deny", { reason: "tool_changed", detail: "the call names no definition of the tool" });
 
   // v0.3 §16.7 A1–A6 + A8 — once, against the agent's own keys, over the authority the PoP names. The tool's own
   // inputs are the params: a tool may name one `action` or `tool`, so v0.3's discriminator check does not run.
   const authority = req.mandateId ? { mandateId: req.mandateId } : { policy: req.policy };
   const pop = await verifyAgentBinding(
-    { authorizedAgents: deps.candidates, pop: req.pop, verifier: deps.verifier.did, ...authority, action: req.tool, params: req.params },
+    { authorizedAgents: deps.candidates, pop: req.pop, verifier: deps.verifier.did, ...authority, action: req.tool, params: req.params, toolHash: req.toolHash },
     { validateNonce: deps.validateNonce, now },
   );
   if (!pop.ok || !pop.agent || !pop.boundKey) return onLane("deny", { reason: pop.reason ?? "pop_invalid" });
@@ -154,7 +161,7 @@ export async function verifyLimitsCall(req: LimitsCallRequest, deps: LimitsCallD
   const decide = (agent: AgentEnv, mandate?: Parameters<typeof decideLimits>[2]) =>
     decideLimits(
       policy,
-      { tool: req.tool, params: req.params, definition, agent: { ..._celAgent(deps.agentEnvExtras, agent), did: req.agentDid }, ...(req.toolHash !== undefined ? { madeFrom: req.toolHash } : {}) },
+      { tool: req.tool, params: req.params, definition, agent: { ..._celAgent(deps.agentEnvExtras, agent), did: req.agentDid }, madeFrom: req.toolHash },
       mandate,
       { ...(loadAccreditation ? { loadAccreditation } : {}), ...(deps.context ? { context: deps.context } : {}), ...(deps.checks ? { checks: deps.checks } : {}) },
     );
@@ -165,6 +172,7 @@ export async function verifyLimitsCall(req: LimitsCallRequest, deps: LimitsCallD
     ...(d.tool ? { tool: d.tool } : {}),
     ...(d.grantors !== undefined ? { grantors: d.grantors } : {}),
     ...(d.input ? { input: d.input } : {}),
+    ...(d.detail ? { detail: d.detail } : {}),
     ...(revocationReason ? { revocationReason } : {}),
   });
 

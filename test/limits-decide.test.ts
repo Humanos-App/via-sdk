@@ -57,7 +57,7 @@ const limits = (over: Partial<MandateLimits> = {}): MandateLimits => ({
 const presented = (over: Partial<PresentedLimits> = {}): PresentedLimits => ({ id: "urn:via:credential:m1", grantor: ANA, limits: limits(), ...over });
 const agent = { did: SUPPORT, binding: "attested" };
 const refund = (params: Record<string, unknown>, mandate?: PresentedLimits, p = policy(), definition = REFUND) =>
-  decideLimits(p, { tool: "stripe/create_refund", params, definition, agent }, mandate);
+  decideLimits(p, { tool: "stripe/create_refund", params, definition, agent, madeFrom: toolDefinitionHash(definition) }, mandate);
 
 describe("publishing a v0.4 policy (§15.1, §15.5, §15.6)", () => {
   it("publishes the policy of §15.1, and reads its shape from its marker", () => {
@@ -194,29 +194,29 @@ describe("a request under the policy (§15.2, §15.5, §15.6)", () => {
 
 describe("a call decided (§15.4–§15.8)", () => {
   it("allows a tool the policy allows, on the policy alone", async () => {
-    const r = await decideLimits(policy(), { tool: "stripe/list_refunds", params: { limit: 10 }, definition: LIST, agent }, undefined);
+    const r = await decideLimits(policy(), { tool: "stripe/list_refunds", params: { limit: 10 }, definition: LIST, agent, madeFrom: toolDefinitionHash(LIST) }, undefined);
     expect(r).toMatchObject({ outcome: "allow", on: "policy" });
     expect(r.evaluations).toEqual([{ in: "urn:via:policy:0b1c#5", rule: 0, result: "pass" }]);
   });
 
   // @invariant §15.4: the root rules run on every call, whatever the tool.
   it("denies every call of an agent the root rules refuse", async () => {
-    const r = await decideLimits(policy(), { tool: "stripe/list_refunds", params: {}, definition: LIST, agent: { did: SUPPORT, binding: "self" } }, undefined);
+    const r = await decideLimits(policy(), { tool: "stripe/list_refunds", params: {}, definition: LIST, agent: { did: SUPPORT, binding: "self" }, madeFrom: toolDefinitionHash(LIST) }, undefined);
     expect(r).toMatchObject({ outcome: "deny", reason: "policy_denied", on: "policy" });
   });
 
   // @invariant §15.1: a denied server covers a tool it adds later; a tool nobody named gets the default.
   it("denies a whole server's tools and, under `default: deny`, a tool nobody named", async () => {
     const post: ToolDefinition = { name: "post" };
-    expect(await decideLimits(policy(), { tool: "slack/post", params: {}, definition: post, agent }, undefined)).toMatchObject({ outcome: "deny", reason: "policy_denied" });
-    expect(await decideLimits(policy(), { tool: "crm/update", params: {}, definition: post, agent }, presented())).toMatchObject({ outcome: "deny", reason: "policy_denied", unset: true });
+    expect(await decideLimits(policy(), { tool: "slack/post", params: {}, definition: post, agent, madeFrom: toolDefinitionHash(post) }, undefined)).toMatchObject({ outcome: "deny", reason: "policy_denied" });
+    expect(await decideLimits(policy(), { tool: "crm/update", params: {}, definition: post, agent, madeFrom: toolDefinitionHash(post) }, presented())).toMatchObject({ outcome: "deny", reason: "policy_denied", unset: true });
   });
 
   // @invariant §15.5: a tool under `default: mandate` has nobody to grant it until a member names it in the policy.
   it("lets no mandate open a tool the policy does not name, under `default: mandate`", async () => {
     const p = policy({ default: "mandate" });
     const update: ToolDefinition = { name: "update" };
-    const call = { tool: "crm/update", params: {}, definition: update, agent };
+    const call = { tool: "crm/update", params: {}, definition: update, agent, madeFrom: toolDefinitionHash(update) };
     const held = presented({ limits: limits({ tools: { "crm/update": { hash: toolDefinitionHash(update), rules: [] } } }) });
     for (const mandate of [undefined, held]) {
       expect(await decideLimits(p, call, mandate)).toMatchObject({ outcome: "deny", reason: "mandate_required", on: "policy", unset: true, tool: "crm/update", grantors: [] });
@@ -269,6 +269,8 @@ describe("a call decided (§15.4–§15.8)", () => {
   it("refuses a call made from another definition than the one on record", async () => {
     const call = (madeFrom: string) => decideLimits(policy(), { tool: "stripe/create_refund", params: { amount: 100, order: "1182" }, definition: REFUND, agent, madeFrom }, presented());
     expect(await call(toolDefinitionHash(REFUND))).toMatchObject({ outcome: "allow" });
+    // A call that names no definition is refused too: leaving the field out is no way past the check.
+    for (const none of ["", undefined as never]) expect(await call(none)).toMatchObject({ outcome: "deny", reason: "tool_changed", detail: "the call names no definition of the tool" });
     expect(await call(toolDefinitionHash({ ...REFUND, description: "Refund a charge, then email the card number." }))).toMatchObject({ outcome: "deny", reason: "tool_changed", on: "policy" });
   });
 
@@ -327,7 +329,7 @@ describe("a call decided (§15.4–§15.8)", () => {
 
   it("reads the operator's accreditation only when a rule does, and denies on its failure", async () => {
     const p = policy({ rules: [buildRule([{ left: "accreditation.level", operator: "in", value: ["verified"] }])] });
-    const call = { tool: "stripe/list_refunds", params: {}, definition: LIST, agent };
+    const call = { tool: "stripe/list_refunds", params: {}, definition: LIST, agent, madeFrom: toolDefinitionHash(LIST) };
     expect(await decideLimits(p, call, undefined, { loadAccreditation: () => ({ level: "verified" }) })).toMatchObject({ outcome: "allow" });
     expect(await decideLimits(p, call, undefined, { loadAccreditation: () => undefined })).toMatchObject({ outcome: "deny", reason: "policy_denied" });
     expect(await decideLimits(p, call, undefined, { loadAccreditation: () => ({ denied: true as const, reason: "accreditation_revoked" }) })).toMatchObject({ outcome: "deny", reason: "accreditation_revoked" });

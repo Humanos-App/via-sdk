@@ -287,6 +287,7 @@ export {
 export {
   actionHash,
   policyActionHash,
+  limitsActionHash,
   buildPoP,
   algForKey,
   allowedPopAlgs,

@@ -66,6 +66,14 @@ export function policyActionHash(policy: string, action: string, params: Record<
 }
 
 /**
+ * v0.4 §15.3 — `action_hash` for a call under a v0.4 policy: v0.3's, with the hash of the tool's definition the call
+ * was made from. The agent's key then signs which definition it claimed, beside the tool and its inputs.
+ */
+export function limitsActionHash(authority: { mandateId: string } | { policy: string }, action: string, params: Record<string, unknown>, toolHash: string): string {
+  return computeSRI(canonicalizeRFC8785({ ...authority, action, params, toolHash }));
+}
+
+/**
  * The algorithm a key can sign with — derived from the KEY, never read from a header (§16.6).
  *
  * This is the whole of RFC 8725 §3.1 in one function. If a verifier selects its verification

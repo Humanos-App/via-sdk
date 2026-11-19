@@ -6,7 +6,7 @@
 //    the action CEL (with the rung env) + step-up → `rechallenge` (D7).
 //  • verifyAgentCall — §21.3's policy-first flow: the proof once, the policy's entry
 //    or its default, and the mandate only where the entry asks for one.
-import { actionHash, decodePoP, policyActionHash, verifyPoPSignature } from "./pop.js";
+import { actionHash, decodePoP, limitsActionHash, policyActionHash, verifyPoPSignature } from "./pop.js";
 import { jwkThumbprint } from "../crypto/p256.js";
 import { evaluateRules, type RuleEvaluation } from "../cel/evaluate.js";
 import { agentReasonForRule } from "./constraints.js";
@@ -61,6 +61,8 @@ export interface PopCheckInput {
   policy?: string;
   action: string;
   params: Record<string, unknown>;
+  /** v0.4 §15.3 — under a v0.4 policy: the hash of the definition the call was made from, which the proof covers. */
+  toolHash?: string;
 }
 export interface PopCheckDeps {
   /**
@@ -111,9 +113,12 @@ export async function verifyAgentBinding(input: PopCheckInput, deps: PopCheckDep
   const nonce = await deps.validateNonce(d.payload.nonce, authority); // A5
   if (nonce !== "ok") return { ok: false, reason: nonce as AgentReasonCode };
 
-  const expected = input.policy
-    ? policyActionHash(input.policy, input.action, input.params)
-    : actionHash(input.mandateId!, input.action, input.params);
+  const expected =
+    input.toolHash !== undefined
+      ? limitsActionHash(input.policy ? { policy: input.policy } : { mandateId: input.mandateId! }, input.action, input.params, input.toolHash)
+      : input.policy
+        ? policyActionHash(input.policy, input.action, input.params)
+        : actionHash(input.mandateId!, input.action, input.params);
   if (d.payload.action_hash !== expected) {
     return { ok: false, reason: "action_hash_mismatch" }; // A6
   }
