@@ -30,7 +30,10 @@ export interface BuildLimitsMandateInput {
   maxAttestationStaleness?: number;
   /** §15.2 — its words, its number of calls, and its tools with their rules. */
   limits: MandateLimits;
-  /** §15.2 — what the reviewer did before issue. A finding it enforces never reaches here: the request was refused. */
+  /**
+   * §15.2 — what the reviewer did before issue: the `reviewed` of {@link reviewMandateRequest}, which the issuer
+   * runs first. A request it refused is never built.
+   */
   reviewed: ReviewerPart;
   /** v0.3 §20.4 — who asked for it, when that was not the grantor. */
   initiator?: MandateInitiator;

@@ -13,6 +13,7 @@ import {
   limitsActionHash,
   policyActionHash,
   policyDigest,
+  reviewMandateRequest,
   stampMandate,
   toolDefinitionHash,
   verifyAgentCall,
@@ -342,5 +343,45 @@ describe("the decision's signed event (§15.8)", () => {
     const agent = { assurance: "device" as const, binding: "self" as const, verifiedAt: now.getTime() };
     const ev = buildLimitsVerificationEvent({ result: none, tool: TOOL, toolHash: "", issuer: VERIFIER, popNonceRef: "n-1", agent }, signer());
     expect(ev.credentialSubject).toMatchObject({ event: "VERIFICATION_DENIED", reason: "tool_changed", detail: "the call names no definition of the tool" });
+  });
+});
+
+describe("the reviewer before a mandate is issued (§15.2)", () => {
+  const asked: unknown[] = [];
+  const reviewLimits = (verdict: SemanticReviewVerdict["verdict"]) => async (input: unknown) => (asked.push(input), { verdict, reviewer: { id: "reys", version: "5" } });
+
+  // @invariant §15.2: before issue the reviewer compares the rules with the words, and a mismatch refuses the request.
+  it("is asked about the limits and the words, and refuses a mismatch where it enforces", async () => {
+    expect(await reviewMandateRequest(policyOf(), limits(), { reviewLimits: reviewLimits("entailed") })).toEqual({ ok: true, reviewed: "agreed", reviewer: { id: "reys", version: "5" } });
+    expect(asked.at(-1)).toMatchObject({ description: { text: "Refund order 1182 to the customer, up to 120 EUR" }, maxExecutions: 1, tools: { [TOOL]: { rules: [{ conditions: [{ left: "amount", operator: "<=", value: 120 }] }] } } });
+    expect(await reviewMandateRequest(policyOf(), limits(), { reviewLimits: reviewLimits("not_entailed") })).toMatchObject({ ok: false, reason: "semantic_denied" });
+    expect(await reviewMandateRequest(policyOf(), limits(), { reviewLimits: reviewLimits("escalate") })).toMatchObject({ ok: false, reason: "semantic_review" });
+  });
+
+  it("lets a request stand without it on an outage or before it enforces, and says so", async () => {
+    expect(await reviewMandateRequest(policyOf(), limits())).toEqual({ ok: true, reviewed: "unavailable" });
+    expect(await reviewMandateRequest(policyOf(), limits(), { reviewLimits: reviewLimits("unavailable") })).toMatchObject({ ok: true, reviewed: "unavailable" });
+    expect(await reviewMandateRequest(policyOf(), limits(), { reviewLimits: reviewLimits("not_entailed"), reviewEnforces: false })).toMatchObject({ ok: true, reviewed: "not_enforcing" });
+  });
+
+  // @invariant §15.2: only an outage passes.
+  it("refuses a request the reviewer cannot read, enforcing or not", async () => {
+    for (const reviewEnforces of [true, false]) {
+      expect(await reviewMandateRequest(policyOf(), limits(), { reviewLimits: reviewLimits("unreadable"), reviewEnforces })).toMatchObject({ ok: false, reason: "reviewer_unavailable" });
+    }
+  });
+
+  // @invariant §15.2: no mandate is issued for a tool marked `reviewer: required` unless the reviewer agreed.
+  it("issues no mandate for a tool marked `reviewer: required` without the reviewer's agreement", async () => {
+    const required = policyOf({ reviewer: "required" });
+    expect(await reviewMandateRequest(required, limits())).toEqual({ ok: false, reason: "reviewer_unavailable", reviewed: "unavailable" });
+    expect(await reviewMandateRequest(required, limits(), { reviewLimits: reviewLimits("not_entailed"), reviewEnforces: false })).toMatchObject({ ok: false, reason: "semantic_denied" });
+    expect(await reviewMandateRequest(required, limits(), { reviewLimits: reviewLimits("entailed") })).toMatchObject({ ok: true, reviewed: "agreed" });
+  });
+
+  it("signs into the mandate what the reviewer did at issue", async () => {
+    const outcome = await reviewMandateRequest(policyOf(), limits(), { reviewLimits: reviewLimits("entailed") });
+    if (!outcome.ok) throw new Error("refused");
+    expect(issue({ reviewed: outcome.reviewed }).credentialSubject.mandate.reviewed).toBe("agreed");
   });
 });

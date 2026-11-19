@@ -7,6 +7,7 @@ import { MAX_EXECUTIONS_REACHED, unsupportedCriticalExtension, verifyStamp } fro
 import { isSupportedSpecVersion } from "../version.js";
 import { decideLimits, type LimitsDecision } from "../limits/decide.js";
 import { isLimitsMandate, limitsOf } from "../limits/mandate.js";
+import { settleReview } from "../limits/review.js";
 import type { LimitEvaluation, LimitsPolicy, ReviewerPart, ToolDefinition } from "../limits/types.js";
 import { NO_LAYER_CONTEXT, type CallLayerContext } from "../datalayer/policy.js";
 import type { AccreditationRevocationReason } from "../operator/types.js";
@@ -237,21 +238,8 @@ export async function verifyLimitsCall(req: LimitsCallRequest, deps: LimitsCallD
   }
 
   // §15.2 — the reviewer reads the call against the words. Where it gives no answer, the call is decided without it.
-  const required = decided.reviewerRequired === true;
-  const enforces = deps.reviewEnforces !== false || required;
-  let reviewed: ReviewerPart = "unavailable";
-  let reviewer: { id: string; version?: string } | undefined;
-  if (deps.review) {
-    const verdict = await deps.review({ description: limits.description, action: req.tool, params: req.params, mandateId: urn });
-    reviewer = verdict.reviewer;
-    const named = { ...told(decided), agent, ...(reviewer ? { reviewer } : {}) };
-    // Only an outage passes: a request the reviewer cannot read is refused, or an agent could choose when it goes unreviewed.
-    if (verdict.verdict === "unreadable") return refuse("reviewer_unavailable", named);
-    if (verdict.verdict === "not_entailed" && enforces) return refuse("semantic_denied", named);
-    if (verdict.verdict === "escalate" && enforces) return refuse("semantic_review", named);
-    reviewed = verdict.verdict === "entailed" ? "agreed" : verdict.verdict === "unavailable" ? "unavailable" : "not_enforcing";
-  }
-  const part = { ...told(decided), agent, reviewed, ...(reviewer ? { reviewer } : {}) };
-  if (required && reviewed !== "agreed") return refuse("reviewer_unavailable", part);
-  return onMandate("allow", part);
+  const answer = deps.review ? await deps.review({ description: limits.description, action: req.tool, params: req.params, mandateId: urn }) : undefined;
+  const settled = settleReview(answer, { enforces: deps.reviewEnforces !== false, required: decided.reviewerRequired === true });
+  const part = { ...told(decided), agent, ...(settled.reviewed ? { reviewed: settled.reviewed } : {}), ...(settled.reviewer ? { reviewer: settled.reviewer } : {}) };
+  return settled.ok ? onMandate("allow", part) : refuse(settled.reason, part);
 }

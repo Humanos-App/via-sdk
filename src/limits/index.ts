@@ -10,3 +10,5 @@ export { decideLimits } from "./decide.js";
 export type { LimitsCall, PresentedLimits, LimitsDeps, LimitsDecision } from "./decide.js";
 export { buildLimitsMandate, isLimitsMandate, limitsOf } from "./mandate.js";
 export type { BuildLimitsMandateInput } from "./mandate.js";
+export { settleReview, reviewMandateRequest, reviewerRequiredFor } from "./review.js";
+export type { ReviewAnswer, LimitsReviewInput, ReviewOutcome, IssueReviewDeps } from "./review.js";
