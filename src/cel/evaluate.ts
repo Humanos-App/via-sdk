@@ -227,6 +227,20 @@ function fieldsRead(expression: string, variable: string): string[] | null {
   return [...read];
 }
 
+/**
+ * v0.4 §15.4 — run one generated expression over the variables it names. `pass` only on `true`; `false` is `fail`;
+ * anything else — a value that is not a boolean, a variable that is not there — is `error`. A caller denies on both.
+ */
+export function evaluateCel(expression: string, variables: Record<string, unknown>): { result: "pass" | "fail" | "error"; reason?: string } {
+  try {
+    const value = CEL_ENVIRONMENT.evaluate(rewriteCelTimestamps(expression), variables);
+    if (typeof value !== "boolean") return { result: "error", reason: `rule did not return a boolean (got ${typeof value})` };
+    return value ? { result: "pass" } : { result: "fail" };
+  } catch (e) {
+    return { result: "error", reason: (e as Error).message };
+  }
+}
+
 export function evaluateRule(rule: Pick<ActionRule, "name" | "description" | "expression">, ctx: CelContext): RuleEvaluation {
   try {
     const value = CEL_ENVIRONMENT.evaluate(prepare(rule.expression, ctx), ctx as unknown as Record<string, unknown>);
