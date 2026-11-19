@@ -7,7 +7,7 @@
  * (`inputsWithDefaults`). So a rule on `currency` cannot be passed by leaving `currency` out, and an exception
  * joined by OR still decides when the other side is absent.
  */
-import { evaluateCel } from "../cel/evaluate.js";
+import { DECIMAL_PATTERN, evaluateCel } from "../cel/evaluate.js";
 import { inputAt, parseInputPath, type InputKind } from "./tool.js";
 import type { JsonSchema, LimitCondition, LimitEvaluation, LimitOperator, LimitRule } from "./types.js";
 
@@ -41,6 +41,7 @@ const ITEM_TEXT_OPERATORS: readonly LimitOperator[] = ["every_starts_with", "eve
 export const OPERATORS_BY_KIND: Record<InputKind, readonly LimitOperator[]> = {
   number: [...COMPARISONS, "in", "not_in"],
   integer: [...COMPARISONS, "in", "not_in"],
+  decimal: [...COMPARISONS, "in", "not_in"],
   text: ["==", "!=", "in", "not_in", "starts_with", "ends_with", "contains"],
   datetime: ORDERINGS,
   boolean: ["=="],
@@ -123,6 +124,11 @@ function access(operand: LeftOperand): Access {
 
 /** A value as CEL writes it. A number is written as a double: the call's numbers arrive as doubles. */
 function literal(value: unknown, kind: InputKind): string {
+  if (kind === "decimal") {
+    // §13.1 — written as its text, never a number: a number was already a float.
+    if (typeof value !== "string" || !DECIMAL_PATTERN.test(value)) throw new TypeError(`VIA: a decimal's value is written as a text of digits: ${JSON.stringify(value)}`);
+    return `decimal(${JSON.stringify(value)})`;
+  }
   if (typeof value === "string") return kind === "datetime" ? `timestamp(${JSON.stringify(value)})` : JSON.stringify(value);
   if (typeof value === "boolean") return String(value);
   if (typeof value === "number" && Number.isFinite(value)) return Number.isInteger(value) ? `${value}.0` : String(value);
@@ -144,7 +150,8 @@ function conditionExpression(condition: LimitCondition, inputs: JsonSchema | und
   const left = access(operand);
   const { kind, items } = kindFor(condition, operand, inputs);
   const of = kind === "list" ? (items ?? "unknown") : kind;
-  const value = kind === "datetime" ? `timestamp(${left.ref})` : left.ref;
+  const typed = (ref: string, as: InputKind) => (as === "datetime" ? `timestamp(${ref})` : as === "decimal" ? `decimal(${ref})` : ref);
+  const value = typed(left.ref, kind);
   const guards = [...left.guards];
   let other: string;
   if (condition.right !== undefined) {
@@ -152,7 +159,7 @@ function conditionExpression(condition: LimitCondition, inputs: JsonSchema | und
     if (!right) throw new TypeError(`VIA: a rule's \`right\` names nothing: ${JSON.stringify(condition.right)}`);
     const answer = access(right);
     guards.push(...answer.guards);
-    other = kind === "datetime" ? `timestamp(${answer.ref})` : answer.ref;
+    other = typed(answer.ref, kind);
   } else {
     other = "";
   }
@@ -183,13 +190,13 @@ function conditionExpression(condition: LimitCondition, inputs: JsonSchema | und
         comparison = `${left.ref}.all(item, ${values()}.exists(s, item.${test}(s)))`;
         break;
       case "every_in":
-        comparison = `${left.ref}.all(item, item in ${values()})`;
+        comparison = `${left.ref}.all(item, ${typed("item", of)} in ${values()})`;
         break;
       case "none_in":
-        comparison = `!${left.ref}.exists(item, item in ${values()})`;
+        comparison = `!${left.ref}.exists(item, ${typed("item", of)} in ${values()})`;
         break;
       case "includes_all":
-        comparison = `${values()}.all(value, value in ${left.ref})`;
+        comparison = of === "decimal" ? `${values()}.all(value, ${left.ref}.exists(item, decimal(item) == value))` : `${values()}.all(value, value in ${left.ref})`;
         break;
       default:
         comparison = `${value} ${condition.operator} ${one()}`;
@@ -222,6 +229,7 @@ function valueIssue(condition: LimitCondition, kind: InputKind, items: InputKind
     : of === "boolean" ? typeof v === "boolean"
     : of === "text" ? typeof v === "string"
     : of === "datetime" ? typeof v === "string" && !Number.isNaN(Date.parse(v))
+    : of === "decimal" ? typeof v === "string" && DECIMAL_PATTERN.test(v)
     : isScalar(v);
   if (condition.measure) return Number.isInteger(value) && (value as number) >= 0 ? null : "a length or a count is compared with a whole number";
   const of = kind === "list" ? (items ?? "unknown") : kind;
@@ -285,7 +293,7 @@ export function ruleIssues(rule: LimitRule, place: RulePlace): string[] {
     } else {
       const allowed =
         operand.scope !== "params" ? SCOPED_OPERATORS
-        : kind === "list" ? (items === "text" ? OPERATORS_BY_KIND.list : ITEM_OPERATORS)
+        : kind === "list" ? (items === "text" ? OPERATORS_BY_KIND.list : items === "unknown" || items === "object" || items === "list" || items === undefined ? [] : ITEM_OPERATORS)
         : OPERATORS_BY_KIND[kind];
       if (!allowed.includes(c.operator)) issues.push(`${at}: \`${c.operator}\` is not an operator for ${kind === "unknown" ? "an input of no declared kind" : `the kind ${kind}`}`);
     }

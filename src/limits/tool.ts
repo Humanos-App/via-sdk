@@ -121,7 +121,7 @@ function fill(schema: JsonSchema, value: unknown): unknown {
 }
 
 /** What a condition's operators are chosen by (§15.4). */
-export type InputKind = "number" | "integer" | "text" | "datetime" | "boolean" | "list" | "object" | "unknown";
+export type InputKind = "number" | "integer" | "decimal" | "text" | "datetime" | "boolean" | "list" | "object" | "unknown";
 
 /** One step of an input's path: a name, and whether the condition reads every item of the list found there. */
 export interface PathStep {
@@ -152,7 +152,8 @@ export function kindOf(schema: JsonSchema | undefined): InputKind {
     case "object":
       return "object";
     case "string":
-      return schema?.format === "date-time" ? "datetime" : "text";
+      // §13.1 — an amount of money is a text declared a decimal, and reaches a rule as an exact one.
+      return schema?.format === "date-time" ? "datetime" : schema?.format === "decimal" ? "decimal" : "text";
     default:
       return "unknown";
   }

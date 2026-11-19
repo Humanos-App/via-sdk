@@ -177,6 +177,28 @@ describe("a rule over a call (§15.3, §15.4)", () => {
     for (const [condition, params, expected] of cases) expect([condition, run([condition], params)]).toEqual([condition, expected]);
   });
 
+  // @invariant §13.1, §15.4: an input declared a decimal reaches a rule as an exact decimal, never a text or a float.
+  it("compares an amount declared a decimal exactly", () => {
+    const SEND: JsonSchema = { type: "object", properties: { amount: { type: "string", format: "decimal" }, splits: { type: "array", items: { type: "string", format: "decimal" } } } };
+    const cap = (value: string) => buildRule([{ left: "amount", operator: "<=", value }], SEND);
+    expect(cap("50").expression).toBe('"amount" in params && decimal(params.amount) <= decimal("50")');
+    const send = (rule: ReturnType<typeof buildRule>, params: Record<string, unknown>) => evaluateLimitRule(rule, { params, agent: {} }, AT).result;
+    expect(send(cap("50"), { amount: "150.00" })).toBe("fail"); // as texts, "150.00" <= "50" would hold
+    expect(send(cap("150"), { amount: "150.00" })).toBe("pass");
+    expect(send(cap("1"), { amount: "1.000000000000000001" })).toBe("fail"); // one wei over; a float would pass it
+    expect(send(cap("0.3"), { amount: "0.30" })).toBe("pass");
+    expect(send(buildRule([{ left: "amount", operator: "in", value: ["10", "20.5"] }], SEND), { amount: "20.50" })).toBe("pass");
+    expect(send(buildRule([{ left: "amount", operator: "!=", value: "0" }], SEND), { amount: "0.00" })).toBe("fail");
+    expect(send(buildRule([{ left: "splits", operator: "every_in", value: ["1", "2"] }], SEND), { splits: ["1.0", "2.00"] })).toBe("pass");
+    expect(send(buildRule([{ left: "splits", operator: "includes_all", value: ["3"] }], SEND), { splits: ["1.0"] })).toBe("fail");
+    // A number, an exponent or a text that is no amount is an error, and an error is not a pass.
+    for (const amount of [150, "1e3", "12,50", "", " 5"]) expect(send(cap("9999"), { amount })).toBe("error");
+    const place: RulePlace = { document: "mandate", inputs: SEND, root: false };
+    expect(ruleIssues(cap("50"), place)).toEqual([]);
+    expect(ruleIssues({ conditions: [{ left: "amount", operator: "<=", value: 50 }], expression: "x" }, place).join()).toMatch(/takes one value/);
+    expect(ruleIssues({ conditions: [{ left: "amount", operator: "starts_with", value: "5" }], expression: "x" }, place).join()).toMatch(/not an operator for the kind decimal/);
+  });
+
   it("answers `error`, never a pass, for a value of the wrong kind", () => {
     expect(run([{ left: "amount", operator: "<=", value: 500 }], { amount: "5" })).toBe("error");
     expect(run([{ left: "to", operator: "every_in", value: ["a"] }], { to: "a" })).toBe("error");

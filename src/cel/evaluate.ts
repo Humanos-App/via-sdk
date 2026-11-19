@@ -39,12 +39,48 @@ export interface EvaluationResult {
 }
 
 /**
+ * v0.4 §13.1 — an exact decimal: an amount of money, which a float holds wrongly at the edges money reaches (one wei
+ * over 1 ETH passes a 1 ETH cap) and a string compares letter by letter (`"150.00" <= "50"`). Whole units and the
+ * number of digits after the point; nothing is rounded.
+ */
+export class ViaDecimal {
+  constructor(
+    readonly units: bigint,
+    readonly scale: number,
+  ) {}
+}
+
+/** What a decimal is written as: digits, and digits after one point. No exponent, no sign but a minus. */
+export const DECIMAL_PATTERN = /^-?\d+(\.\d+)?$/;
+/** A decimal longer than this is no amount; the bound keeps one value from costing a comparison. */
+const DECIMAL_MAX_LENGTH = 80;
+
+/** `decimal("12.50")` — from its text only: a number here was already a float, and is refused. */
+export function parseDecimal(value: unknown): ViaDecimal {
+  if (typeof value !== "string" || value.length > DECIMAL_MAX_LENGTH || !DECIMAL_PATTERN.test(value)) {
+    throw new Error(`not a decimal: ${JSON.stringify(typeof value === "string" ? value.slice(0, DECIMAL_MAX_LENGTH) : value)}`);
+  }
+  const [whole, fraction = ""] = value.split(".") as [string, string?];
+  return new ViaDecimal(BigInt(whole + fraction), fraction.length);
+}
+
+/** Negative, zero or positive as `a` is below, equal to or above `b`. */
+export function compareDecimals(a: ViaDecimal, b: ViaDecimal): number {
+  const scale = Math.max(a.scale, b.scale);
+  const x = a.units * 10n ** BigInt(scale - a.scale);
+  const y = b.units * 10n ** BigInt(scale - b.scale);
+  return x < y ? -1 : x > y ? 1 : 0;
+}
+
+/**
  * ISO datetimes use native instant semantics; finite JSON numbers keep their exact value.
  * Return dyn for every overload: cel-js otherwise infers the first overload's timestamp type
  * even for a numeric runtime argument and applies timestamp operators to a number.
  * Equality needs an explicit refusal too: default cross-type != would allow a mixed pair.
  */
-const CEL_ENVIRONMENT = new Environment({ unlistedVariablesAreDyn: true })
+let CEL_ENVIRONMENT = new Environment({ unlistedVariablesAreDyn: true })
+  .registerType("Decimal", { ctor: ViaDecimal, fields: {} })
+  .registerFunction("decimal(dyn): Decimal", parseDecimal)
   .registerFunction("viaTimestamp(string): dyn", nativeTimestamp)
   .registerFunction("viaTimestamp(int): dyn", nativeTimestamp)
   .registerFunction("viaTimestamp(double): dyn", (value: number) => {
@@ -54,6 +90,18 @@ const CEL_ENVIRONMENT = new Environment({ unlistedVariablesAreDyn: true })
   .registerOperator("double == google.protobuf.Timestamp", () => {
     throw new Error("datetime comparison must not mix string and numeric representations");
   });
+
+// v0.4 §13.1 — a decimal compares with a decimal, exactly. With a string or a float there is no overload, which is
+// an error, and an error denies.
+for (const [operator, holds] of [
+  ["<", (c: number) => c < 0],
+  ["<=", (c: number) => c <= 0],
+  [">", (c: number) => c > 0],
+  [">=", (c: number) => c >= 0],
+  ["==", (c: number) => c === 0],
+] as const) {
+  CEL_ENVIRONMENT = CEL_ENVIRONMENT.registerOperator(`Decimal ${operator} Decimal`, (a: ViaDecimal, b: ViaDecimal) => holds(compareDecimals(a, b)));
+}
 
 function nativeTimestamp(value: unknown): unknown {
   return celEvaluate("timestamp(value)", { value });
