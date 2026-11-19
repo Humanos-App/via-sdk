@@ -7,6 +7,7 @@ import { buildEvent, signEvent, type EventFields, type EventSigner } from "../ev
 import type { ViaEvent } from "../types.js";
 import type { RuleEvaluation } from "../cel/evaluate.js";
 import type { AgentEnv } from "./verify.js";
+import type { LimitsCallResult } from "./verify-limits.js";
 
 /**
  * §16.9 — a signed `VERIFICATION_APPROVED` / `VERIFICATION_DENIED` with the rung evidence, or `null`
@@ -57,6 +58,68 @@ export function buildVerificationEvent(
     ...subjectOf(mandateId, policy),
     event: decision === "allow" ? "VERIFICATION_APPROVED" : "VERIFICATION_DENIED",
     previousEvent: previousEvent ?? null,
+    assuranceEvaluated: agent.assurance,
+    bindingEvaluated: agent.binding,
+    ...(agent.root ? { rootUsed: agent.root } : {}),
+    popNonceRef,
+    attestationFreshnessAt: new Date(agent.verifiedAt).toISOString(),
+  });
+  return signEvent(ev, signer);
+}
+
+/**
+ * v0.4 §15.8 — the signed `VERIFICATION_APPROVED` / `VERIFICATION_DENIED` of a call decided under a v0.4 policy,
+ * from what {@link verifyLimitsCall} answered. It names the tool and the definition the call was made from, each
+ * rule by its place, and what the reviewer did. It carries no `enforcement`: a §15.2 mandate has one kind.
+ *
+ * A refusal before the agent's proof held (`agent_not_bound`, `pop_invalid`, a call that named no definition) has
+ * no rung to record: the caller passes the rung it resolved for the agent, or records nothing.
+ */
+export function buildLimitsVerificationEvent(
+  input: {
+    /** What the verifier answered: its chain (a mandate, or the policy and the agent), its decision, its reasons. */
+    result: LimitsCallResult;
+    /** The tool and the inputs the call presented, and the hash it named. */
+    tool: string;
+    toolHash: string;
+    /** The call's inputs, where the deployment records them; absent, `actionHash` alone stands for them (v0.3 §2). */
+    params?: Record<string, unknown>;
+    /** The verifier's DID — the signer, so the event's `issuer` (v0.3 §2). */
+    issuer: string;
+    /** The rung to record when the result carries none. */
+    agent?: AgentEnv;
+    popNonceRef: string;
+    targetVerifier?: string;
+    previousEvent?: string | null;
+    eventId?: string;
+    validFrom?: string;
+  } & Pick<EventFields, "client" | "keyIdEvaluated" | "levelEvaluated" | "methodEvaluated" | "registrarUsed" | "affiliationRef">,
+  signer: EventSigner,
+): ViaEvent {
+  const { result, tool, toolHash, params, agent: given, popNonceRef, previousEvent, ...rest } = input;
+  const agent = result.agent ?? given;
+  if (!agent) throw new TypeError("VIA: a decision's event records the rung that acted; this result names none and no agent was given (v0.3 §16.9)");
+  const policy = result.credentialId ? undefined : { id: result.policy!, agentDid: result.agentDid! };
+  const ev = buildEvent({
+    ...rest,
+    ...subjectOf(result.credentialId, policy),
+    event: result.decision === "allow" ? "VERIFICATION_APPROVED" : "VERIFICATION_DENIED",
+    previousEvent: previousEvent ?? null,
+    ...(result.reason ? { reason: result.reason } : {}),
+    evaluations: result.evaluations,
+    tool,
+    toolHash,
+    ...(params ? { executionParams: params } : {}),
+    policyDigest: result.policyDigest,
+    ...(result.actionHash ? { actionHash: result.actionHash } : {}),
+    ...(result.unset ? { unset: true } : {}),
+    ...(result.reviewed ? { reviewed: result.reviewed } : {}),
+    ...(result.reviewer ? { review: { ...result.reviewer } } : {}),
+    ...(result.grantors !== undefined ? { grantors: result.grantors } : {}),
+    ...(result.input ? { input: result.input } : {}),
+    ...(result.detail ? { detail: result.detail } : {}),
+    ...(result.revocationReason ? { revocationReason: result.revocationReason } : {}),
+    ...(agent.keyId && !rest.keyIdEvaluated ? { keyIdEvaluated: agent.keyId } : {}),
     assuranceEvaluated: agent.assurance,
     bindingEvaluated: agent.binding,
     ...(agent.root ? { rootUsed: agent.root } : {}),

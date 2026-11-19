@@ -4,6 +4,7 @@ import { computeSRI } from "../crypto/digest.js";
 import { canonicalEventType, createDataIntegrityProof, verifyDataIntegrityProof, type EventType } from "../crypto/proof.js";
 import type { Jwk } from "../crypto/p256.js";
 import type { RuleEvaluation } from "../cel/evaluate.js";
+import type { LimitEvaluation } from "../limits/types.js";
 import { didFromUrl } from "../did/web.js";
 import { stampMandate, type ResolvePublicKey } from "../mandate/build.js";
 import {
@@ -27,8 +28,11 @@ export interface EventFields {
   /** Why the event was recorded, for the audit — any kind MAY carry it. */
   reason?: string;
   // ── about a mandate ──
-  /** §2.0 — each rule's result (`pass` | `fail` | `error` | `skip`), as the evaluator returns it. */
-  evaluations?: RuleEvaluation[];
+  /**
+   * §2.0 — each rule's result (`pass` | `fail` | `error` | `skip`), as the evaluator returns it. Under a v0.4 policy
+   * a rule has no name: each result names its document, its tool and its position (v0.4 §15.8).
+   */
+  evaluations?: Array<RuleEvaluation | LimitEvaluation>;
   executionParams?: Record<string, unknown>;
   targetVerifier?: string;
   /** §20.3 — which machinery governed a `VERIFICATION_*` decision. */
@@ -56,6 +60,19 @@ export interface EventFields {
   actionHash?: string;
   /** §21.5 — on a policy-scoped event: the agent whose chain it is on (not `agent`, a legacy container). */
   agentDid?: string;
+  // ── a decision under a v0.4 policy (v0.4 §15.8); it carries no `enforcement` ──
+  /** The tool the call presented, as the policy names it: `server/name`, or a capability's name. */
+  tool?: string;
+  /** §15.3 — the hash of the definition the call was made from, which its proof covers. */
+  toolHash?: string;
+  /** §15.8 — what the reviewer did: `agreed` | `not_enforcing` | `unavailable`. On a decision under a mandate. */
+  reviewed?: string;
+  /** §15.8 — with `mandate_required`, `grantor_not_allowed`, `one_call_required`: who may grant a mandate for the tool. */
+  grantors?: string[] | "any";
+  /** §15.8 — with `param_undeclared`: the input the tool does not declare, as a path. */
+  input?: string;
+  /** In words, where a code alone would mislead: a `tool_changed` for a call that named no definition. */
+  detail?: string;
   // ── about an organization's policy (`POLICY_PUBLISHED`, §21.2) ──
   policy?: string;
   version?: number;

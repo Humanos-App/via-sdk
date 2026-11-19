@@ -360,6 +360,7 @@ export {
 // Agent Binding (§16) — audit (§16.9, signed VIAEvents). `EventSigner` now lives in event/build.js.
 export {
   buildVerificationEvent,
+  buildLimitsVerificationEvent,
   buildOutcomeEvent,
   outcomeParams,
   type AgentOutcomeKind,

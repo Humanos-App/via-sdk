@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import {
   actionHash,
   buildLimitsMandate,
+  buildLimitsVerificationEvent,
   buildMandate,
   buildPoP,
   buildRule,
@@ -16,6 +17,7 @@ import {
   toolDefinitionHash,
   verifyAgentCall,
   verifyAgentDirect,
+  verifyEvent,
   verifyLimitsCall,
   type AgentCallDeps,
   type BoundKey,
@@ -285,5 +287,60 @@ describe("the reviewer over a call (§15.2)", () => {
     await underMandate({ amount: 300 }, { review });
     await underPolicy("stripe/list_refunds", { limit: 5 }, { review });
     expect(asked).toBe(0);
+  });
+});
+
+describe("the decision's signed event (§15.8)", () => {
+  const signer = () => ({ privateKey: HUMANOS.privateKey, verificationMethod: HUMANOS_VM });
+  const record = (result: Awaited<ReturnType<typeof underMandate>>, params: Record<string, unknown>) =>
+    buildLimitsVerificationEvent({ result, tool: TOOL, toolHash: held(TOOL), params, issuer: VERIFIER, popNonceRef: "n-1" }, signer());
+
+  // @invariant §15.8: an evaluation names its rule by its place; the event says what the reviewer did, names the
+  // tool and the definition, and carries no `enforcement`.
+  it("records an allow on the mandate's chain, with each rule's place and the reviewer's part", async () => {
+    const result = await underMandate({ amount: 100 }, { review: reviewer("entailed") });
+    const ev = record(result, { amount: 100 });
+    expect((await verifyEvent(ev, async () => HUMANOS.publicKey)).valid).toBe(true);
+    expect(ev.issuer).toBe(VERIFIER);
+    expect(ev.credentialSubject).toMatchObject({
+      id: mandate.id,
+      event: "VERIFICATION_APPROVED",
+      tool: TOOL,
+      toolHash: held(TOOL),
+      executionParams: { amount: 100 },
+      reviewed: "agreed",
+      review: { id: "reys", version: "5" },
+      policyDigest: versionOf(policyOf()).policyDigest,
+      actionHash: limitsActionHash({ mandateId: mandate.id }, TOOL, { amount: 100 }, held(TOOL)),
+      assuranceEvaluated: "device",
+      evaluations: [
+        { in: `${POLICY_URN}#5`, tool: TOOL, rule: 0, result: "pass" },
+        { in: mandate.id, tool: TOOL, rule: 0, result: "pass" },
+      ],
+    });
+    expect(ev.credentialSubject).not.toHaveProperty("enforcement");
+  });
+
+  it("records a refusal on the agent's lane, with the tool and who may grant it", async () => {
+    const result = await underPolicy(TOOL, { amount: 100 });
+    const ev = record(result, { amount: 100 });
+    expect(ev.credentialSubject).toMatchObject({ id: POLICY_URN, agentDid: SUPPORT, event: "VERIFICATION_DENIED", reason: "mandate_required", tool: TOOL, grantors: [ANA] });
+    expect(ev.credentialSubject).not.toHaveProperty("reviewed");
+  });
+
+  it("records the input a call should not have carried, and the words beside a code", async () => {
+    const undeclared = record(await underMandate({ amount: 100, destination: "acct_x" }), { amount: 100, destination: "acct_x" });
+    expect(undeclared.credentialSubject).toMatchObject({ event: "VERIFICATION_DENIED", reason: "param_undeclared", input: "destination" });
+    const stale = await underMandate({ amount: 100 }, {}, mandate, TOOL, "sha256-other");
+    expect(record(stale, { amount: 100 }).credentialSubject).toMatchObject({ reason: "tool_changed", detail: "the call was made from another definition than the one on record" });
+  });
+
+  it("has no rung to record for a call refused before its proof held, unless the caller gives one", async () => {
+    const none = await verifyLimitsCall({ agentDid: SUPPORT, policy: POLICY_URN, pop: "x", tool: TOOL, params: {} } as never, deps());
+    expect(none).not.toHaveProperty("agent");
+    expect(() => record(none, {})).toThrow(/records the rung/);
+    const agent = { assurance: "device" as const, binding: "self" as const, verifiedAt: now.getTime() };
+    const ev = buildLimitsVerificationEvent({ result: none, tool: TOOL, toolHash: "", issuer: VERIFIER, popNonceRef: "n-1", agent }, signer());
+    expect(ev.credentialSubject).toMatchObject({ event: "VERIFICATION_DENIED", reason: "tool_changed", detail: "the call names no definition of the tool" });
   });
 });
