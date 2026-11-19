@@ -66,7 +66,8 @@ const reads = (rules: LimitRule[] | undefined, word: string) => !!rules?.some((r
  *
  * The order of refusals: the root rules; a tool the policy denies; a definition that changed (`tool_changed`); an
  * input the tool does not declare (`param_undeclared`); the tool's rules (`policy_denied`, or, for a rule that
- * leaves its failure to a person, on to the mandate); then the mandate — none (`mandate_required`), one that does
+ * leaves its failure to a person, on to the mandate); a tool under the default, which nobody may grant
+ * (`mandate_required`, naming no grantor); then the mandate — none (`mandate_required`), one that does
  * not list the tool (`tool_not_covered`), another definition (`tool_changed`), a grantor the policy does not allow
  * (`grantor_not_allowed`), more than one call where one is required (`one_call_required`), its rules
  * (`rule_failed`).
@@ -120,7 +121,11 @@ export async function decideLimits(policy: LimitsPolicy, call: LimitsCall, manda
   const settledByAPerson = ran.some((r) => !r.passed);
   if (entry?.effect === "allow" && !settledByAPerson) return { outcome: "allow", evaluations, on: "policy" };
 
-  // 5. A person's mandate. Under a v0.4 policy only one of §15.2's shape that lists the tool counts (§15.7).
+  // 5. A tool under the default has no entry, so nobody to grant it (§15.5): no mandate counts until a member names
+  // the tool in the policy, with its definition and its grantors. The answer names none, which says so.
+  if (!entry) return deny("mandate_required", "policy", { tool: call.tool, grantors: [] });
+
+  // 6. A person's mandate. Under a v0.4 policy only one of §15.2's shape that lists the tool counts (§15.7).
   const grantors = entry && leavesToAPerson(entry) ? entry.grantors : undefined;
   const asks = entry?.reviewer === "required" ? ({ reviewerRequired: true } as const) : {};
   const named = { tool: call.tool, ...(grantors !== undefined ? { grantors } : {}) };
@@ -130,7 +135,7 @@ export async function decideLimits(policy: LimitsPolicy, call: LimitsCall, manda
   if (grantors !== "any" && !grantors?.includes(mandate.grantor)) return deny("grantor_not_allowed", "mandate", named);
   if ((entry?.oneCall === true || settledByAPerson) && mandate.limits.maxExecutions !== 1) return deny("one_call_required", "mandate", named);
 
-  // 6. The mandate's rules, frozen when it was signed.
+  // 7. The mandate's rules, frozen when it was signed.
   const own = [...run(mandate.limits.rules, { in: mandate.id }), ...run(mandateTool.rules, { in: mandate.id, tool: call.tool })];
   if (own.some((r) => !r.passed)) return deny("rule_failed", "mandate", asks);
   return { outcome: "allow", evaluations, on: "mandate", ...unset, ...asks };

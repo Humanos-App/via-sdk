@@ -205,6 +205,18 @@ describe("a call decided (§15.4–§15.8)", () => {
     expect(await decideLimits(policy(), { tool: "crm/update", params: {}, definition: post, agent }, presented())).toMatchObject({ outcome: "deny", reason: "policy_denied", unset: true });
   });
 
+  // @invariant §15.5: a tool under `default: mandate` has nobody to grant it until a member names it in the policy.
+  it("lets no mandate open a tool the policy does not name, under `default: mandate`", async () => {
+    const p = policy({ default: "mandate" });
+    const update: ToolDefinition = { name: "update" };
+    const call = { tool: "crm/update", params: {}, definition: update, agent };
+    const held = presented({ limits: limits({ tools: { "crm/update": { hash: toolDefinitionHash(update), rules: [] } } }) });
+    for (const mandate of [undefined, held]) {
+      expect(await decideLimits(p, call, mandate)).toMatchObject({ outcome: "deny", reason: "mandate_required", on: "policy", unset: true, tool: "crm/update", grantors: [] });
+    }
+    expect(mandateRequestRefusals(p, { grantor: ANA, limits: held.limits }).map((r) => r.reason)).toEqual(["tool_not_covered"]);
+  });
+
   // @invariant §15.8: `mandate_required` names the tool and who may grant it.
   it("asks for a mandate, naming the tool and its grantors", async () => {
     expect(await refund({ amount: 100, order: "1182" })).toMatchObject({ outcome: "deny", reason: "mandate_required", on: "policy", tool: "stripe/create_refund", grantors: [ANA] });

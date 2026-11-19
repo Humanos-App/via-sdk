@@ -193,8 +193,9 @@ export function mandateRequestRefusals(policy: LimitsPolicy, request: { grantor:
   for (const [tool, asked] of Object.entries(request.limits.tools ?? {})) {
     const found = policyToolFor(policy, tool);
     const entry = found?.entry;
-    if (entry ? !leavesToAPerson(entry) : policy.default !== "mandate") {
-      refusals.push({ tool, reason: "tool_not_covered", detail: "the policy never reads a mandate for this tool" });
+    // A tool under the default has no entry and so nobody to grant it (§15.5): a member names it first.
+    if (!entry || !leavesToAPerson(entry)) {
+      refusals.push({ tool, reason: "tool_not_covered", detail: entry ? "the policy never reads a mandate for this tool" : "the policy does not name this tool" });
       continue;
     }
     if (entry?.hash !== undefined && entry.hash !== asked.hash) {
