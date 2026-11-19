@@ -88,6 +88,8 @@ export function buildLimitsVerificationEvent(
     issuer: string;
     /** The rung to record when the result carries none. */
     agent?: AgentEnv;
+    /** v0.4 §14.8 — the entry of the model call that proposed this one, where Humanos matched it. */
+    contextEntry?: { conversation: string; seq: number };
     popNonceRef: string;
     targetVerifier?: string;
     previousEvent?: string | null;
@@ -118,6 +120,7 @@ export function buildLimitsVerificationEvent(
     ...(result.grantors !== undefined ? { grantors: result.grantors } : {}),
     ...(result.input ? { input: result.input } : {}),
     ...(result.detail ? { detail: result.detail } : {}),
+    ...(result.context ? { context: { ...result.context } } : {}),
     ...(result.revocationReason ? { revocationReason: result.revocationReason } : {}),
     ...(agent.keyId && !rest.keyIdEvaluated ? { keyIdEvaluated: agent.keyId } : {}),
     assuranceEvaluated: agent.assurance,

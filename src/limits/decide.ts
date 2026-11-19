@@ -3,6 +3,7 @@
  * mandate's. Pure: the caller has already proved who calls (the PoP), resolved the tool's definition, and checked
  * the mandate's own authority (its stamp, status, dates, bound key). The reviewer (§15.2) is the caller's too.
  */
+import { NO_LAYER_CONTEXT, unfilledTokens, type CallLayerContext } from "../datalayer/policy.js";
 import { leavesToAPerson, policyToolFor } from "./policy.js";
 import { evaluateLimitRule, type RuleEnv } from "./rule.js";
 import { inputsWithDefaults, toolDefinitionHash, undeclaredInput } from "./tool.js";
@@ -40,8 +41,8 @@ export interface LimitsDeps {
     | undefined
     | { denied: true; reason: string }
     | Promise<Record<string, unknown> | undefined | { denied: true; reason: string }>;
-  /** §14.8 — the call's context, where the context layer set one. */
-  context?: Record<string, unknown>;
+  /** §14.8 — the call's context, as Humanos established it. Absent, a call with no layer: a rule always has one to read. */
+  context?: CallLayerContext;
   /** §13.2 — each check's answer, by its capability's name. */
   checks?: Record<string, Record<string, unknown>>;
 }
@@ -74,7 +75,7 @@ const reads = (rules: LimitRule[] | undefined, word: string) => !!rules?.some((r
  *
  * The order of refusals: the root rules; a tool the policy denies; a definition that changed, on record or in the
  * caller's hands (`tool_changed`); an
- * input the tool does not declare (`param_undeclared`); the tool's rules (`policy_denied`, or, for a rule that
+ * input the tool does not declare (`param_undeclared`); a token left in the arguments (`token_unfilled`, §14.5); the tool's rules (`policy_denied`, or, for a rule that
  * leaves its failure to a person, on to the mandate); a tool under the default, which nobody may grant
  * (`mandate_required`, naming no grantor); then the mandate — none (`mandate_required`), one that does
  * not list the tool (`tool_not_covered`), another definition (`tool_changed`), a grantor the policy does not allow
@@ -102,7 +103,7 @@ export async function decideLimits(policy: LimitsPolicy, call: LimitsCall, manda
     params: inputsWithDefaults(call.definition.inputSchema, call.params),
     agent: call.agent,
     ...(accreditation ? { accreditation } : {}),
-    ...(deps.context ? { context: deps.context } : {}),
+    context: { ...(deps.context ?? NO_LAYER_CONTEXT) },
     ...(deps.checks ? { checks: deps.checks } : {}),
   };
   const run = (rules: LimitRule[] | undefined, at: Pick<LimitEvaluation, "in" | "tool">) =>
@@ -128,6 +129,10 @@ export async function decideLimits(policy: LimitsPolicy, call: LimitsCall, manda
   if (entry.hash !== undefined && entry.hash !== hash) return deny("tool_changed");
   const undeclared = undeclaredInput(call.definition.inputSchema, call.params);
   if (undeclared) return deny("param_undeclared", "policy", { input: undeclared });
+  // §14.5 — a token left in the arguments was refused, never issued, or marks a removed value: the tool never runs
+  // with one. The reason is written for the model that made the call.
+  const token = unfilledTokens(call.tool, call.params, policy.context)[0];
+  if (token) return deny("token_unfilled", "policy", { input: token.at, detail: token.reason });
 
   // 4. The policy's rules for the tool. One that leaves its failure to a person sends the call to a mandate.
   const ran = run(entry.rules, { in: policyRef, tool: call.tool });

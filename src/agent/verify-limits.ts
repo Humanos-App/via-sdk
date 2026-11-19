@@ -8,6 +8,7 @@ import { isSupportedSpecVersion } from "../version.js";
 import { decideLimits, type LimitsDecision } from "../limits/decide.js";
 import { isLimitsMandate, limitsOf } from "../limits/mandate.js";
 import type { LimitEvaluation, LimitsPolicy, ReviewerPart, ToolDefinition } from "../limits/types.js";
+import { NO_LAYER_CONTEXT, type CallLayerContext } from "../datalayer/policy.js";
 import type { AccreditationRevocationReason } from "../operator/types.js";
 import {
   _celAgent,
@@ -60,8 +61,8 @@ export interface LimitsCallDeps extends Pick<AgentDirectDeps, "resolvePublicKey"
    * nothing, except on a tool the policy marks `reviewer: "required"`. Default `true`.
    */
   reviewEnforces?: boolean;
-  /** §14.8 — the call's context, where the context layer set one. */
-  context?: Record<string, unknown>;
+  /** §14.8 — the call's context, as Humanos established it: never what the agent reports of itself. Absent, none. */
+  context?: CallLayerContext;
   /** §13.2 — each check's answer, by its capability's name. */
   checks?: Record<string, Record<string, unknown>>;
 }
@@ -89,8 +90,10 @@ export interface LimitsCallResult {
   grantors?: string[] | "any";
   /** With `param_undeclared`: the input, as a path. */
   input?: string;
-  /** In words, where the code alone would mislead. */
+  /** In words, where the code alone would mislead; with `token_unfilled`, the reason the model reads (§14.5). */
   detail?: string;
+  /** §14.8 — the call's context its rules read, as Humanos established it. On every result that reached the policy. */
+  context?: CallLayerContext;
   /** §15.8 — on a decision under a mandate: what the reviewer did. */
   reviewed?: ReviewerPart;
   /** v0.3 §20.6 — the reviewer that took part, for the audit record. */
@@ -173,6 +176,7 @@ export async function verifyLimitsCall(req: LimitsCallRequest, deps: LimitsCallD
     ...(d.grantors !== undefined ? { grantors: d.grantors } : {}),
     ...(d.input ? { input: d.input } : {}),
     ...(d.detail ? { detail: d.detail } : {}),
+    context: deps.context ?? NO_LAYER_CONTEXT,
     ...(revocationReason ? { revocationReason } : {}),
   });
 

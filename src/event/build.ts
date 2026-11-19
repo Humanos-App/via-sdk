@@ -73,6 +73,13 @@ export interface EventFields {
   input?: string;
   /** In words, where a code alone would mislead: a `tool_changed` for a call that named no definition. */
   detail?: string;
+  /**
+   * v0.4 §14.8 — the call's context, as Humanos established it: `{ mode, proposed, filled }`, the kinds filled into
+   * the call by parameter, never the values.
+   */
+  context?: Record<string, unknown>;
+  /** v0.4 §14.8 — the entry of the model call that proposed this one: its conversation and its `seq`. */
+  contextEntry?: { conversation: string; seq: number };
   // ── about an organization's policy (`POLICY_PUBLISHED`, §21.2) ──
   policy?: string;
   version?: number;

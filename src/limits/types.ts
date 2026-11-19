@@ -4,6 +4,7 @@
  * (`../action`) are untouched: a document says which it is by its `specVersion`.
  */
 import type { MandateDescription } from "../types.js";
+import type { PolicyContext, ToolFill } from "../datalayer/policy.js";
 
 /** §15.4 — a condition's operators: v0.3 §0.6.2's, and the ones the platform's limits already ran. */
 export type LimitOperator =
@@ -71,8 +72,8 @@ export interface PolicyTool {
   oneCall?: boolean;
   /** §15.2 — no mandate and no call under one without the reviewer's agreement. The name is *proposed*. */
   reviewer?: "required";
-  /** §14.3 — the kinds of personal data it may receive; read by the context layer, not here. */
-  fill?: unknown;
+  /** §14.3 — per parameter, the kinds of personal data that may be filled into it. For every agent. */
+  fill?: ToolFill;
 }
 
 /** §15.1 — a policy version of v0.4's shape. */
@@ -88,8 +89,8 @@ export interface LimitsPolicy {
   tools: Record<string, PolicyTool>;
   /** §13.2 — installed apps; read by the router, not here. */
   apps?: unknown[];
-  /** §14.3 — the context layer's settings; read by it, not here. */
-  context?: unknown;
+  /** §14.3 — the context layer's settings. Absent, nothing is replaced. */
+  context?: PolicyContext;
 }
 
 /** §15.2 — a tool a mandate covers: the definition the person approved it for, and its limits. `rules` may be empty. */

@@ -3,6 +3,7 @@
  * that speaks for a tool.
  */
 import { validateDescription } from "../mandate/description.js";
+import { policyContextIssues, toolFillIssues } from "../datalayer/policy.js";
 import { ruleIssues } from "./rule.js";
 import { parseToolKey, toolDefinitionHash, wholeServerKey } from "./tool.js";
 import { TOOL_EFFECTS, type LimitsPolicy, type MandateLimits, type PolicyTool, type ToolDefinition } from "./types.js";
@@ -60,6 +61,8 @@ export function limitsPolicyPublishIssues(policy: LimitsPolicy, ctx: LimitsPubli
     if (rule.otherwise) issues.push(`rule ${i + 1}: a root rule's failure is not left to a person: it names no tool to grant`);
   }
 
+  if (policy.context !== undefined) issues.push(...policyContextIssues(policy.context));
+
   if (!policy.tools || typeof policy.tools !== "object" || Array.isArray(policy.tools)) return [...issues, "`tools` is missing"];
   for (const [key, entry] of Object.entries(policy.tools)) {
     const at = `tool ${key}`;
@@ -78,8 +81,8 @@ export function limitsPolicyPublishIssues(policy: LimitsPolicy, ctx: LimitsPubli
     }
     const personNeeded = leavesToAPerson(entry);
     if (entry.effect === "deny") {
-      if (entry.rules?.length || entry.grantors !== undefined || entry.oneCall !== undefined || entry.reviewer !== undefined) {
-        issues.push(`${at}: a denied tool carries no rules, grantors, \`oneCall\` or \`reviewer\``);
+      if (entry.rules?.length || entry.grantors !== undefined || entry.oneCall !== undefined || entry.reviewer !== undefined || entry.fill !== undefined) {
+        issues.push(`${at}: a denied tool carries no rules, grantors, \`oneCall\`, \`reviewer\` or \`fill\``);
       }
       continue;
     }
@@ -99,6 +102,7 @@ export function limitsPolicyPublishIssues(policy: LimitsPolicy, ctx: LimitsPubli
     } else if (entry.grantors !== undefined || entry.oneCall !== undefined || entry.reviewer !== undefined) {
       issues.push(`${at}: \`grantors\`, \`oneCall\` and \`reviewer\` are for a tool that leaves calls to a person`);
     }
+    if (entry.fill !== undefined) for (const issue of toolFillIssues(entry.fill, definition?.inputSchema, policy.context)) issues.push(`${at}: ${issue}`);
     if (entry.oneCall !== undefined && typeof entry.oneCall !== "boolean") issues.push(`${at}: \`oneCall\` is true or false`);
     if (entry.reviewer !== undefined && entry.reviewer !== "required") issues.push(`${at}: \`reviewer\` is \`required\`, or absent`);
   }
