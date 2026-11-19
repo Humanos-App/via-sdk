@@ -70,11 +70,18 @@ export interface LeftOperand {
  * §15.4 — read a `left` (or a `right`). `agent.`, `accreditation.`, `context.` and `checks.` name those; anything
  * else is one of the tool's inputs. `checks.{capability}.{field}`: the field is the last part, the capability the
  * rest.
+ *
+ * A tool may name an input `agent`, `context` or `checks` itself. Written bare, those words keep their meaning
+ * here, so such an input is written `params.agent.team`: `params.` always names an input, whatever comes after.
  */
 export function parseOperand(operand: string): LeftOperand | null {
   if (typeof operand !== "string" || operand.length === 0) return null;
   const dot = operand.indexOf(".");
   const head = dot < 0 ? "" : operand.slice(0, dot);
+  if (head === "params") {
+    const path = operand.slice(dot + 1);
+    return parseInputPath(path) ? { scope: "params", path } : null;
+  }
   if (!(RULE_SCOPES as readonly string[]).includes(head)) return parseInputPath(operand) ? { scope: "params", path: operand } : null;
   const rest = operand.slice(dot + 1);
   if (!rest || rest.split(".").some((part) => part.length === 0)) return null;

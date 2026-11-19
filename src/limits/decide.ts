@@ -17,6 +17,12 @@ export interface LimitsCall {
   definition: ToolDefinition;
   /** `agent.*` (v0.3 §9.3); its `did` is what an exception names. */
   agent: Record<string, unknown>;
+  /**
+   * §15.3 — the hash of the definition the caller made the call from, as it reports it. A record of the tool is only
+   * as fresh as its last declaration, so a call from another definition is refused `tool_changed` at once, without
+   * waiting for the next one. Where the agent makes the call itself this is its word, as its inputs are.
+   */
+  madeFrom?: string;
 }
 
 /** A mandate presented with the call, already held to its own authority by the caller. */
@@ -64,7 +70,8 @@ const reads = (rules: LimitRule[] | undefined, word: string) => !!rules?.some((r
  * §15.4 — every rule runs: the policy's root rules, its rules for the tool, then the mandate's root rules and its
  * rules for the tool. Any failure denies, and the deny names where its rule stands.
  *
- * The order of refusals: the root rules; a tool the policy denies; a definition that changed (`tool_changed`); an
+ * The order of refusals: the root rules; a tool the policy denies; a definition that changed, on record or in the
+ * caller's hands (`tool_changed`); an
  * input the tool does not declare (`param_undeclared`); the tool's rules (`policy_denied`, or, for a rule that
  * leaves its failure to a person, on to the mandate); a tool under the default, which nobody may grant
  * (`mandate_required`, naming no grantor); then the mandate — none (`mandate_required`), one that does
@@ -109,8 +116,9 @@ export async function decideLimits(policy: LimitsPolicy, call: LimitsCall, manda
   // 2. The tool's entry, its server's, or the default.
   if (entry ? entry.effect === "deny" : policy.default === "deny") return deny("policy_denied");
 
-  // 3. The definition the policy pins, and the inputs the tool declares.
+  // 3. The definition the call was made from, the one the policy pins, and the inputs the tool declares.
   const hash = toolDefinitionHash(call.definition);
+  if (call.madeFrom !== undefined && call.madeFrom !== hash) return deny("tool_changed");
   if (entry?.hash !== undefined && entry.hash !== hash) return deny("tool_changed");
   const undeclared = undeclaredInput(call.definition.inputSchema, call.params);
   if (undeclared) return deny("param_undeclared", "policy", { input: undeclared });

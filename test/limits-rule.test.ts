@@ -91,6 +91,23 @@ describe("a rule's expression (§15.4)", () => {
     for (const bad of ["", "agent.", "checks.paid", "a..b"]) expect(parseOperand(bad)).toBeNull();
   });
 
+  // @invariant §15.4: `agent`, `accreditation`, `context` and `checks` keep their meaning; an input of that name is
+  // written with `params.`.
+  it("reads an input named like one of a rule's own words through `params.`", () => {
+    const TICKET: JsonSchema = { type: "object", properties: { agent: { type: "object", properties: { team: { type: "string" } } }, params: { type: "string" } } };
+    expect(parseOperand("agent.team")).toEqual({ scope: "agent", path: "team" });
+    expect(parseOperand("params.agent.team")).toEqual({ scope: "params", path: "agent.team" });
+    expect(parseOperand("params.params")).toEqual({ scope: "params", path: "params" });
+    expect(parseOperand("params.")).toBeNull();
+    const input = buildRule([{ left: "params.agent.team", operator: "==", value: "billing" }], TICKET);
+    expect(input.expression).toBe('"agent" in params && "team" in params.agent && params.agent.team == "billing"');
+    expect(ruleIssues(input, { document: "policy", inputs: TICKET, root: false })).toEqual([]);
+    const env = { params: { agent: { team: "billing" } }, agent: { team: "support", did: "did:a" } };
+    expect(evaluateLimitRule(input, env, AT).result).toBe("pass");
+    // Bare, the same words read the calling agent's record, not the tool's input.
+    expect(evaluateLimitRule(buildRule([{ left: "agent.team", operator: "==", value: "billing" }], TICKET), env, AT).result).toBe("fail");
+  });
+
   it("writes each condition with the test that its value is there", () => {
     expect(ruleExpression([{ left: "amount", operator: "<=", value: 500 }], REFUND)).toBe('"amount" in params && params.amount <= 500.0');
     expect(ruleExpression([{ left: "max-items", operator: ">=", value: 1 }], REFUND)).toBe('"max-items" in params && params["max-items"] >= 1.0');
