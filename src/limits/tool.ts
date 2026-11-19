@@ -52,12 +52,22 @@ export function wholeServerKey(key: string): string | null {
   return parsed?.server ? `${parsed.server}/*` : null;
 }
 
-/** A copy with every `required` list sorted: JSON Schema gives their order no meaning. */
-function sortRequired(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortRequired);
+/**
+ * A schema as it is hashed: every `required` list sorted, since JSON Schema gives their order no meaning, and every
+ * `$schema` left out, since it names the dialect the schema is written in and nothing of the tool. A key of a
+ * `properties` map is an input's name, never a keyword: an input called `$schema` or `required` stays.
+ */
+function tidySchema(value: unknown, names = false): unknown {
+  if (Array.isArray(value)) return value.map((v) => tidySchema(v));
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(
-    Object.entries(value).map(([key, v]) => [key, key === "required" && Array.isArray(v) && v.every((x) => typeof x === "string") ? [...v].sort() : sortRequired(v)]),
+    Object.entries(value)
+      .filter(([key]) => names || key !== "$schema")
+      .map(([key, v]) => {
+        if (names) return [key, tidySchema(v)];
+        if (key === "required" && Array.isArray(v) && v.every((x) => typeof x === "string")) return [key, [...v].sort()];
+        return [key, tidySchema(v, key === "properties" || key === "patternProperties" || key === "$defs" || key === "definitions")];
+      }),
   );
 }
 
@@ -66,8 +76,10 @@ function sortRequired(value: unknown): unknown {
  * schema, output schema and annotations. A corrected typo changes it: a description is where a tool gives the
  * agent instructions.
  *
- * Two things that mean nothing are set aside first, and nothing else: the spaces around the name, the title and
- * the description, and the order of a schema's `required` lists. An absent or empty text is left out, so a missing
+ * Three things that mean nothing are set aside first, and nothing else: the spaces around the name, the title and
+ * the description; the order of a schema's `required` lists; and a schema's `$schema`, which names the dialect it
+ * is written in, so the same tool described by two libraries, or by a library before and after it moves dialect,
+ * is one tool. An absent or empty text is left out, so a missing
  * title and a blank one hash alike. Nothing is cut and nothing is dropped: every annotation and every character
  * counts. The server is not in it: the tool's key names it.
  */
@@ -78,7 +90,7 @@ export function toolDefinitionHash(definition: ToolDefinition): string {
     if (text) pinned[member] = text;
   }
   for (const member of ["inputSchema", "outputSchema"] as const) {
-    if (definition[member] !== undefined && definition[member] !== null) pinned[member] = sortRequired(definition[member]);
+    if (definition[member] !== undefined && definition[member] !== null) pinned[member] = tidySchema(definition[member]);
   }
   if (definition.annotations !== undefined && definition.annotations !== null) pinned.annotations = definition.annotations;
   return computeSRI(canonicalizeRFC8785(pinned));

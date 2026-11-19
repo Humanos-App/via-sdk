@@ -67,6 +67,24 @@ describe("a tool's key and definition (§15.3)", () => {
     expect(toolDefinitionHash({ ...def, description: "Refund a  charge." })).not.toBe(toolDefinitionHash(def)); // spaces inside a text count
   });
 
+  // @invariant §15.3: `$schema` names the dialect a schema is written in, nothing of the tool. Two libraries
+  // describe one tool with two of them, and it is one tool.
+  it("sets aside a schema's dialect marker, and nothing that describes the tool", () => {
+    const body = { type: "object", properties: { order_id: { type: "string", description: "The order" }, amount: { type: "number", maximum: 500 } }, required: ["order_id"], additionalProperties: false };
+    const as = (schema: Record<string, unknown>) => toolDefinitionHash({ name: "issue_refund", inputSchema: schema, outputSchema: schema });
+    expect(as({ $schema: "http://json-schema.org/draft-07/schema#", ...body })).toBe(as({ $schema: "https://json-schema.org/draft/2020-12/schema", ...body }));
+    expect(as({ $schema: "https://json-schema.org/draft/2020-12/schema", ...body })).toBe(as(body));
+    const nested = { ...body, properties: { ...body.properties, to: { $schema: "x", type: "object", properties: {} } } };
+    expect(as(nested)).toBe(as({ ...body, properties: { ...body.properties, to: { type: "object", properties: {} } } }));
+    // Anything that says what the tool takes still counts.
+    expect(as({ ...body, additionalProperties: true })).not.toBe(as(body));
+    expect(as({ ...body, properties: { ...body.properties, amount: { type: "number", maximum: 5000 } } })).not.toBe(as(body));
+    // An input the tool itself calls `$schema` or `required` is an input, and stays.
+    const named = (properties: Record<string, unknown>) => as({ type: "object", properties });
+    expect(named({ $schema: { type: "string" } })).not.toBe(named({}));
+    expect(named({ required: { type: "boolean" } })).not.toBe(named({}));
+  });
+
   // @invariant §15.3: a call carries only inputs its tool declares, at every depth the schema declares.
   it("finds an input the tool does not declare, at any depth", () => {
     expect(undeclaredInput(REFUND, { amount: 5, recipient: { iban: "PT50" }, lines: [{ price: 1 }] })).toBeNull();
