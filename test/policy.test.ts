@@ -503,6 +503,49 @@ describe("a mandate, read only where the policy leaves the tool to one (§21.3)"
     expect(observed).toMatchObject({ decision: "allow", enforcement: "none", unset: true });
     expect(loads).toEqual([]);
   });
+
+  // @invariant §0.13, §16.10: a mandate of a later version is refused, never read. The case that matters: v0.4's
+  // mandate for an agent pins no action and lists its tools (v0.4 §15.2). Read as v0.3, a mandate with no action is a
+  // plain authorization, which opens every tool left to a mandate. Its signed marker is what stops that.
+  it("refuses a mandate marked with a later version, which v0.3 would read as a plain authorization", async () => {
+    const body = buildMandate({
+      subjectOrg: ORG,
+      grantor: "did:web:humanos.tech:user:customer",
+      authorizedDIDs: [VERIFIER],
+      authorizedAgents: [keyOf(supportKey, SUPPORT)],
+      validFrom: "2026-01-01T00:00:00.000Z",
+      description: { text: "Credit order 1182, up to 50 EUR.", lang: "en", author: "agent" },
+      enforcement: "none",
+    });
+    // The control: the same body as v0.3 issues it is a plain authorization, and it opens the tool.
+    const asV03 = stampMandate(structuredClone(body), { privateKey: HUMANOS.privateKey, verificationMethod: HUMANOS_VM });
+    // v0.4's: the marker, and the tools and rules a v0.3 verifier knows nothing of.
+    const later = structuredClone(body) as unknown as Record<string, unknown> & { credentialSubject: { mandate: Record<string, unknown> } };
+    later.specVersion = "0.4";
+    later.credentialSubject.mandate.maxExecutions = 1;
+    later.credentialSubject.mandate.tools = { "billing/issue_credit": { hash: "sha256-AAAA", rules: [] } };
+    const asV04 = stampMandate(later as unknown as ViaMandateCredential, { privateKey: HUMANOS.privateKey, verificationMethod: HUMANOS_VM });
+
+    const present = async (held: ViaMandateCredential) => {
+      const pop = await popFor(supportKey, actionHash(held.id, "issue_credit", { amount: 9000 }));
+      return verifyAgentCall(
+        { agentDid: SUPPORT, mandateId: held.id, pop, action: "issue_credit", params: { amount: 9000 } },
+        deps({
+          loadMandate: () => ({ mandate: held, record: { status: "ACTIVE", validFrom: "2026-01-01T00:00:00.000Z" }, candidates: [keyOf(supportKey, SUPPORT)] }),
+        }),
+      );
+    };
+    expect(await present(asV03)).toMatchObject({ decision: "allow", credentialId: asV03.id });
+    expect(await present(asV04)).toMatchObject({ decision: "deny", reason: "unsupported_spec_version", credentialId: asV04.id });
+
+    // The marker is under the stamp: taking it off, or writing v0.3's over it, is an edited credential.
+    for (const marker of ["0.3", undefined]) {
+      const edited = structuredClone(asV04) as unknown as Record<string, unknown>;
+      if (marker) edited.specVersion = marker;
+      else delete edited.specVersion;
+      expect(await present(edited as unknown as ViaMandateCredential)).toMatchObject({ decision: "deny", reason: "credential_stamp_invalid" });
+    }
+  });
 });
 
 describe("issuing a mandate the policy would read (§21.3)", () => {
