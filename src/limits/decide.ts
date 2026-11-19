@@ -7,7 +7,7 @@ import { NO_LAYER_CONTEXT, unfilledTokens, type CallLayerContext } from "../data
 import { capabilityDigest, capabilityInputSchema, type ViaCapability } from "../apps/capability.js";
 import { leavesToAPerson, policyToolFor } from "./policy.js";
 import { evaluateLimitRule, type RuleEnv } from "./rule.js";
-import { inputsWithDefaults, toolDefinitionHash, undeclaredInput } from "./tool.js";
+import { inputsWithDefaults, nameOnlyHash, toolDefinitionHash, undeclaredInput } from "./tool.js";
 import type { LimitEvaluation, LimitRule, LimitsPolicy, MandateLimits, ToolDefinition } from "./types.js";
 
 /** One call, as its limits read it. */
@@ -109,8 +109,10 @@ export async function decideLimits(policy: LimitsPolicy, call: LimitsCall, manda
     // An operator with no accreditation is the unverified tier (v0.3 §18.6); with no loader at all, the rule errors.
     accreditation = loaded ?? (deps.loadAccreditation ? { level: "unverified" } : undefined);
   }
-  if (!call.capability && !call.definition) throw new TypeError("VIA: a call is decided against its tool's definition, or its capability's approved version (v0.4 §15.3)");
-  const inputs = call.capability ? capabilityInputSchema(call.capability.approved) : call.definition!.inputSchema;
+  // §13.0 — a tool the policy knows by name only has no definition to read: its hash is its name's, its inputs unchecked.
+  const nameOnly = entry?.nameOnly === true;
+  if (!nameOnly && !call.capability && !call.definition) throw new TypeError("VIA: a call is decided against its tool's definition, or its capability's approved version (v0.4 §15.3)");
+  const inputs = nameOnly ? undefined : call.capability ? capabilityInputSchema(call.capability.approved) : call.definition!.inputSchema;
   const env: RuleEnv = {
     params: inputsWithDefaults(inputs, call.params),
     agent: call.agent,
@@ -135,12 +137,12 @@ export async function decideLimits(policy: LimitsPolicy, call: LimitsCall, manda
   if (!entry) return deny("mandate_required", "policy", { tool: call.tool, grantors: [] });
 
   // 3. The definition the call was made from, the one the policy pins, and the inputs the tool declares.
-  const hash = call.capability ? capabilityDigest(call.capability.approved) : toolDefinitionHash(call.definition!);
+  const hash = nameOnly ? nameOnlyHash(call.tool)! : call.capability ? capabilityDigest(call.capability.approved) : toolDefinitionHash(call.definition!);
   if (typeof call.madeFrom !== "string" || !call.madeFrom) return deny("tool_changed", "policy", { detail: "the call names no definition of the tool" });
-  const known = call.capability ? call.capability.published.includes(call.madeFrom) : call.madeFrom === hash;
+  const known = !nameOnly && call.capability ? call.capability.published.includes(call.madeFrom) : call.madeFrom === hash;
   if (!known) return deny("tool_changed", "policy", { detail: "the call was made from another definition than the one on record" });
   if (entry.hash !== undefined && entry.hash !== hash) return deny("tool_changed");
-  const undeclared = undeclaredInput(inputs, call.params);
+  const undeclared = nameOnly ? null : undeclaredInput(inputs, call.params);
   if (undeclared) return deny("param_undeclared", "policy", { input: undeclared });
   // §14.5 — a token left in the arguments was refused, never issued, or marks a removed value: the tool never runs
   // with one. The reason is written for the model that made the call.

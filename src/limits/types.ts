@@ -65,6 +65,12 @@ export interface PolicyTool {
   hash?: string;
   /** §13.1, §15.3 — a capability's entry: the version a member approved, whose digest is `hash`. */
   version?: number;
+  /**
+   * §13.0, §15.3 — a tool known by name only: a host's hook is handed its name and inputs and no definition. Its
+   * `hash` is its name's alone (`nameOnlyHash`). It takes an effect, rules on the agent and the reviewer; it takes
+   * no rule on an input and no `fill`, and its inputs are not checked against a definition. The name is *proposed*.
+   */
+  nameOnly?: true;
   rules?: LimitRule[];
   /** §15.5 — who may grant a mandate for it: DIDs, or `"any"` written out. */
   grantors?: string[] | "any";

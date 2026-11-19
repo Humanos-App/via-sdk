@@ -64,6 +64,15 @@ export function toolDefinitionHash(definition: ToolDefinition): string {
   return computeSRI(canonicalizeRFC8785(pinned));
 }
 
+/**
+ * §13.0, §15.3 — the hash of a tool known by name only, from its key: what a hook can compute from the name it is
+ * handed, and what a policy pins for such a tool. Null for a key that names no one tool.
+ */
+export function nameOnlyHash(key: string): string | null {
+  const parsed = parseToolKey(key);
+  return parsed && !parsed.wholeServer ? toolDefinitionHash({ name: parsed.name }) : null;
+}
+
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 /**
