@@ -36,12 +36,19 @@ export function serverKey(label: string): string {
   return label.trim().toLowerCase().replace(/[\s_\-/]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
+/** §15.3 — the server part of the key of a tool its host declares under no service: `own/create_refund`. */
+export const OWN_SERVER = "own";
+
 /**
  * §15.3 — a tool's key in a policy and a mandate: its server, spelled by {@link serverKey}, and its name as the
- * server gives it. Null when either is empty, or the name holds a slash or a star: such a tool has no key.
+ * server gives it. A tool declared under no service, or under a label that spells nothing, is keyed under
+ * {@link OWN_SERVER}. Null when the name is empty or holds a slash or a star: such a tool has no key.
+ *
+ * `own` is not reserved: a service that calls itself "Own" shares the key space of the tools with no service. The
+ * server in a key is what the host says it is, never a boundary; the definition's hash is what holds a tool.
  */
-export function toolKey(server: string, name: string): string | null {
-  const key = `${serverKey(server)}/${name}`;
+export function toolKey(server: string | null | undefined, name: string): string | null {
+  const key = `${serverKey(server ?? "") || OWN_SERVER}/${name}`;
   const parsed = parseToolKey(key);
   return parsed && !parsed.wholeServer ? key : null;
 }

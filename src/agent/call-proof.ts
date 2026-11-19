@@ -15,7 +15,7 @@ import type { EventSigner } from "../event/build.js";
 import type { ResolvePublicKey } from "../mandate/build.js";
 import type { AccreditationLevel, AccreditationMethod } from "../operator/types.js";
 import type { Assurance, Binding } from "./types.js";
-import { actionHash, policyActionHash } from "./pop.js";
+import { actionHash, limitsActionHash, policyActionHash } from "./pop.js";
 
 /** The call proof's JWS `typ`. Never `via-pop+jwt`: the agent's proof is not the verifier's. */
 export const CALL_PROOF_TYP = "via-call-proof+jwt";
@@ -58,6 +58,12 @@ export interface CallProofClaims {
 export interface CallProofCall {
   action: string;
   params: Record<string, unknown>;
+  /**
+   * v0.4 §15.3 — for a call decided under a v0.4 policy: the hash of the tool's definition the call was made from.
+   * `action_hash` then covers it, as the agent's own proof does ({@link limitsActionHash}); the receiver, whose
+   * tool it is, passes the hash of the definition it serves.
+   */
+  toolHash?: string;
 }
 
 /** The agent's record as a receiver reads it (§16.16): the same fields to every receiver, nothing naming a person. */
@@ -255,8 +261,15 @@ export async function readCallProof(
   return { ok: true, claims: decoded.claims };
 }
 
-/** `action_hash` as the PoP's (§16.6): over `mandate` as `mandateId`, or under a policy, over `policy` (§21.4). */
+/**
+ * `action_hash` as the PoP's (§16.6): over `mandate` as `mandateId`, or under a policy, over `policy` (§21.4); with
+ * a `toolHash`, the one a proof under a v0.4 policy is made over (v0.4 §15.3).
+ */
 function _callHash(authority: { mandate?: string; policy?: string }, call: CallProofCall): string {
+  if (call.toolHash) {
+    const bound = authority.mandate ? { mandateId: authority.mandate } : { policy: authority.policy ?? "" };
+    return limitsActionHash(bound, call.action, call.params, call.toolHash);
+  }
   return authority.mandate !== undefined
     ? actionHash(authority.mandate, call.action, call.params)
     : policyActionHash(authority.policy!, call.action, call.params);

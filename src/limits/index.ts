@@ -1,6 +1,6 @@
 /** v0.4 §15 — limits per tool: the policy and the mandate without VIAAction. */
 export * from "./types.js";
-export { parseToolKey, serverKey, toolKey, wholeServerKey, toolDefinitionHash, nameOnlyHash, undeclaredInput, inputsWithDefaults, parseInputPath, inputAt, kindOf } from "./tool.js";
+export { OWN_SERVER, parseToolKey, serverKey, toolKey, wholeServerKey, toolDefinitionHash, nameOnlyHash, undeclaredInput, inputsWithDefaults, parseInputPath, inputAt, kindOf } from "./tool.js";
 export type { ToolKey, InputKind, PathStep } from "./tool.js";
 export { ruleExpression, buildRule, ruleIssues, evaluateLimitRule, parseOperand, OPERATORS_BY_KIND, RULE_SCOPES } from "./rule.js";
 export type { RulePlace, RuleEnv, RuleScope, LeftOperand } from "./rule.js";

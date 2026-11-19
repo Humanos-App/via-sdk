@@ -40,7 +40,12 @@ describe("a tool's key and definition (§15.3)", () => {
     expect(serverKey("acme/billing")).toBe("acme-billing");
     expect(toolKey("Google Calendar", "create_event")).toBe("google-calendar/create_event");
     expect(toolKey("Stripe", "Create_Refund")).toBe("stripe/Create_Refund"); // a tool's name is the server's own
-    for (const [server, name] of [["", "x"], ["stripe", ""], ["stripe", "a/b"], ["stripe", "*"], ["  ", "x"]]) expect(toolKey(server!, name!)).toBeNull();
+    for (const [server, name] of [["stripe", ""], ["stripe", "a/b"], ["stripe", "*"], ["", ""], ["", "*"]]) expect(toolKey(server!, name!)).toBeNull();
+    // §15.3 (decided 2026-11-19): a tool its host declares under no service is keyed under `own`.
+    for (const server of ["", "  ", "---", null, undefined]) expect(toolKey(server, "create_refund")).toBe("own/create_refund");
+    // `own` is not reserved: a service that calls itself "Own" shares that key space, and the hash tells the tools apart.
+    expect(toolKey("Own", "create_refund")).toBe("own/create_refund");
+    expect(parseToolKey("own/create_refund")).toEqual({ server: "own", name: "create_refund", wholeServer: false });
   });
 
   // @invariant §15.3: the hash is over the whole definition, so a changed description is a changed tool.

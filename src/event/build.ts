@@ -67,6 +67,11 @@ export interface EventFields {
   toolHash?: string;
   /** §15.8 — what the reviewer did: `agreed` | `not_enforcing` | `unavailable`. On a decision under a mandate. */
   reviewed?: string;
+  /**
+   * §15.8 — `false` on a refusal made before the agent's proof held: no definition named, a proof that is wrong or
+   * replayed, an agent that may not act. The event then claims no rung and no key. The name is *proposed*.
+   */
+  proofHeld?: false;
   /** §15.8 — with `mandate_required`, `grantor_not_allowed`, `one_call_required`: who may grant a mandate for the tool. */
   grantors?: string[] | "any";
   /** §15.8 — with `param_undeclared`: the input the tool does not declare, as a path. */

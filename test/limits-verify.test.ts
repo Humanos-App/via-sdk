@@ -336,13 +336,49 @@ describe("the decision's signed event (§15.8)", () => {
     expect(record(stale, { amount: 100 }).credentialSubject).toMatchObject({ reason: "tool_changed", detail: "the call was made from another definition than the one on record" });
   });
 
-  it("has no rung to record for a call refused before its proof held, unless the caller gives one", async () => {
-    const none = await verifyLimitsCall({ agentDid: SUPPORT, policy: POLICY_URN, pop: "x", tool: TOOL, params: {} } as never, deps());
+  // @invariant §15.8 (decided 2026-11-19): a refusal before the proof held is signed too, and claims nothing that
+  // was not verified: no rung, no key, no proof's hash.
+  it.each([
+    ["a call that names no definition", { toolHash: undefined, pop: "x" }, "tool_changed"],
+    ["a proof that does not read", { toolHash: "h", pop: "x" }, "pop_invalid"],
+    ["an agent with no usable key", { toolHash: "h", pop: "x", candidates: [] }, "agent_not_bound"],
+  ])("records a refusal before the proof held as one, claiming no rung — %s", async (_case, call, reason) => {
+    const none = await verifyLimitsCall(
+      { agentDid: SUPPORT, policy: POLICY_URN, pop: call.pop, tool: TOOL, params: { amount: 1 }, toolHash: call.toolHash === "h" ? held(TOOL) : (undefined as never) },
+      deps("candidates" in call ? { candidates: [] } : {}),
+    );
+    expect(none).toMatchObject({ decision: "deny", reason });
     expect(none).not.toHaveProperty("agent");
-    expect(() => record(none, {})).toThrow(/records the rung/);
-    const agent = { assurance: "device" as const, binding: "self" as const, verifiedAt: now.getTime() };
-    const ev = buildLimitsVerificationEvent({ result: none, tool: TOOL, toolHash: "", issuer: VERIFIER, popNonceRef: "n-1", agent }, signer());
-    expect(ev.credentialSubject).toMatchObject({ event: "VERIFICATION_DENIED", reason: "tool_changed", detail: "the call names no definition of the tool" });
+    const ev = buildLimitsVerificationEvent(
+      { result: none, tool: TOOL, toolHash: call.toolHash === "h" ? held(TOOL) : "", params: { amount: 1 }, issuer: VERIFIER, keyIdEvaluated: `${SUPPORT}#key-1`, levelEvaluated: "verified" },
+      signer(),
+    );
+    expect((await verifyEvent(ev, async () => HUMANOS.publicKey)).valid).toBe(true);
+    expect(ev.credentialSubject).toMatchObject({ id: POLICY_URN, agentDid: SUPPORT, event: "VERIFICATION_DENIED", reason, tool: TOOL, proofHeld: false, executionParams: { amount: 1 } });
+    for (const claimed of ["assuranceEvaluated", "bindingEvaluated", "rootUsed", "attestationFreshnessAt", "keyIdEvaluated", "levelEvaluated", "actionHash", "popNonceRef"]) {
+      expect(ev.credentialSubject).not.toHaveProperty(claimed);
+    }
+    if (call.toolHash !== "h") expect(ev.credentialSubject).not.toHaveProperty("toolHash");
+  });
+
+  it("keeps the nonce a failed proof carried, as what the call presented", async () => {
+    const none = await verifyLimitsCall({ agentDid: SUPPORT, policy: POLICY_URN, pop: "x", tool: TOOL, params: {} } as never, deps());
+    const ev = buildLimitsVerificationEvent({ result: none, tool: TOOL, toolHash: "", issuer: VERIFIER, popNonceRef: "n-9" }, signer());
+    expect(ev.credentialSubject).toMatchObject({ proofHeld: false, popNonceRef: "n-9" });
+  });
+
+  it("says nothing of the proof on a decision whose proof held", async () => {
+    const ev = record(await underPolicy(TOOL, { amount: 100 }), { amount: 100 });
+    expect(ev.credentialSubject).not.toHaveProperty("proofHeld");
+    expect(ev.credentialSubject).toMatchObject({ assuranceEvaluated: "device" });
+  });
+
+  // @refusal
+  it("refuses to record an approval that names no rung, or a held proof with no nonce", async () => {
+    const decided = await underPolicy(TOOL, { amount: 100 });
+    const approval = { ...decided, decision: "allow" as const, agent: undefined };
+    expect(() => buildLimitsVerificationEvent({ result: approval, tool: TOOL, toolHash: held(TOOL), issuer: VERIFIER }, signer())).toThrow(/names none/);
+    expect(() => buildLimitsVerificationEvent({ result: decided, tool: TOOL, toolHash: held(TOOL), issuer: VERIFIER }, signer())).toThrow(/proof's nonce/);
   });
 });
 

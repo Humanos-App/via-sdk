@@ -4,6 +4,7 @@ import {
   buildCallProof,
   verifyCallProof,
   actionHash,
+  limitsActionHash,
   policyActionHash,
   outcomeParams,
   CALL_PROOF_MAX_LIFETIME,
@@ -150,6 +151,28 @@ describe("§16.16 the call proof", () => {
     ["another tool", { ...CALL, action: "withdraw" }],
   ])("refuses a proof for another call — %s", async (_name, call) => {
     expect(await check(proof(), { call })).toEqual({ ok: false, reason: "action_hash_mismatch" });
+  });
+
+  // v0.4 §15.3 (decided 2026-11-19): under a v0.4 policy the proof covers the hash of the tool's definition, as the
+  // agent's own proof does.
+  it("covers the tool's definition under a v0.4 policy: the receiver checks the call with the hash of the definition it serves", async () => {
+    const call = { ...CALL, toolHash: "sha256-def" };
+    const token = proof({ call });
+    const claims = JSON.parse(Buffer.from(token.split(".")[1]!, "base64url").toString("utf8")) as { action_hash: string };
+    expect(claims.action_hash).toBe(limitsActionHash({ mandateId: MANDATE }, CALL.action, CALL.params, "sha256-def"));
+    expect((await check(token, { call })).ok).toBe(true);
+    const underPolicy = proof({ call, mandate: undefined, policy: "urn:via:policy:p1", policyDigest: "sha256-p" } as never);
+    expect(JSON.parse(Buffer.from(underPolicy.split(".")[1]!, "base64url").toString("utf8")).action_hash).toBe(
+      limitsActionHash({ policy: "urn:via:policy:p1" }, CALL.action, CALL.params, "sha256-def"),
+    );
+  });
+
+  // @refusal
+  it.each([
+    ["another definition of the tool", { ...CALL, toolHash: "sha256-other" }],
+    ["no definition named", CALL],
+  ])("refuses a v0.4 proof for a call made from %s", async (_name, call) => {
+    expect(await check(proof({ call: { ...CALL, toolHash: "sha256-def" } }), { call })).toEqual({ ok: false, reason: "action_hash_mismatch" });
   });
 
   // @refusal

@@ -72,25 +72,27 @@ export function buildVerificationEvent(
  * from what {@link verifyLimitsCall} answered. It names the tool and the definition the call was made from, each
  * rule by its place, and what the reviewer did. It carries no `enforcement`: a §15.2 mandate has one kind.
  *
- * A refusal before the agent's proof held (`agent_not_bound`, `pop_invalid`, a call that named no definition) has
- * no rung to record: the caller passes the rung it resolved for the agent, or records nothing.
+ * A refusal before the agent's proof held (`agent_not_bound`, `pop_invalid`, `pop_replayed`, a call that named no
+ * definition, an agent that may not act) is recorded too: its result names no rung, so the event says
+ * `proofHeld: false` and claims none — no assurance, no binding, no key, no proof's hash. Only what the call
+ * presented is on it: the tool, the hash it named when it named one, its inputs, its nonce when the proof carried
+ * one. An approval always names its rung: one without is refused here.
  */
 export function buildLimitsVerificationEvent(
   input: {
     /** What the verifier answered: its chain (a mandate, or the policy and the agent), its decision, its reasons. */
     result: LimitsCallResult;
-    /** The tool and the inputs the call presented, and the hash it named. */
+    /** The tool and the inputs the call presented, and the hash it named; empty when it named none. */
     tool: string;
     toolHash: string;
     /** The call's inputs, where the deployment records them; absent, `actionHash` alone stands for them (v0.3 §2). */
     params?: Record<string, unknown>;
     /** The verifier's DID — the signer, so the event's `issuer` (v0.3 §2). */
     issuer: string;
-    /** The rung to record when the result carries none. */
-    agent?: AgentEnv;
     /** v0.4 §14.8 — the entry of the model call that proposed this one, where Humanos matched it. */
     contextEntry?: { conversation: string; seq: number };
-    popNonceRef: string;
+    /** The nonce the call's proof carried; absent only where the proof did not hold and carried none that reads. */
+    popNonceRef?: string;
     targetVerifier?: string;
     previousEvent?: string | null;
     eventId?: string;
@@ -98,10 +100,28 @@ export function buildLimitsVerificationEvent(
   } & Pick<EventFields, "client" | "keyIdEvaluated" | "levelEvaluated" | "methodEvaluated" | "registrarUsed" | "affiliationRef">,
   signer: EventSigner,
 ): ViaEvent {
-  const { result, tool, toolHash, params, agent: given, popNonceRef, previousEvent, ...rest } = input;
-  const agent = result.agent ?? given;
-  if (!agent) throw new TypeError("VIA: a decision's event records the rung that acted; this result names none and no agent was given (v0.3 §16.9)");
+  const { result, tool, toolHash, params, popNonceRef, previousEvent, keyIdEvaluated, levelEvaluated, methodEvaluated, registrarUsed, affiliationRef, ...rest } = input;
+  const agent = result.agent;
+  if (!agent && result.decision !== "deny") {
+    throw new TypeError("VIA: an approval's event records the rung that acted; this result names none (v0.3 §16.9)");
+  }
+  if (agent && !popNonceRef) throw new TypeError("VIA: a decision whose proof held records the proof's nonce (v0.3 §16.9)");
   const policy = result.credentialId ? undefined : { id: result.policy!, agentDid: result.agentDid! };
+  // What was verified, and so only where the proof held: the rung, the key, the operator's standing, the proof's hash.
+  const proven = agent
+    ? {
+        ...(keyIdEvaluated ?? agent.keyId ? { keyIdEvaluated: keyIdEvaluated ?? agent.keyId } : {}),
+        ...(levelEvaluated ? { levelEvaluated } : {}),
+        ...(methodEvaluated ? { methodEvaluated } : {}),
+        ...(registrarUsed ? { registrarUsed } : {}),
+        ...(affiliationRef ? { affiliationRef } : {}),
+        ...(result.actionHash ? { actionHash: result.actionHash } : {}),
+        assuranceEvaluated: agent.assurance,
+        bindingEvaluated: agent.binding,
+        ...(agent.root ? { rootUsed: agent.root } : {}),
+        attestationFreshnessAt: new Date(agent.verifiedAt).toISOString(),
+      }
+    : { proofHeld: false as const };
   const ev = buildEvent({
     ...rest,
     ...subjectOf(result.credentialId, policy),
@@ -110,10 +130,9 @@ export function buildLimitsVerificationEvent(
     ...(result.reason ? { reason: result.reason } : {}),
     evaluations: result.evaluations,
     tool,
-    toolHash,
+    ...(toolHash ? { toolHash } : {}),
     ...(params ? { executionParams: params } : {}),
     policyDigest: result.policyDigest,
-    ...(result.actionHash ? { actionHash: result.actionHash } : {}),
     ...(result.unset ? { unset: true } : {}),
     ...(result.reviewed ? { reviewed: result.reviewed } : {}),
     ...(result.reviewer ? { review: { ...result.reviewer } } : {}),
@@ -122,12 +141,8 @@ export function buildLimitsVerificationEvent(
     ...(result.detail ? { detail: result.detail } : {}),
     ...(result.context ? { context: { ...result.context } } : {}),
     ...(result.revocationReason ? { revocationReason: result.revocationReason } : {}),
-    ...(agent.keyId && !rest.keyIdEvaluated ? { keyIdEvaluated: agent.keyId } : {}),
-    assuranceEvaluated: agent.assurance,
-    bindingEvaluated: agent.binding,
-    ...(agent.root ? { rootUsed: agent.root } : {}),
-    popNonceRef,
-    attestationFreshnessAt: new Date(agent.verifiedAt).toISOString(),
+    ...proven,
+    ...(popNonceRef ? { popNonceRef } : {}),
   });
   return signEvent(ev, signer);
 }
