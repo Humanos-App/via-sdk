@@ -491,3 +491,6 @@ export { verifyLimitsCall, type LimitsCallRequest, type LimitsCallDeps, type Lim
 
 // v0.4 §14 — the context layer's protocol parts: kinds, tokens, the policy's `context`, a tool's `fill`.
 export * from "./datalayer/index.js";
+
+// v0.4 §13 — capabilities and apps: the protocol parts of the connector router.
+export * from "./apps/index.js";

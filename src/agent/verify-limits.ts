@@ -24,6 +24,8 @@ import {
   type HeldMandate,
 } from "./verify.js";
 import type { BoundKey } from "./types.js";
+import { capabilityDigest, isCapabilityName, type ViaCapability } from "../apps/capability.js";
+import { policyToolFor } from "../limits/policy.js";
 
 /** One agent tool call under a v0.4 policy (§15). */
 export interface LimitsCallRequest {
@@ -55,6 +57,11 @@ export interface LimitsCallDeps extends Pick<AgentDirectDeps, "resolvePublicKey"
   validateNonce: (nonce: string, authority: string) => string | Promise<string>;
   /** The tool's definition on record for this agent; null when there is none, and a pinned tool is then `tool_changed`. */
   toolDefinition: (tool: string) => ToolDefinition | null | Promise<ToolDefinition | null>;
+  /**
+   * §13.1 — every published version of a capability, by its name. Required when a call presents one: the policy
+   * names the version a member approved, and the call may be made from any published one.
+   */
+  capabilityVersions?: (name: string) => ViaCapability[] | Promise<ViaCapability[]>;
   /** The mandate presented, by its id; null when the verifier holds none of that id. Called only where one is read. */
   loadMandate?: (mandateId: string) => HeldMandate | null | Promise<HeldMandate | null>;
   /**
@@ -149,7 +156,12 @@ export async function verifyLimitsCall(req: LimitsCallRequest, deps: LimitsCallD
   if (!req.mandateId && req.policy !== policy.$id) return onLane("deny", { reason: "policy_denied", agent: pop.agent, ...proof });
 
   // With no definition on record, a stand-in that carries nothing: a tool the policy pins is then `tool_changed`.
-  const definition = (await deps.toolDefinition(req.tool)) ?? { name: req.tool };
+  // A capability is read at the version the policy's entry approved; with none approved or published, the same.
+  const versions = isCapabilityName(req.tool) ? ((await deps.capabilityVersions?.(req.tool)) ?? []) : [];
+  const approved = versions.find((v) => v.version === policyToolFor(policy, req.tool)?.entry.version);
+  const subject = approved
+    ? { capability: { approved, published: versions.map(capabilityDigest) } }
+    : { definition: (isCapabilityName(req.tool) ? null : await deps.toolDefinition(req.tool)) ?? { name: req.tool } };
   let revocationReason: AccreditationRevocationReason | undefined;
   const loadAccreditation = deps.loadAccreditation
     ? async () => {
@@ -165,7 +177,7 @@ export async function verifyLimitsCall(req: LimitsCallRequest, deps: LimitsCallD
   const decide = (agent: AgentEnv, mandate?: Parameters<typeof decideLimits>[2]) =>
     decideLimits(
       policy,
-      { tool: req.tool, params: req.params, definition, agent: { ..._celAgent(deps.agentEnvExtras, agent), did: req.agentDid }, madeFrom: req.toolHash },
+      { tool: req.tool, params: req.params, ...subject, agent: { ..._celAgent(deps.agentEnvExtras, agent), did: req.agentDid }, madeFrom: req.toolHash },
       mandate,
       { ...(loadAccreditation ? { loadAccreditation } : {}), ...(deps.context ? { context: deps.context } : {}), ...(deps.checks ? { checks: deps.checks } : {}) },
     );

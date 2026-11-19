@@ -64,7 +64,7 @@ export interface PolicyTool {
   /** §15.3 — the hash of the definition a member reviewed. Required unless the effect is `deny`. */
   hash?: string;
   /** §13.1, §15.3 — a capability's entry: the version a member approved, whose digest is `hash`. */
-  version?: string;
+  version?: number;
   rules?: LimitRule[];
   /** §15.5 — who may grant a mandate for it: DIDs, or `"any"` written out. */
   grantors?: string[] | "any";
@@ -95,6 +95,8 @@ export interface LimitsPolicy {
 
 /** §15.2 — a tool a mandate covers: the definition the person approved it for, and its limits. `rules` may be empty. */
 export interface MandateTool {
+  /** §13.1 — for a capability: the version the person approved it at, whose digest is `hash`. */
+  version?: number;
   hash: string;
   rules: LimitRule[];
 }

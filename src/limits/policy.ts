@@ -4,6 +4,7 @@
  */
 import { validateDescription } from "../mandate/description.js";
 import { policyContextIssues, toolFillIssues } from "../datalayer/policy.js";
+import { capabilityDefinition, capabilityDigest, capabilityFillIssues, isCapabilityName, type ViaCapability } from "../apps/capability.js";
 import { ruleIssues } from "./rule.js";
 import { parseToolKey, toolDefinitionHash, wholeServerKey } from "./tool.js";
 import { TOOL_EFFECTS, type LimitsPolicy, type MandateLimits, type PolicyTool, type ToolDefinition } from "./types.js";
@@ -36,6 +37,24 @@ export interface LimitsPublishContext {
   isMember: (did: string) => boolean;
   /** §15.3 — was the definition on record cut when it was stored? One that was cannot be reviewed whole. */
   isCut?: (tool: string) => boolean;
+  /** §13.1 — a published version of a capability; null when there is none. Needed when `tools` names one. */
+  capability?: (name: string, version: number) => ViaCapability | null;
+}
+
+/** §15.3 — what a tool's key is pinned by: a server's tool by its definition, a capability by a version's digest. */
+function pinnedFor(
+  key: string,
+  version: number | undefined,
+  ctx: Pick<LimitsPublishContext, "definition" | "capability">,
+): { definition: ToolDefinition | null; hash?: string; capability?: ViaCapability; issue?: string } {
+  if (!isCapabilityName(key)) {
+    const definition = ctx.definition(key);
+    return { definition, ...(definition ? { hash: toolDefinitionHash(definition) } : {}) };
+  }
+  if (!Number.isInteger(version)) return { definition: null, issue: "a capability names the `version` a member approved" };
+  const capability = ctx.capability?.(key, version!) ?? null;
+  if (!capability) return { definition: null };
+  return { definition: capabilityDefinition(capability), hash: capabilityDigest(capability), capability };
 }
 
 /** v0.3's fields a v0.4 policy does not carry (§15.9). */
@@ -86,10 +105,13 @@ export function limitsPolicyPublishIssues(policy: LimitsPolicy, ctx: LimitsPubli
       }
       continue;
     }
-    const definition = ctx.definition(key);
-    if (typeof entry.hash !== "string") issues.push(`${at}: it has no \`hash\`: a tool is pinned by the definition a member reviewed`);
+    const pinned = pinnedFor(key, entry.version, ctx);
+    const definition = pinned.definition;
+    if (pinned.issue) issues.push(`${at}: ${pinned.issue}`);
+    else if (typeof entry.hash !== "string") issues.push(`${at}: it has no \`hash\`: a tool is pinned by the definition a member reviewed`);
     else if (!definition) issues.push(`${at}: no definition is on record for it`);
-    else if (toolDefinitionHash(definition) !== entry.hash) issues.push(`${at}: its \`hash\` is not its definition's`);
+    else if (pinned.hash !== entry.hash) issues.push(`${at}: its \`hash\` is not its definition's`);
+    if (entry.fill !== undefined && pinned.capability) for (const issue of capabilityFillIssues(entry.fill, pinned.capability)) issues.push(`${at}: ${issue}`);
     if (ctx.isCut?.(key)) issues.push(`${at}: its definition was cut when it was stored, so nobody reviewed it whole`);
     for (const [i, rule] of (entry.rules ?? []).entries()) {
       for (const issue of ruleIssues(rule, { document: "policy", root: false, inputs: definition?.inputSchema })) issues.push(`${at}, rule ${i + 1}: ${issue}`);
@@ -115,6 +137,8 @@ export interface MandateLimitsContext {
   definition: (tool: string) => ToolDefinition | null;
   /** §15.3 — was the definition on record cut when it was stored? */
   isCut?: (tool: string) => boolean;
+  /** §13.1 — a published version of a capability; null when there is none. */
+  capability?: (name: string, version: number) => ViaCapability | null;
 }
 
 /**
@@ -140,9 +164,11 @@ export function mandateLimitsIssues(limits: MandateLimits, ctx: MandateLimitsCon
       issues.push(`${at}: a mandate names each tool, never a whole server`);
       continue;
     }
-    const definition = ctx.definition(key);
-    if (!definition) issues.push(`${at}: no definition is on record for it`);
-    else if (toolDefinitionHash(definition) !== tool.hash) issues.push(`${at}: its \`hash\` is not its definition's`);
+    const pinned = pinnedFor(key, tool.version, ctx);
+    const definition = pinned.definition;
+    if (pinned.issue) issues.push(`${at}: ${pinned.issue}`);
+    else if (!definition) issues.push(`${at}: no definition is on record for it`);
+    else if (pinned.hash !== tool.hash) issues.push(`${at}: its \`hash\` is not its definition's`);
     if (ctx.isCut?.(key)) issues.push(`${at}: its definition was cut when it was stored, so the person cannot be shown it whole`);
     if (!Array.isArray(tool.rules)) {
       issues.push(`${at}: \`rules\` is missing; a tool with no limits carries an empty list`);

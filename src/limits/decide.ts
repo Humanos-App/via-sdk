@@ -4,6 +4,7 @@
  * the mandate's own authority (its stamp, status, dates, bound key). The reviewer (§15.2) is the caller's too.
  */
 import { NO_LAYER_CONTEXT, unfilledTokens, type CallLayerContext } from "../datalayer/policy.js";
+import { capabilityDigest, capabilityInputSchema, type ViaCapability } from "../apps/capability.js";
 import { leavesToAPerson, policyToolFor } from "./policy.js";
 import { evaluateLimitRule, type RuleEnv } from "./rule.js";
 import { inputsWithDefaults, toolDefinitionHash, undeclaredInput } from "./tool.js";
@@ -14,8 +15,17 @@ export interface LimitsCall {
   /** The tool's key, as the policy and a mandate name it: `server/name`, or a capability's name. */
   tool: string;
   params: Record<string, unknown>;
-  /** The tool's definition as it stands now: what its `hash` is checked against, and what declares its inputs. */
-  definition: ToolDefinition;
+  /**
+   * A server's tool: its definition as it stands now — what its `hash` is checked against, and what declares its
+   * inputs. Not read for a capability.
+   */
+  definition?: ToolDefinition;
+  /**
+   * §13.1, §15.3 — a capability: the version a member approved, and the digest of every version published. The
+   * call runs on the current version, so it may be made from any of them; the inputs it may carry are the approved
+   * version's, and a parameter added after it is `param_undeclared`.
+   */
+  capability?: { approved: ViaCapability; published: readonly string[] };
   /** `agent.*` (v0.3 §9.3); its `did` is what an exception names. */
   agent: Record<string, unknown>;
   /**
@@ -99,8 +109,10 @@ export async function decideLimits(policy: LimitsPolicy, call: LimitsCall, manda
     // An operator with no accreditation is the unverified tier (v0.3 §18.6); with no loader at all, the rule errors.
     accreditation = loaded ?? (deps.loadAccreditation ? { level: "unverified" } : undefined);
   }
+  if (!call.capability && !call.definition) throw new TypeError("VIA: a call is decided against its tool's definition, or its capability's approved version (v0.4 §15.3)");
+  const inputs = call.capability ? capabilityInputSchema(call.capability.approved) : call.definition!.inputSchema;
   const env: RuleEnv = {
-    params: inputsWithDefaults(call.definition.inputSchema, call.params),
+    params: inputsWithDefaults(inputs, call.params),
     agent: call.agent,
     ...(accreditation ? { accreditation } : {}),
     context: { ...(deps.context ?? NO_LAYER_CONTEXT) },
@@ -123,11 +135,12 @@ export async function decideLimits(policy: LimitsPolicy, call: LimitsCall, manda
   if (!entry) return deny("mandate_required", "policy", { tool: call.tool, grantors: [] });
 
   // 3. The definition the call was made from, the one the policy pins, and the inputs the tool declares.
-  const hash = toolDefinitionHash(call.definition);
+  const hash = call.capability ? capabilityDigest(call.capability.approved) : toolDefinitionHash(call.definition!);
   if (typeof call.madeFrom !== "string" || !call.madeFrom) return deny("tool_changed", "policy", { detail: "the call names no definition of the tool" });
-  if (call.madeFrom !== hash) return deny("tool_changed", "policy", { detail: "the call was made from another definition than the one on record" });
+  const known = call.capability ? call.capability.published.includes(call.madeFrom) : call.madeFrom === hash;
+  if (!known) return deny("tool_changed", "policy", { detail: "the call was made from another definition than the one on record" });
   if (entry.hash !== undefined && entry.hash !== hash) return deny("tool_changed");
-  const undeclared = undeclaredInput(call.definition.inputSchema, call.params);
+  const undeclared = undeclaredInput(inputs, call.params);
   if (undeclared) return deny("param_undeclared", "policy", { input: undeclared });
   // §14.5 — a token left in the arguments was refused, never issued, or marks a removed value: the tool never runs
   // with one. The reason is written for the model that made the call.
