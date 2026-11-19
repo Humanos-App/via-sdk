@@ -30,6 +30,7 @@ import { detectSpecVersion } from "../version.js";
 import { policyDefault } from "../policy/build.js";
 import { evaluatePolicy, isUnder, type PolicyEvaluationDeps } from "../policy/evaluate.js";
 import type { PolicyGuardrailRef, PolicyVersion } from "../policy/types.js";
+import { isLimitsPolicy } from "../limits/policy.js";
 
 /** The validated rung, surfaced into the CEL context as `agent.*` (§16.8). */
 export interface AgentEnv {
@@ -128,12 +129,12 @@ export async function verifyAgentBinding(input: PopCheckInput, deps: PopCheckDep
  * or epoch ms (v0.2-signed); compared in ms either way. An unparseable instant on an entry WITH a window is stale:
  * `now - NaN > x` is false, so the condition is written to fail closed rather than fall through.
  */
-function attestationStale(bk: BoundKey, now: Date): boolean {
+export function attestationStale(bk: BoundKey, now: Date): boolean {
   return bk.maxAttestationStaleness !== undefined && !(now.getTime() - boundKeyVerifiedAtMs(bk) <= bk.maxAttestationStaleness * 1000);
 }
 
 /** §16.8 — the validated rung of the entry whose key signed, as the CEL `agent.*` reads it. */
-function agentEnvOf(bk: BoundKey): AgentEnv {
+export function agentEnvOf(bk: BoundKey): AgentEnv {
   return {
     assurance: bk.assurance,
     binding: bk.binding,
@@ -150,7 +151,7 @@ function agentEnvOf(bk: BoundKey): AgentEnv {
  * candidate list built from the actor carries no window of its own, so without this A8 would never
  * run on an id-pinned mandate. Where several bounds apply, the strictest wins.
  */
-function withSignedWindow(candidates: BoundKey[], signed: BoundKey[]): BoundKey[] {
+export function withSignedWindow(candidates: BoundKey[], signed: BoundKey[]): BoundKey[] {
   return candidates.map((c) => {
     // After a merge the candidate names the survivor, not the DID the entry signed; with no entry of
     // its own it is held to every entry's window rather than to none.
@@ -302,7 +303,11 @@ export interface SemanticReviewInput {
  * it is the one answer that must never become `allow`.
  */
 export interface SemanticReviewVerdict {
-  verdict: "entailed" | "not_entailed" | "escalate" | "unavailable";
+  /**
+   * `unreadable` (v0.4 §15.2): the reviewer is in service and cannot read THIS request — its description or its
+   * call, or their size. It is never an outage: a caller must not be able to choose when it goes unreviewed.
+   */
+  verdict: "entailed" | "not_entailed" | "escalate" | "unavailable" | "unreadable";
   reviewer?: { id: string; version?: string };
   reason?: string;
 }
@@ -735,6 +740,10 @@ export async function verifyAgentCall(req: AgentCallRequest, deps: AgentCallDeps
   if (!req.mandateId === !req.policy) {
     throw new TypeError("VIA: a call names the mandate its PoP binds or, with none, the policy — exactly one (v0.3 §21.4)");
   }
+  // v0.4 §15.7 — a policy of v0.4's shape has no `entries`: read here it would fall to `default` for every tool.
+  if (isLimitsPolicy(deps.policy.content)) {
+    throw new TypeError("VIA: a policy marked specVersion 0.4 is decided by verifyLimitsCall, not verifyAgentCall (v0.4 §15.7)");
+  }
   const now = deps.now ?? new Date();
   const policyUrn = deps.policy.content.$id;
   const policyDigest = deps.policy.policyDigest;
@@ -886,7 +895,7 @@ async function reviewSemantic(
   if (!deps.review) return { denied: true, reason: "reviewer_unavailable" };
   const verdict = await deps.review({ description, action: req.action, params: req.params, mandateId: urn });
   const reviewer = verdict.reviewer;
-  if (verdict.verdict === "unavailable") return { denied: true, reason: "reviewer_unavailable", ...(reviewer ? { reviewer } : {}) };
+  if (verdict.verdict === "unavailable" || verdict.verdict === "unreadable") return { denied: true, reason: "reviewer_unavailable", ...(reviewer ? { reviewer } : {}) };
   if (verdict.verdict === "not_entailed") return { denied: true, reason: "semantic_denied", ...(reviewer ? { reviewer } : {}) };
   if (verdict.verdict === "escalate") return { escalate: true, ...(reviewer ? { reviewer } : {}) };
   if (!mayWidenAuthority(description)) {
@@ -902,7 +911,7 @@ async function reviewSemantic(
  * changes when it rotates and a raw-key pin has none, so a rule over it would start denying; the decision event records
  * it as `keyIdEvaluated` (§9.9), from the PoP's result (2026-10-26).
  */
-function _celAgent(extras: Record<string, unknown> | undefined, agent: AgentEnv | undefined): Record<string, unknown> {
+export function _celAgent(extras: Record<string, unknown> | undefined, agent: AgentEnv | undefined): Record<string, unknown> {
   const { keyId: _keyId, ...rule } = { ...(extras ?? {}), ...agent } as Record<string, unknown>;
   return rule;
 }

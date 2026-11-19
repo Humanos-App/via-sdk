@@ -485,3 +485,4 @@ export { evaluatePolicy, policyReadsAuthorization, toolsNotLeftToMandate, type P
 
 // v0.4 §15 — limits per tool: the policy and the mandate without VIAAction. Not read by verify yet.
 export * from "./limits/index.js";
+export { verifyLimitsCall, type LimitsCallRequest, type LimitsCallDeps, type LimitsCallResult } from "./agent/verify-limits.js";

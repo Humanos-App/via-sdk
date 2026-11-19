@@ -8,3 +8,5 @@ export { isLimitsPolicy, policyToolFor, leavesToAPerson, limitsPolicyPublishIssu
 export type { LimitsPublishContext, MandateLimitsContext, RequestRefusal } from "./policy.js";
 export { decideLimits } from "./decide.js";
 export type { LimitsCall, PresentedLimits, LimitsDeps, LimitsDecision } from "./decide.js";
+export { buildLimitsMandate, isLimitsMandate, limitsOf } from "./mandate.js";
+export type { BuildLimitsMandateInput } from "./mandate.js";

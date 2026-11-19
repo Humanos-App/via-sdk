@@ -112,6 +112,16 @@ export interface MandateLimits {
   tools: Record<string, MandateTool>;
 }
 
+/**
+ * §15.2, §15.8 — what the reviewer did: it agreed; it answered and does not enforce yet (its answer is recorded and
+ * refuses nothing); or it gave no answer, being out of service or not deployed. The spec's name for the field is
+ * *proposed*.
+ */
+export type ReviewerPart = "agreed" | "not_enforcing" | "unavailable";
+
+/** The marker a §15.2 mandate and a §15.1 policy carry (§15.7). */
+export const LIMITS_SPEC_VERSION = "0.4";
+
 /** §15.3 — what a tool's `hash` is over. Anything else a server sends is not part of it. */
 export interface ToolDefinition {
   name: string;

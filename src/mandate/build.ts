@@ -190,7 +190,7 @@ export function normalizeMandateStepUp(stepUp: MandateStepUp | undefined): Manda
   return { triggers, ...(reasons?.length ? { reasons } : {}) };
 }
 
-function normalizeBoundKey(bk: BoundKey, i: number, window?: number): BoundKey {
+export function normalizeBoundKey(bk: BoundKey, i: number, window?: number): BoundKey {
   if (!bk.did) throw new Error(`authorizedAgents[${i}] requires did (§16.4)`);
   if (bk.keyId && !bk.keyId.startsWith(`${bk.did}#`)) {
     throw new Error(`authorizedAgents[${i}]: keyId (${bk.keyId}) is not a key of did (${bk.did})`);

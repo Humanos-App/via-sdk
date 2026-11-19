@@ -3,6 +3,7 @@ import type { EventFields } from "./event/build.js";
 import type { WrappedUserParam } from "./action/execution-params.js";
 import type { BoundKey } from "./agent/types.js";
 import type { GrantorBinding } from "./grantor/binding.js";
+import type { LimitRule, MandateTool, ReviewerPart } from "./limits/types.js";
 
 export type { EventType } from "./crypto/proof.js";
 
@@ -148,6 +149,15 @@ export interface Mandate {
    * credential. When present, `"maxExecutions"` is listed in `extensions`.
    */
   maxExecutions?: number;
+  /**
+   * v0.4 §15.2 — in a mandate that binds an agent, marked `specVersion: "0.4"`: the tools it covers, each with the
+   * hash of its definition and its rules, in place of `action`, `userParams` and `enforcement`.
+   */
+  tools?: Record<string, MandateTool>;
+  /** v0.4 §15.2 — rules on every tool it covers: the agent and its accreditation. */
+  rules?: LimitRule[];
+  /** v0.4 §15.2, §15.8 — what the reviewer did when the mandate was issued. */
+  reviewed?: ReviewerPart;
   /** §19.1 — presence manifest: the registered extensions this mandate uses, e.g. `["maxExecutions"]`. */
   extensions?: string[];
   /**
@@ -192,8 +202,11 @@ export interface ViaMandateCredential {
   "@context": string[];
   id: string;
   type: string[];
-  /** Signed VIA spec-version marker (e.g. `"0.2"`). Absent on pre-0.2 ("legacy") artifacts. */
-  specVersion?: SpecVersion;
+  /**
+   * Signed VIA spec-version marker (e.g. `"0.2"`). Absent on pre-0.2 ("legacy") artifacts. `"0.4"` marks v0.4 §15.2's
+   * mandate for an agent; it is no {@link SpecVersion}, so every v0.3 path refuses it as a version it does not know.
+   */
+  specVersion?: SpecVersion | "0.4";
   issuer: string;
   validFrom: string;
   validUntil?: string;
