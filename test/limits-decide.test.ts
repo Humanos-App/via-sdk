@@ -92,6 +92,13 @@ describe("publishing a v0.4 policy (§15.1, §15.5, §15.6)", () => {
     expect(limitsPolicyPublishIssues(p, ctx).join()).toMatch(/tool crm\/update: no definition is on record/);
   });
 
+  // @invariant §15.3: a definition that was cut when stored was reviewed by nobody whole.
+  it("refuses a tool whose definition on record was cut", () => {
+    const cut = { ...ctx, isCut: (tool: string) => tool === "stripe/create_refund" };
+    expect(limitsPolicyPublishIssues(policy(), cut).join()).toMatch(/tool stripe\/create_refund: its definition was cut/);
+    expect(mandateLimitsIssues(limits(), cut).join()).toMatch(/cannot be shown it whole/);
+  });
+
   // @invariant §15.5: a `mandate` tool names who may grant it, each a member; `"any"` is written out.
   it("requires `grantors` where a call is left to a person", () => {
     const p = policy();

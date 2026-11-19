@@ -32,16 +32,35 @@ export function wholeServerKey(key: string): string | null {
   return parsed?.server ? `${parsed.server}/*` : null;
 }
 
+/** A copy with every `required` list sorted: JSON Schema gives their order no meaning. */
+function sortRequired(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortRequired);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, v]) => [key, key === "required" && Array.isArray(v) && v.every((x) => typeof x === "string") ? [...v].sort() : sortRequired(v)]),
+  );
+}
+
 /**
  * §15.3 — a tool's `hash`: the `digestSRI` (v0.3 §0.5.3) of the JCS form of its name, title, description, input
- * schema, output schema and annotations. An absent member is left out, so a missing title and an undefined one
- * hash alike. A corrected typo changes it: a description is where a tool gives the agent instructions.
+ * schema, output schema and annotations. A corrected typo changes it: a description is where a tool gives the
+ * agent instructions.
+ *
+ * Two things that mean nothing are set aside first, and nothing else: the spaces around the name, the title and
+ * the description, and the order of a schema's `required` lists. An absent or empty text is left out, so a missing
+ * title and a blank one hash alike. Nothing is cut and nothing is dropped: every annotation and every character
+ * counts. The server is not in it: the tool's key names it.
  */
 export function toolDefinitionHash(definition: ToolDefinition): string {
-  const pinned: Record<string, unknown> = { name: definition.name };
-  for (const member of ["title", "description", "inputSchema", "outputSchema", "annotations"] as const) {
-    if (definition[member] !== undefined && definition[member] !== null) pinned[member] = definition[member];
+  const pinned: Record<string, unknown> = { name: definition.name.trim() };
+  for (const member of ["title", "description"] as const) {
+    const text = typeof definition[member] === "string" ? definition[member].trim() : "";
+    if (text) pinned[member] = text;
   }
+  for (const member of ["inputSchema", "outputSchema"] as const) {
+    if (definition[member] !== undefined && definition[member] !== null) pinned[member] = sortRequired(definition[member]);
+  }
+  if (definition.annotations !== undefined && definition.annotations !== null) pinned.annotations = definition.annotations;
   return computeSRI(canonicalizeRFC8785(pinned));
 }
 

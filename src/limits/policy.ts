@@ -33,6 +33,8 @@ export interface LimitsPublishContext {
   definition: (tool: string) => ToolDefinition | null;
   /** Is this person a member of the organization, by Humanos's record (§15.5)? */
   isMember: (did: string) => boolean;
+  /** §15.3 — was the definition on record cut when it was stored? One that was cannot be reviewed whole. */
+  isCut?: (tool: string) => boolean;
 }
 
 /** v0.3's fields a v0.4 policy does not carry (§15.9). */
@@ -85,6 +87,7 @@ export function limitsPolicyPublishIssues(policy: LimitsPolicy, ctx: LimitsPubli
     if (typeof entry.hash !== "string") issues.push(`${at}: it has no \`hash\`: a tool is pinned by the definition a member reviewed`);
     else if (!definition) issues.push(`${at}: no definition is on record for it`);
     else if (toolDefinitionHash(definition) !== entry.hash) issues.push(`${at}: its \`hash\` is not its definition's`);
+    if (ctx.isCut?.(key)) issues.push(`${at}: its definition was cut when it was stored, so nobody reviewed it whole`);
     for (const [i, rule] of (entry.rules ?? []).entries()) {
       for (const issue of ruleIssues(rule, { document: "policy", root: false, inputs: definition?.inputSchema })) issues.push(`${at}, rule ${i + 1}: ${issue}`);
     }
@@ -106,6 +109,8 @@ export function limitsPolicyPublishIssues(policy: LimitsPolicy, ctx: LimitsPubli
 export interface MandateLimitsContext {
   /** The definition on record for a tool's key, as the person will be shown it; null when there is none. */
   definition: (tool: string) => ToolDefinition | null;
+  /** §15.3 — was the definition on record cut when it was stored? */
+  isCut?: (tool: string) => boolean;
 }
 
 /**
@@ -134,6 +139,7 @@ export function mandateLimitsIssues(limits: MandateLimits, ctx: MandateLimitsCon
     const definition = ctx.definition(key);
     if (!definition) issues.push(`${at}: no definition is on record for it`);
     else if (toolDefinitionHash(definition) !== tool.hash) issues.push(`${at}: its \`hash\` is not its definition's`);
+    if (ctx.isCut?.(key)) issues.push(`${at}: its definition was cut when it was stored, so the person cannot be shown it whole`);
     if (!Array.isArray(tool.rules)) {
       issues.push(`${at}: \`rules\` is missing; a tool with no limits carries an empty list`);
       continue;
