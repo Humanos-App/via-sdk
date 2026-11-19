@@ -1,6 +1,6 @@
 /** v0.4 §15.3–§15.4 — a tool's inputs and a rule: what the conditions generate, and what a call must carry to pass. */
 import { describe, expect, it } from "vitest";
-import { buildRule, evaluateLimitRule, parseOperand, ruleExpression, ruleIssues, type RuleEnv } from "../src/limits/rule.js";
+import { buildRule, evaluateLimitRule, parseOperand, ruleExpression, ruleIssues, type RuleEnv, type RulePlace } from "../src/limits/rule.js";
 import { inputAt, inputsWithDefaults, parseToolKey, toolDefinitionHash, undeclaredInput, wholeServerKey } from "../src/limits/tool.js";
 import type { JsonSchema, LimitCondition } from "../src/limits/types.js";
 
@@ -169,7 +169,7 @@ describe("a rule over a call (§15.3, §15.4)", () => {
 });
 
 describe("what stops a rule being signed (§15.4)", () => {
-  const tool = { document: "policy" as const, inputs: REFUND, root: false };
+  const tool: RulePlace = { document: "policy", inputs: REFUND, root: false };
   const issues = (conditions: LimitCondition[], place = tool, otherwise?: "mandate") => ruleIssues(buildRule(conditions, place.inputs, otherwise), place);
 
   it("accepts a rule its conditions generate, and refuses an expression written by hand", () => {
@@ -182,7 +182,7 @@ describe("what stops a rule being signed (§15.4)", () => {
 
   // @invariant §15.4: in a mandate a rule has one condition, a value only, and no `otherwise`.
   it("holds a mandate's rule to one condition with a value", () => {
-    const mandate = { document: "mandate" as const, inputs: REFUND, root: false };
+    const mandate: RulePlace = { document: "mandate", inputs: REFUND, root: false };
     expect(issues([{ left: "amount", operator: "<=", value: 250 }], mandate)).toEqual([]);
     expect(issues([{ left: "amount", operator: "<=", value: 250 }, { left: "currency", operator: "!=", value: "EUR" }], mandate)[0]).toMatch(/one condition/);
     expect(issues([{ left: "amount", operator: "<=", right: "checks.order.get.paid" }], mandate).join()).toMatch(/approves numbers they can read/);
@@ -203,7 +203,7 @@ describe("what stops a rule being signed (§15.4)", () => {
   });
 
   it("holds a root rule to the agent and its accreditation", () => {
-    const root = { document: "policy" as const, root: true };
+    const root: RulePlace = { document: "policy", root: true };
     expect(issues([{ left: "agent.binding", operator: "==", value: "attested" }], root)).toEqual([]);
     expect(issues([{ left: "accreditation.level", operator: "in", value: ["verified"] }], root)).toEqual([]);
     expect(issues([{ left: "amount", operator: "<=", value: 5 }], root).join()).toMatch(/root rule reads only/);

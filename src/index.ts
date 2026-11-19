@@ -482,3 +482,6 @@ export * from "./policy/types.js";
 export { policyDefault, policyDigest, policyEntriesFor, policyPublishIssues, type GuardrailTools, type PolicyPublishContext } from "./policy/build.js";
 export { evaluatePolicy, policyReadsAuthorization, toolsNotLeftToMandate, type PolicyCall, type PolicyEvaluation, type PolicyEvaluationDeps } from "./policy/evaluate.js";
 
+
+// v0.4 §15 — limits per tool: the policy and the mandate without VIAAction. Not read by verify yet.
+export * from "./limits/index.js";
