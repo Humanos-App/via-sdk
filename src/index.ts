@@ -288,6 +288,7 @@ export {
   actionHash,
   policyActionHash,
   limitsActionHash,
+  limitsUnprovenActionHash,
   buildPoP,
   algForKey,
   allowedPopAlgs,
@@ -340,6 +341,7 @@ export {
   verifyAgentBinding,
   verifyAgentDirect,
   verifyAgentCall,
+  specVersionRefusal,
   projectAccreditation,
   ACCREDITATION_ENV_FIELDS,
   type AgentEnv,
@@ -477,7 +479,14 @@ export {
   type ActorChainPosition,
   type ActorFoldResult,
   type ActorAudit,
+  PROTOCOL_VERSIONS,
+  isProtocolVersion,
+  actorSpecVersion,
+  policiesInForce,
+  type ProtocolVersion,
+  type PolicyInForce,
 } from "./actor/model.js";
+export { buildVersionSet, type BuildVersionSetInput } from "./actor/version.js";
 
 // The organization's policy (v0.3 §21)
 export * from "./policy/types.js";

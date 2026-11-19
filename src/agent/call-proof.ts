@@ -15,7 +15,7 @@ import type { EventSigner } from "../event/build.js";
 import type { ResolvePublicKey } from "../mandate/build.js";
 import type { AccreditationLevel, AccreditationMethod } from "../operator/types.js";
 import type { Assurance, Binding } from "./types.js";
-import { actionHash, limitsActionHash, policyActionHash } from "./pop.js";
+import { actionHash, limitsActionHash, limitsUnprovenActionHash, policyActionHash } from "./pop.js";
 
 /** The call proof's JWS `typ`. Never `via-pop+jwt`: the agent's proof is not the verifier's. */
 export const CALL_PROOF_TYP = "via-call-proof+jwt";
@@ -64,6 +64,11 @@ export interface CallProofCall {
    * tool it is, passes the hash of the definition it serves.
    */
   toolHash?: string;
+  /**
+   * v0.4 §15.7.2 — `false` for a call decided under a v0.4 policy for an agent that proves no definition: `action_hash`
+   * is then {@link limitsUnprovenActionHash}'s, which names none, and the receiver checks it the same way.
+   */
+  toolProven?: false;
 }
 
 /** The agent's record as a receiver reads it (§16.16): the same fields to every receiver, nothing naming a person. */
@@ -266,9 +271,9 @@ export async function readCallProof(
  * a `toolHash`, the one a proof under a v0.4 policy is made over (v0.4 §15.3).
  */
 function _callHash(authority: { mandate?: string; policy?: string }, call: CallProofCall): string {
-  if (call.toolHash) {
+  if (call.toolHash || call.toolProven === false) {
     const bound = authority.mandate ? { mandateId: authority.mandate } : { policy: authority.policy ?? "" };
-    return limitsActionHash(bound, call.action, call.params, call.toolHash);
+    return call.toolHash ? limitsActionHash(bound, call.action, call.params, call.toolHash) : limitsUnprovenActionHash(bound, call.action, call.params);
   }
   return authority.mandate !== undefined
     ? actionHash(authority.mandate, call.action, call.params)

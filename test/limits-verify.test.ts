@@ -93,6 +93,7 @@ const deps = (over: Partial<LimitsCallDeps> = {}, presented: ViaMandateCredentia
   candidates: [keyOf(supportKey)],
   policy: versionOf(policyOf()),
   validateNonce: () => "ok",
+  agentVersion: "0.4",
   toolDefinition: (tool) => DEFS[tool] ?? null,
   loadMandate: (id) => (loads.push(id), id === presented.id ? { mandate: presented, record: { status: "ACTIVE", validFrom: "2026-01-01T00:00:00.000Z" }, candidates: [keyOf(supportKey)] } : null),
   now,

@@ -82,6 +82,8 @@ const GOLDEN: Record<string, ViaEvent[]> = {
     ["SNAPSHOT_ISSUED", { agent: { sequence: 3 } }],
     // §21.2 — a version of the organization's policy, signed by the organization, accepted by a member.
     ["POLICY_PUBLISHED", { policy: "urn:via:policy:golden", version: 1, policyDigest: "sha256-golden-policy", publishedBy: PERSON }, ORG],
+    // v0.4 §15.7.1 — a version of v0.4's protocol version on the same line: both are in force (`policies`).
+    ["POLICY_PUBLISHED", { policy: "urn:via:policy:golden", version: 2, policyDigest: "sha256-golden-policy-v04", publishedBy: PERSON, specVersion: "0.4" }, ORG],
   ]),
   agent: chain(AGENT, HUMANOS, [
     ["ACTOR_REGISTERED", { agent: { actorType: "agent", keyId: `${AGENT}#key-1`, jwk: JWK("k1"), assurance: "hardware", binding: "attested", bootstrapAnchor: "api_key", attestationKind: "attestation-eat", root: "aws-nitro", verifiedAt: "2026-01-01T00:00:00.000Z", existedSince: "2026-01-01T00:00:00.000Z", lineage: { parent: "did:web:humanos.tech:agent:golden-parent", event: "sha256-delegated" } } }],
@@ -94,6 +96,8 @@ const GOLDEN: Record<string, ViaEvent[]> = {
     ["KEY_REVOKED", { agent: { keyId: `${AGENT}#key-2` } }],
     ["FORK_EVIDENCE", { agent: { evidence: "sha256-fork" } }],
     ["DELEGATED", { agent: { child: "did:web:humanos.tech:agent:golden-child" } }],
+    // v0.4 §15.7.1 — the protocol version the agent is under, set by its organization and accepted by a member.
+    ["ACTOR_VERSION_SET", { specVersion: "0.4", movedBy: PERSON, movedWith: "webauthn" }, ORG],
   ]),
   // Written before 2026-09-28: the affiliation's claim in `agent`, still read from there.
   legacyAgentAffiliation: chain(LEGACY_AGENT, HUMANOS, [

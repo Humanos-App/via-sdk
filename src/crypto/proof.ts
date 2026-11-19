@@ -82,6 +82,9 @@ export const EVENT_TYPES = [
   // v0.3 §21.2 — a new version of an organization's `VIAPolicy`, signed by the organization and accepted
   // by a member (`publishedBy`). Rare by design: a change of rules, never a call (§9.5).
   "POLICY_PUBLISHED",
+  // v0.4 §15.7.1 — the protocol version an AGENT is under, set by its organization and accepted by a member
+  // (`movedBy`). A fold that does not know it refuses the chain: an older verifier decides nothing for a moved agent.
+  "ACTOR_VERSION_SET",
 ] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];

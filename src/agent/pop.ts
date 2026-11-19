@@ -74,6 +74,16 @@ export function limitsActionHash(authority: { mandateId: string } | { policy: st
 }
 
 /**
+ * v0.4 §15.7.2 — `action_hash` for a call under a v0.4 policy by an agent that proves no definition (a host that only
+ * speaks MCP, its key Humanos's to hold): v0.4's, with `toolProven: false` where the definition's hash would be. It
+ * is neither v0.3's hash nor one that names a definition, so a proof made for one kind of call is never read as
+ * another's.
+ */
+export function limitsUnprovenActionHash(authority: { mandateId: string } | { policy: string }, action: string, params: Record<string, unknown>): string {
+  return computeSRI(canonicalizeRFC8785({ ...authority, action, params, toolProven: false }));
+}
+
+/**
  * The algorithm a key can sign with — derived from the KEY, never read from a header (§16.6).
  *
  * This is the whole of RFC 8725 §3.1 in one function. If a verifier selects its verification

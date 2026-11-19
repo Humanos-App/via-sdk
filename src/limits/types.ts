@@ -63,6 +63,17 @@ export interface PolicyTool {
   effect: ToolEffect;
   /** §15.3 — the hash of the definition a member reviewed. Required unless the effect is `deny`. */
   hash?: string;
+  /**
+   * §15.7.2 — a second approved definition, the one the tool had before, while its server is upgraded across agents:
+   * a call is decided against whichever of the two it names, and every rule fits both. At most one; the member
+   * removes it when no agent holds it. The name is *proposed*.
+   */
+  earlier?: { hash: string; version?: number };
+  /**
+   * §15.7.2 — the tool is refused for an agent that proves no definition (a host that only speaks MCP), until
+   * Humanos makes the call itself (§13.0). The name is *proposed*.
+   */
+  proof?: "required";
   /** §13.1, §15.3 — a capability's entry: the version a member approved, whose digest is `hash`. */
   version?: number;
   /**

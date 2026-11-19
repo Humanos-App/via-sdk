@@ -5,6 +5,7 @@ import {
   verifyCallProof,
   actionHash,
   limitsActionHash,
+  limitsUnprovenActionHash,
   policyActionHash,
   outcomeParams,
   CALL_PROOF_MAX_LIFETIME,
@@ -165,6 +166,15 @@ describe("§16.16 the call proof", () => {
     expect(JSON.parse(Buffer.from(underPolicy.split(".")[1]!, "base64url").toString("utf8")).action_hash).toBe(
       limitsActionHash({ policy: "urn:via:policy:p1" }, CALL.action, CALL.params, "sha256-def"),
     );
+  });
+
+  // v0.4 §15.7.2: an agent that proves no definition has a proof that names none, and says so.
+  it("covers a call that names no definition under a v0.4 policy with the hash that says so", async () => {
+    const call = { ...CALL, toolProven: false as const };
+    const token = proof({ call });
+    expect(JSON.parse(Buffer.from(token.split(".")[1]!, "base64url").toString("utf8")).action_hash).toBe(limitsUnprovenActionHash({ mandateId: MANDATE }, CALL.action, CALL.params));
+    expect((await check(token, { call })).ok).toBe(true);
+    expect(await check(token, { call: CALL })).toEqual({ ok: false, reason: "action_hash_mismatch" });
   });
 
   // @refusal

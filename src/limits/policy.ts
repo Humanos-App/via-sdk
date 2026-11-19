@@ -39,6 +39,11 @@ export interface LimitsPublishContext {
   isCut?: (tool: string) => boolean;
   /** §13.1 — a published version of a capability; null when there is none. Needed when `tools` names one. */
   capability?: (name: string, version: number) => ViaCapability | null;
+  /**
+   * §15.7.2 — the definition a tool had before, by its hash: what `earlier` names. Null when Humanos holds none of
+   * that hash for the tool. Needed when a tool names an `earlier` definition.
+   */
+  earlierDefinition?: (tool: string, hash: string) => ToolDefinition | null;
 }
 
 /** §15.3 — what a tool's key is pinned by: a server's tool by its definition, a capability by a version's digest. */
@@ -74,6 +79,10 @@ export function limitsPolicyPublishIssues(policy: LimitsPolicy, ctx: LimitsPubli
     issues.push("`default` is `mandate` or `deny`, never `allow`: a tool nobody reviewed has no pinned definition and no limits");
   }
   for (const field of GONE) if (field in policy) issues.push(`\`${field}\` is not in a v0.4 policy`);
+  // §15.7.3 — a field no verifier knows is not published: read by older code, a new kind of limit would be skipped.
+  for (const field of limitsPolicyUnknownFields(policy)) {
+    if (!(GONE as readonly string[]).includes(field)) issues.push(`\`${field}\` is not a field of a v0.4 policy`);
+  }
 
   for (const [i, rule] of (policy.rules ?? []).entries()) {
     for (const issue of ruleIssues(rule, { document: "policy", root: true })) issues.push(`rule ${i + 1}: ${issue}`);
@@ -100,8 +109,8 @@ export function limitsPolicyPublishIssues(policy: LimitsPolicy, ctx: LimitsPubli
     }
     const personNeeded = leavesToAPerson(entry);
     if (entry.effect === "deny") {
-      if (entry.rules?.length || entry.grantors !== undefined || entry.oneCall !== undefined || entry.reviewer !== undefined || entry.fill !== undefined) {
-        issues.push(`${at}: a denied tool carries no rules, grantors, \`oneCall\`, \`reviewer\` or \`fill\``);
+      if (entry.rules?.length || entry.grantors !== undefined || entry.oneCall !== undefined || entry.reviewer !== undefined || entry.fill !== undefined || entry.earlier !== undefined || entry.proof !== undefined) {
+        issues.push(`${at}: a denied tool carries no rules, grantors, \`oneCall\`, \`reviewer\`, \`fill\`, \`earlier\` or \`proof\``);
       }
       continue;
     }
@@ -128,10 +137,84 @@ export function limitsPolicyPublishIssues(policy: LimitsPolicy, ctx: LimitsPubli
       issues.push(`${at}: \`grantors\`, \`oneCall\` and \`reviewer\` are for a tool that leaves calls to a person`);
     }
     if (entry.fill !== undefined) for (const issue of toolFillIssues(entry.fill, definition?.inputSchema, policy.context)) issues.push(`${at}: ${issue}`);
+    if (entry.proof !== undefined && entry.proof !== "required") issues.push(`${at}: \`proof\` is \`required\`, or absent`);
+    if (entry.nameOnly && (entry.earlier !== undefined || entry.proof !== undefined)) issues.push(`${at}: a tool known by name only has no definition: it takes no \`earlier\` and no \`proof\``);
+    else if (entry.earlier !== undefined) issues.push(...earlierIssues(key, entry, policy, ctx).map((issue) => `${at}: ${issue}`));
     if (entry.oneCall !== undefined && typeof entry.oneCall !== "boolean") issues.push(`${at}: \`oneCall\` is true or false`);
     if (entry.reviewer !== undefined && entry.reviewer !== "required") issues.push(`${at}: \`reviewer\` is \`required\`, or absent`);
   }
   return issues;
+}
+
+/**
+ * §15.7.2 — what stops a tool naming an `earlier` definition: it is the one already pinned, Humanos holds none of
+ * that hash, or a rule or a `fill` of the tool does not fit it. Every limit must read on both definitions, since a
+ * call is decided against whichever of the two it names.
+ */
+function earlierIssues(key: string, entry: PolicyTool, policy: LimitsPolicy, ctx: LimitsPublishContext): string[] {
+  const earlier = entry.earlier as unknown;
+  const shaped = !!earlier && typeof earlier === "object" && !Array.isArray(earlier) && typeof (earlier as { hash?: unknown }).hash === "string";
+  if (!shaped) return ["`earlier` is `{ hash }`, the definition the tool had before"];
+  const { hash, version } = earlier as { hash: string; version?: unknown };
+  if (hash === entry.hash) return ["`earlier` names the definition already pinned: it is the one the tool had before"];
+  if (version !== undefined && !Number.isInteger(version)) return ["`earlier.version` is a whole number"];
+  const capability = isCapabilityName(key) ? (Number.isInteger(version) ? ctx.capability?.(key, version as number) ?? null : null) : undefined;
+  const definition = capability === undefined ? ctx.earlierDefinition?.(key, hash) ?? null : capability && capabilityDefinition(capability);
+  if (!definition) return ["no definition is on record for its `earlier` hash"];
+  const held = capability ? capabilityDigest(capability) : toolDefinitionHash(definition);
+  if (held !== hash) return ["its `earlier` hash is not that definition's"];
+  const issues: string[] = [];
+  for (const [i, rule] of (entry.rules ?? []).entries()) {
+    for (const issue of ruleIssues(rule, { document: "policy", root: false, inputs: definition.inputSchema })) issues.push(`rule ${i + 1} does not fit its earlier definition: ${issue}`);
+  }
+  if (entry.fill !== undefined) for (const issue of toolFillIssues(entry.fill, definition.inputSchema, policy.context)) issues.push(`\`fill\` does not fit its earlier definition: ${issue}`);
+  return issues;
+}
+
+/** §15.7.3 — the fields a v0.4 policy has, at each level: the closed lists a verifier reads. */
+const POLICY_FIELDS = ["$id", "type", "specVersion", "version", "default", "rules", "tools", "apps", "context"];
+const RULE_FIELDS = ["conditions", "expression", "otherwise"];
+const CONDITION_FIELDS = ["left", "operator", "value", "right", "measure"];
+const TOOL_FIELDS = ["effect", "hash", "version", "nameOnly", "rules", "grantors", "oneCall", "reviewer", "fill", "earlier", "proof"];
+const EARLIER_FIELDS = ["hash", "version"];
+const APP_FIELDS = ["app", "publisher", "version", "digestSRI"];
+const CONTEXT_FIELDS = ["tokens", "hints", "kinds", "remove", "unscanned", "retention", "modules"];
+const KIND_FIELDS = ["pattern"];
+
+const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
+const strangers = (value: unknown, known: readonly string[], at: string): string[] =>
+  isRecord(value) ? Object.keys(value).filter((k) => !known.includes(k)).map((k) => `${at}${k}`) : [];
+
+function unknownInRules(rules: unknown, at: string): string[] {
+  if (!Array.isArray(rules)) return [];
+  return rules.flatMap((rule, i) => [
+    ...strangers(rule, RULE_FIELDS, `${at}[${i}].`),
+    ...(isRecord(rule) && Array.isArray(rule.conditions) ? rule.conditions.flatMap((c, j) => strangers(c, CONDITION_FIELDS, `${at}[${i}].conditions[${j}].`)) : []),
+  ]);
+}
+
+/**
+ * §15.7.3 — every field of a policy version its verifier does not know, as a path (`tools.crm/search.ceiling`,
+ * `rules[0].conditions[1].unless`); empty when it knows them all. Such a version is not published, and a verifier
+ * decides no call under one (`policy_invalid`): a new kind of limit read by older code would be skipped in silence.
+ * A `fill`'s parameters, a context's `hints`, `kinds` and `modules` are named by the organization, never fields.
+ */
+export function limitsPolicyUnknownFields(policy: unknown): string[] {
+  if (!isRecord(policy)) return [];
+  const { rules, tools, apps, context } = policy;
+  return [
+    ...strangers(policy, POLICY_FIELDS, ""),
+    ...unknownInRules(rules, "rules"),
+    ...(isRecord(tools)
+      ? Object.entries(tools).flatMap(([key, entry]) => [
+          ...strangers(entry, TOOL_FIELDS, `tools.${key}.`),
+          ...(isRecord(entry) ? [...unknownInRules(entry.rules, `tools.${key}.rules`), ...strangers(entry.earlier, EARLIER_FIELDS, `tools.${key}.earlier.`)] : []),
+        ])
+      : []),
+    ...(Array.isArray(apps) ? apps.flatMap((app, i) => strangers(app, APP_FIELDS, `apps[${i}].`)) : []),
+    ...strangers(context, CONTEXT_FIELDS, "context."),
+    ...(isRecord(context) && isRecord(context.kinds) ? Object.entries(context.kinds).flatMap(([kind, def]) => strangers(def, KIND_FIELDS, `context.kinds.${kind}.`)) : []),
+  ];
 }
 
 /** What the request check needs beyond the mandate. */

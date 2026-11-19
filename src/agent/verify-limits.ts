@@ -5,7 +5,9 @@
 import { jwkThumbprint } from "../crypto/p256.js";
 import { MAX_EXECUTIONS_REACHED, unsupportedCriticalExtension, verifyStamp } from "../mandate/build.js";
 import { isSupportedSpecVersion } from "../version.js";
+import { isProtocolVersion, type ProtocolVersion } from "../actor/model.js";
 import { decideLimits, type LimitsDecision } from "../limits/decide.js";
+import { limitsPolicyUnknownFields } from "../limits/policy.js";
 import { isLimitsMandate, limitsOf } from "../limits/mandate.js";
 import { settleReview } from "../limits/review.js";
 import type { LimitEvaluation, LimitsPolicy, ReviewerPart, ToolDefinition } from "../limits/types.js";
@@ -16,6 +18,7 @@ import {
   agentEnvOf,
   attestationStale,
   projectAccreditation,
+  specVersionRefusal,
   verifyAgentBinding,
   withSignedWindow,
   type AccreditationLoad,
@@ -41,7 +44,8 @@ export interface LimitsCallRequest {
   policy?: string;
   /**
    * §15.3 — the hash of the definition the call was made from, as the caller reports it. Required, and under the
-   * PoP (`limitsActionHash`): a call that names none is refused `tool_changed`.
+   * PoP (`limitsActionHash`): a call that names none is refused `tool_changed`. Not read for an agent that proves
+   * no definition (`LimitsCallDeps.namesNoDefinition`).
    */
   toolHash: string;
 }
@@ -73,6 +77,19 @@ export interface LimitsCallDeps extends Pick<AgentDirectDeps, "resolvePublicKey"
   context?: CallLayerContext;
   /** §13.2 — each check's answer, by its capability's name. */
   checks?: Record<string, Record<string, unknown>>;
+  /**
+   * §15.7.1 — the protocol version the agent is under, by its record ({@link actorSpecVersion}). Required: an agent
+   * under v0.3 is refused `spec_version_mismatch` before its proof or the policy is read, and a verifier that does
+   * not say which the agent is under decides nothing.
+   */
+  agentVersion: ProtocolVersion;
+  /**
+   * §15.7.2 — the agent is one that proves no definition: a host that only speaks MCP, its key Humanos's to hold. Set
+   * by the verifier from how the agent was registered, never from the call. Its call needs no `toolHash`, its proof
+   * is over {@link limitsUnprovenActionHash}, it is decided against the definition on record, and the result says
+   * `toolProven: false`.
+   */
+  namesNoDefinition?: boolean;
 }
 
 /**
@@ -108,6 +125,10 @@ export interface LimitsCallResult {
   reviewer?: { id: string; version?: string };
   /** v0.3 §18.5 — with `accreditation_revoked`: why. */
   revocationReason?: AccreditationRevocationReason;
+  /** §15.7.1 — with `spec_version_mismatch`: the protocol version the agent is under. */
+  expected?: ProtocolVersion;
+  /** §15.7.2 — `false` when the agent proved no definition of the tool: decided against the one on record. */
+  toolProven?: false;
 }
 
 /**
@@ -140,15 +161,25 @@ export async function verifyLimitsCall(req: LimitsCallRequest, deps: LimitsCallD
     policyDigest,
     ...extra,
   });
+  // §15.7.1 — first, and whatever the call carries: an agent under another version is never decided here.
+  if (!isProtocolVersion(deps.agentVersion)) throw new TypeError("VIA: a call is decided under the version its agent is under — deps.agentVersion is required (v0.4 §15.7.1)");
+  const other = specVersionRefusal(deps.agentVersion, "0.4");
+  if (other) return onLane("deny", other);
+  // §15.7.3 — a version carrying a field this verifier does not know decides no call: a limit it cannot read is not skipped.
+  const unknown = limitsPolicyUnknownFields(policy)[0];
+  if (unknown) return onLane("deny", { reason: "policy_invalid", detail: `the policy carries a field this verifier does not know: ${unknown}` });
   if (!deps.candidates?.length) return onLane("deny", { reason: "agent_not_bound" });
   // §15.3 — the proof covers the definition the call was made from, so one that names none cannot be checked at all.
-  if (typeof req.toolHash !== "string" || !req.toolHash) return onLane("deny", { reason: "tool_changed", detail: "the call names no definition of the tool" });
+  // §15.7.2 — but for an agent that proves none, by how it was registered: its call is decided on the one on record.
+  const unproven = deps.namesNoDefinition === true;
+  const notProven = unproven ? ({ toolProven: false } as const) : {};
+  if (!unproven && (typeof req.toolHash !== "string" || !req.toolHash)) return onLane("deny", { reason: "tool_changed", detail: "the call names no definition of the tool" });
 
   // v0.3 §16.7 A1–A6 + A8 — once, against the agent's own keys, over the authority the PoP names. The tool's own
   // inputs are the params: a tool may name one `action` or `tool`, so v0.3's discriminator check does not run.
   const authority = req.mandateId ? { mandateId: req.mandateId } : { policy: req.policy };
   const pop = await verifyAgentBinding(
-    { authorizedAgents: deps.candidates, pop: req.pop, verifier: deps.verifier.did, ...authority, action: req.tool, params: req.params, toolHash: req.toolHash },
+    { authorizedAgents: deps.candidates, pop: req.pop, verifier: deps.verifier.did, ...authority, action: req.tool, params: req.params, ...(unproven ? notProven : { toolHash: req.toolHash }) },
     { validateNonce: deps.validateNonce, now },
   );
   if (!pop.ok || !pop.agent || !pop.boundKey) return onLane("deny", { reason: pop.reason ?? "pop_invalid" });
@@ -177,7 +208,7 @@ export async function verifyLimitsCall(req: LimitsCallRequest, deps: LimitsCallD
   const decide = (agent: AgentEnv, mandate?: Parameters<typeof decideLimits>[2]) =>
     decideLimits(
       policy,
-      { tool: req.tool, params: req.params, ...subject, agent: { ..._celAgent(deps.agentEnvExtras, agent), did: req.agentDid }, madeFrom: req.toolHash },
+      { tool: req.tool, params: req.params, ...subject, agent: { ..._celAgent(deps.agentEnvExtras, agent), did: req.agentDid }, madeFrom: req.toolHash, ...(unproven ? { unproven: true as const } : {}) },
       mandate,
       { ...(loadAccreditation ? { loadAccreditation } : {}), ...(deps.context ? { context: deps.context } : {}), ...(deps.checks ? { checks: deps.checks } : {}) },
     );
@@ -191,6 +222,7 @@ export async function verifyLimitsCall(req: LimitsCallRequest, deps: LimitsCallD
     ...(d.detail ? { detail: d.detail } : {}),
     context: deps.context ?? NO_LAYER_CONTEXT,
     ...(revocationReason ? { revocationReason } : {}),
+    ...notProven,
   });
 
   // The policy decides first, with no mandate: one presented for a call the policy settles itself is never loaded.

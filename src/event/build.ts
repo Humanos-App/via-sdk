@@ -91,6 +91,21 @@ export interface EventFields {
   publishedBy?: string;
   /** How the member confirmed: `webauthn` | `otp` (§21.2). */
   publishedWith?: string;
+  /**
+   * v0.4 §15.7.1 — on `POLICY_PUBLISHED`: the protocol version the published version is of, `"0.4"`; a v0.3 version
+   * carries none. On `ACTOR_VERSION_SET`: the protocol version the agent is under from this event on.
+   */
+  specVersion?: string;
+  // ── the protocol version an agent is under (`ACTOR_VERSION_SET`, v0.4 §15.7.1) ──
+  /** The member who moved the agent, by person DID. */
+  movedBy?: string;
+  /** How the member confirmed: `webauthn` | `otp`, as a policy's publishing (v0.3 §21.2). */
+  movedWith?: string;
+  // ── a decision under a v0.4 policy, continued (v0.4 §15.7) ──
+  /** §15.7.1 — with `spec_version_mismatch`: the protocol version the agent is under, which the call was not made in. */
+  expected?: string;
+  /** §15.7.2 — `false` when the call named no definition of the tool, its agent being a host that proves none. */
+  toolProven?: false;
   /** §9.9/§16.9 — the rung relied on at presentation. */
   keyIdEvaluated?: string;
   assuranceEvaluated?: string;

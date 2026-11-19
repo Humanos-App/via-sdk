@@ -34,6 +34,12 @@ export interface LimitsCall {
    * refused `tool_changed` at once. Where the agent makes the call itself this is its word, as its inputs are.
    */
   madeFrom: string;
+  /**
+   * §15.7.2 — the agent is one that proves no definition (a host that only speaks MCP, its key Humanos's to hold):
+   * `madeFrom` is not read, the call is decided against the definition on record, and a tool that requires proof is
+   * refused. Set by the verifier from how the agent was registered, never from the call.
+   */
+  unproven?: true;
 }
 
 /** A mandate presented with the call, already held to its own authority by the caller. */
@@ -87,7 +93,8 @@ const reads = (rules: LimitRule[] | undefined, word: string) => !!rules?.some((r
  * caller's hands (`tool_changed`); an
  * input the tool does not declare (`param_undeclared`); a token left in the arguments (`token_unfilled`, §14.5); the tool's rules (`policy_denied`, or, for a rule that
  * leaves its failure to a person, on to the mandate); a tool under the default, which nobody may grant
- * (`mandate_required`, naming no grantor); then the mandate — none (`mandate_required`), one that does
+ * (`mandate_required`, naming no grantor); a tool that requires proof, for an agent that proves no definition
+ * (`tool_proof_required`); then the mandate — none (`mandate_required`), one that does
  * not list the tool (`tool_not_covered`), another definition (`tool_changed`), a grantor the policy does not allow
  * (`grantor_not_allowed`), more than one call where one is required (`one_call_required`), its rules
  * (`rule_failed`).
@@ -138,10 +145,17 @@ export async function decideLimits(policy: LimitsPolicy, call: LimitsCall, manda
 
   // 3. The definition the call was made from, the one the policy pins, and the inputs the tool declares.
   const hash = nameOnly ? nameOnlyHash(call.tool)! : call.capability ? capabilityDigest(call.capability.approved) : toolDefinitionHash(call.definition!);
-  if (typeof call.madeFrom !== "string" || !call.madeFrom) return deny("tool_changed", "policy", { detail: "the call names no definition of the tool" });
-  const known = !nameOnly && call.capability ? call.capability.published.includes(call.madeFrom) : call.madeFrom === hash;
-  if (!known) return deny("tool_changed", "policy", { detail: "the call was made from another definition than the one on record" });
-  if (entry.hash !== undefined && entry.hash !== hash) return deny("tool_changed");
+  if (call.unproven) {
+    // §15.7.2 — nothing names the definition: a tool that asks for proof is refused until Humanos makes the call.
+    if (entry.proof === "required") return deny("tool_proof_required", "policy", { tool: call.tool });
+  } else {
+    if (typeof call.madeFrom !== "string" || !call.madeFrom) return deny("tool_changed", "policy", { detail: "the call names no definition of the tool" });
+    const known = !nameOnly && call.capability ? call.capability.published.includes(call.madeFrom) : call.madeFrom === hash;
+    if (!known) return deny("tool_changed", "policy", { detail: "the call was made from another definition than the one on record" });
+  }
+  // §15.7.2 — a tool being upgraded has two approved definitions: the call is decided against the one it holds.
+  const approved = [entry.hash, entry.earlier?.hash].filter((h): h is string => typeof h === "string");
+  if (entry.hash !== undefined && !approved.includes(hash)) return deny("tool_changed");
   const undeclared = nameOnly ? null : undeclaredInput(inputs, call.params);
   if (undeclared) return deny("param_undeclared", "policy", { input: undeclared });
   // §14.5 — a token left in the arguments was refused, never issued, or marks a removed value: the tool never runs

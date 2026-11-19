@@ -141,6 +141,8 @@ export function buildLimitsVerificationEvent(
     ...(result.detail ? { detail: result.detail } : {}),
     ...(result.context ? { context: { ...result.context } } : {}),
     ...(result.revocationReason ? { revocationReason: result.revocationReason } : {}),
+    ...(result.expected ? { expected: result.expected } : {}),
+    ...(result.toolProven === false ? { toolProven: false as const } : {}),
     ...proven,
     ...(popNonceRef ? { popNonceRef } : {}),
   });

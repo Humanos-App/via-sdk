@@ -6,7 +6,8 @@
 //    the action CEL (with the rung env) + step-up → `rechallenge` (D7).
 //  • verifyAgentCall — §21.3's policy-first flow: the proof once, the policy's entry
 //    or its default, and the mandate only where the entry asks for one.
-import { actionHash, decodePoP, limitsActionHash, policyActionHash, verifyPoPSignature } from "./pop.js";
+import type { ProtocolVersion } from "../actor/model.js";
+import { actionHash, decodePoP, limitsActionHash, limitsUnprovenActionHash, policyActionHash, verifyPoPSignature } from "./pop.js";
 import { jwkThumbprint } from "../crypto/p256.js";
 import { evaluateRules, type RuleEvaluation } from "../cel/evaluate.js";
 import { agentReasonForRule } from "./constraints.js";
@@ -63,6 +64,8 @@ export interface PopCheckInput {
   params: Record<string, unknown>;
   /** v0.4 §15.3 — under a v0.4 policy: the hash of the definition the call was made from, which the proof covers. */
   toolHash?: string;
+  /** v0.4 §15.7.2 — `false` for an agent that proves no definition: the proof is over `limitsUnprovenActionHash`. */
+  toolProven?: false;
 }
 export interface PopCheckDeps {
   /**
@@ -114,7 +117,9 @@ export async function verifyAgentBinding(input: PopCheckInput, deps: PopCheckDep
   if (nonce !== "ok") return { ok: false, reason: nonce as AgentReasonCode };
 
   const expected =
-    input.toolHash !== undefined
+    input.toolProven === false
+      ? limitsUnprovenActionHash(input.policy ? { policy: input.policy } : { mandateId: input.mandateId! }, input.action, input.params)
+      : input.toolHash !== undefined
       ? limitsActionHash(input.policy ? { policy: input.policy } : { mandateId: input.mandateId! }, input.action, input.params, input.toolHash)
       : input.policy
         ? policyActionHash(input.policy, input.action, input.params)
@@ -721,10 +726,29 @@ export interface AgentCallDeps
   actionVersions?: PolicyEvaluationDeps["actionVersions"];
   /** The mandate presented, by its id; null when the verifier holds none of that id. Called only for a `mandate` entry. */
   loadMandate?: (mandateId: string) => HeldMandate | null | Promise<HeldMandate | null>;
+  /**
+   * v0.4 §15.7.1 — the protocol version the agent is under, by its record ({@link actorSpecVersion}): never by what
+   * the call carries. An agent under another version than v0.3 is refused `spec_version_mismatch` here, before its
+   * proof or the policy is read. Absent: a verifier that holds no agent under another version.
+   */
+  agentVersion?: ProtocolVersion;
 }
 
 /** What {@link verifyAgentCall} answers: allow or deny, never `rechallenge` (§17.4: it asks no person). */
-export type AgentCallResult = Omit<AgentDirectResult, "decision" | "stepUp" | "approvers"> & { decision: "allow" | "deny" };
+export type AgentCallResult = Omit<AgentDirectResult, "decision" | "stepUp" | "approvers"> & {
+  decision: "allow" | "deny";
+  /** v0.4 §15.7.1 — with `spec_version_mismatch`: the protocol version the agent is under. */
+  expected?: ProtocolVersion;
+};
+
+/**
+ * v0.4 §15.7.1 — the refusal of a call made under another protocol version than the one its agent is under, or
+ * nothing when they agree. `calledUnder` is the version of the verifier asked, never a field of the call. Both
+ * verifiers ask it first: such a call is never decided under the other version's policy.
+ */
+export function specVersionRefusal(agentVersion: ProtocolVersion, calledUnder: ProtocolVersion): { reason: "spec_version_mismatch"; expected: ProtocolVersion } | null {
+  return agentVersion === calledUnder ? null : { reason: "spec_version_mismatch", expected: agentVersion };
+}
 
 /**
  * §21.3 — one agent tool call, decided policy first. The agent's PoP is checked once, against its own usable keys,
@@ -761,6 +785,9 @@ export async function verifyAgentCall(req: AgentCallRequest, deps: AgentCallDeps
     policyDigest,
     ...extra,
   });
+  // v0.4 §15.7.1 — an agent under another version is never decided here, whatever the call carries.
+  const other = deps.agentVersion ? specVersionRefusal(deps.agentVersion, "0.3") : null;
+  if (other) return onLane("deny", other);
   if (!deps.candidates?.length) return onLane("deny", { reason: "agent_not_bound" });
 
   // §16.7 A1–A6 + A8 — once, against the agent's own keys, over the authority the PoP names.

@@ -220,6 +220,17 @@ export interface ViaActorSubject {
    */
   policy?: { id: string; version: number; policyDigest: string; publishedBy: string; event: string };
   /**
+   * ORGANIZATIONS only (v0.4 §15.7.1) — the policy in force per protocol version: the newest version published of
+   * each, of the one line `policy` numbers. At most two. Absent on a record whose chain names no version's protocol
+   * version; read `policy` then, which is of v0.3.
+   */
+  policies?: Partial<Record<ProtocolVersion, PolicyInForce>>;
+  /**
+   * AGENTS only (v0.4 §15.7.1) — the protocol version the agent is under, as its organization last set it
+   * (`ACTOR_VERSION_SET`), `event` pointing at that event. Absent: `"0.3"`, which {@link actorSpecVersion} reads.
+   */
+  version?: { specVersion: ProtocolVersion; movedBy: string; movedWith: string; event: string };
+  /**
    * Prior identifiers that resolve to this actor (v0.3 §3.6). `merge` — an actor retired INTO this
    * one (its chain ends pointing here); `inherited` — an alias such an actor held, which came with
    * it; `channel` — a contact identifier that never had a chain of its own.
@@ -323,6 +334,7 @@ export const EVENT_SCOPE = {
   RUNTIME_ATTESTED: "actor",
   SNAPSHOT_ISSUED: "actor",
   POLICY_PUBLISHED: "actor",
+  ACTOR_VERSION_SET: "actor",
 } as const satisfies Record<EventType, "credential" | "actor">;
 
 export type EventScope = (typeof EVENT_SCOPE)[EventType];
@@ -497,14 +509,58 @@ export function actorSummaryFloor(
  * `actorSnapshot` reference, and an AFFILIATION naming an organization other than its signer is
  * refused, `affiliation_invalid`, the first one too; 17 = `POLICY_PUBLISHED` folded into an
  * organization's `policy`, refused on another actor, `policy_on_non_organization`, or out of sequence,
- * `policy_invalid`).
+ * `policy_invalid`; 18 = `ACTOR_VERSION_SET` folded into an agent's `version`, refused on another actor,
+ * `version_on_non_agent`, or when not its operator's to set, `version_invalid`, and a `POLICY_PUBLISHED`'s protocol
+ * version folded into `policies`. A fold of an earlier version refuses a chain holding the event, and replays a
+ * record this one wrote: an older verifier decides nothing for a moved agent, v0.4 §15.7.1).
  *
  * A stored record (a checkpoint) is only as current as the fold that wrote it. Seeding a fold from
  * one written by an older version would silently omit whatever the newer fold adds, so a
  * checkpointed read MUST seed only from a record written by this version and replay the whole
  * chain otherwise.
  */
-export const ACTOR_FOLD_VERSION = 17;
+export const ACTOR_FOLD_VERSION = 18;
+
+/** v0.4 §15.7.1 — the protocol versions an agent can be under. Never more than two overlap. */
+export const PROTOCOL_VERSIONS = ["0.3", "0.4"] as const;
+export type ProtocolVersion = (typeof PROTOCOL_VERSIONS)[number];
+export const isProtocolVersion = (value: unknown): value is ProtocolVersion => (PROTOCOL_VERSIONS as readonly unknown[]).includes(value);
+
+/** v0.4 §15.7.1 — a policy version in force for one protocol version: what its `POLICY_PUBLISHED` names. */
+export interface PolicyInForce {
+  id: string;
+  version: number;
+  policyDigest: string;
+  publishedBy: string;
+  /** The `POLICY_PUBLISHED` event, as the next event's `previousEvent` names it. */
+  event: string;
+  specVersion: ProtocolVersion;
+}
+
+/**
+ * v0.4 §15.7.1 — the protocol version an agent is under: the one its organization last set on its chain, `"0.3"`
+ * for an agent nobody moved. Read from the folded record, never from anything a call carries.
+ */
+export function actorSpecVersion(subject: Pick<ViaActorSubject, "version">): ProtocolVersion {
+  return subject.version?.specVersion ?? "0.3";
+}
+
+/**
+ * v0.4 §15.7.1 — the policy in force per protocol version, from an organization's `POLICY_PUBLISHED` events in the
+ * order of its chain: the newest of each. One line, one numbering; an event that names no protocol version is of
+ * v0.3. For a reader that holds the events and not a record this fold wrote.
+ */
+export function policiesInForce(published: ViaEvent[]): Partial<Record<ProtocolVersion, PolicyInForce>> {
+  const inForce: Partial<Record<ProtocolVersion, PolicyInForce>> = {};
+  for (const e of published) {
+    if (canonicalEventType(e.credentialSubject.event) !== "POLICY_PUBLISHED") continue;
+    const { policy, version, policyDigest, publishedBy, specVersion } = detailOf(e) as Record<string, unknown>;
+    if (typeof policy !== "string" || typeof version !== "number" || typeof policyDigest !== "string" || typeof publishedBy !== "string") continue;
+    const of: ProtocolVersion = specVersion === "0.4" ? "0.4" : "0.3";
+    if ((inForce[of]?.version ?? -1) < version) inForce[of] = { id: policy, version, policyDigest, publishedBy, event: eventChainLink(e), specVersion: of };
+  }
+  return inForce;
+}
 
 /**
  * §5 — a keyed `ASSURANCE_UPDATED` lowers or keeps every rung field; it never raises one or names a new root.
@@ -765,8 +821,8 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
         // §21.2 — only an organization has a policy, and only it publishes one: signed by the
         // organization the chain is about, accepted by a member, numbered in sequence, one policy URN.
         if (subject.actorType !== "organization") return fail("policy_on_non_organization", i);
-        const { policy, version, policyDigest, publishedBy } = detail as {
-          policy?: unknown; version?: unknown; policyDigest?: unknown; publishedBy?: unknown;
+        const { policy, version, policyDigest, publishedBy, specVersion } = detail as {
+          policy?: unknown; version?: unknown; policyDigest?: unknown; publishedBy?: unknown; specVersion?: unknown;
         };
         const ownSigner = e.issuer === subject.id || (subject.aliases ?? []).some((a) => a.did === e.issuer);
         const current = subject.policy;
@@ -776,11 +832,32 @@ export function foldActorChain(events: ViaEvent[], seed?: FoldSeed): ActorFoldRe
           typeof version !== "number" || !Number.isInteger(version) ||
           typeof policyDigest !== "string" || policyDigest.length === 0 ||
           typeof publishedBy !== "string" || publishedBy.length === 0 ||
+          // v0.4 §15.7.1 — a version says which protocol version it is of, or says nothing and is of v0.3.
+          (specVersion !== undefined && specVersion !== "0.4") ||
           !ownSigner || !inSequence
         ) {
           return fail("policy_invalid", i);
         }
         subject.policy = { id: policy, version, policyDigest, publishedBy, event: eventChainLink(e) };
+        // The one line stays numbered in sequence; each protocol version's newest is in force (§15.7.1).
+        const of: ProtocolVersion = specVersion === "0.4" ? "0.4" : "0.3";
+        subject.policies = { ...subject.policies, [of]: { ...subject.policy, specVersion: of } };
+        break;
+      }
+      case "ACTOR_VERSION_SET": {
+        // v0.4 §15.7.1 — only an agent is under a version, and only the organization it acts for sets it: signed by
+        // that organization, accepted by a member. Never by the agent, whose own key signs nothing here.
+        if (subject.actorType !== "agent") return fail("version_on_non_agent", i);
+        const { specVersion, movedBy, movedWith } = detail as { specVersion?: unknown; movedBy?: unknown; movedWith?: unknown };
+        if (
+          !isProtocolVersion(specVersion) ||
+          typeof movedBy !== "string" || movedBy.length === 0 ||
+          (movedWith !== "webauthn" && movedWith !== "otp") ||
+          !subject.operator?.org || e.issuer !== subject.operator.org
+        ) {
+          return fail("version_invalid", i);
+        }
+        subject.version = { specVersion, movedBy, movedWith, event: eventChainLink(e) };
         break;
       }
       case "ACTOR_AFFILIATED": {

@@ -1,5 +1,5 @@
 {
-  "version": 17,
+  "version": 18,
   "chains": {
     "organization": {
       "accreditation": {
@@ -30,12 +30,30 @@
         "org": "did:web:golden-prod.example",
         "relation": "sandbox_of"
       },
+      "policies": {
+        "0.3": {
+          "event": "sha256-R/fg6lEiI/7mEd3AmNf5ddqPAbzafOX4WrdUhFhJaSg=",
+          "id": "urn:via:policy:golden",
+          "policyDigest": "sha256-golden-policy",
+          "publishedBy": "did:web:humanos.tech:user:golden-email",
+          "specVersion": "0.3",
+          "version": 1
+        },
+        "0.4": {
+          "event": "sha256-H5aQBp4F5YD9Pq6xDhmLUI1d24ZpL3e6R8sDhaH3I9Q=",
+          "id": "urn:via:policy:golden",
+          "policyDigest": "sha256-golden-policy-v04",
+          "publishedBy": "did:web:humanos.tech:user:golden-email",
+          "specVersion": "0.4",
+          "version": 2
+        }
+      },
       "policy": {
-        "event": "sha256-R/fg6lEiI/7mEd3AmNf5ddqPAbzafOX4WrdUhFhJaSg=",
+        "event": "sha256-H5aQBp4F5YD9Pq6xDhmLUI1d24ZpL3e6R8sDhaH3I9Q=",
         "id": "urn:via:policy:golden",
-        "policyDigest": "sha256-golden-policy",
+        "policyDigest": "sha256-golden-policy-v04",
         "publishedBy": "did:web:humanos.tech:user:golden-email",
-        "version": 1
+        "version": 2
       },
       "status": "active",
       "verifiedAt": "2025-05-01T00:00:00.000Z"
@@ -110,7 +128,13 @@
         "relation": "operates"
       },
       "status": "active",
-      "verifiedAt": "2026-01-01T00:00:00.000Z"
+      "verifiedAt": "2026-01-01T00:00:00.000Z",
+      "version": {
+        "event": "sha256-QcGaWb97yEOJWo3eAkIIUAm4ay2G03lraahA1L9dJvw=",
+        "movedBy": "did:web:humanos.tech:user:golden-email",
+        "movedWith": "webauthn",
+        "specVersion": "0.4"
+      }
     },
     "legacyAgentAffiliation": {
       "actorType": "agent",
