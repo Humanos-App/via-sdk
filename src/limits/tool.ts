@@ -26,6 +26,26 @@ export function parseToolKey(key: string): ToolKey | null {
   return name.includes("*") ? null : { server, name, wholeServer: false };
 }
 
+/**
+ * §15.3 — the server part of a tool's key, from the name a server or a service goes by: lowercase, with each run of
+ * spaces, underscores, hyphens and slashes as one hyphen, and none at either end. "Google Calendar",
+ * "google_calendar" and "google-calendar" are one server, so a tool a member allowed is the same tool however an
+ * agent spells where it comes from.
+ */
+export function serverKey(label: string): string {
+  return label.trim().toLowerCase().replace(/[\s_\-/]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+/**
+ * §15.3 — a tool's key in a policy and a mandate: its server, spelled by {@link serverKey}, and its name as the
+ * server gives it. Null when either is empty, or the name holds a slash or a star: such a tool has no key.
+ */
+export function toolKey(server: string, name: string): string | null {
+  const key = `${serverKey(server)}/${name}`;
+  const parsed = parseToolKey(key);
+  return parsed && !parsed.wholeServer ? key : null;
+}
+
 /** The key that covers a whole server's tools, for a tool's key; null for a capability, which has no server. */
 export function wholeServerKey(key: string): string | null {
   const parsed = parseToolKey(key);

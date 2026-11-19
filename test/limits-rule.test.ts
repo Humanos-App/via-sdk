@@ -1,7 +1,7 @@
 /** v0.4 §15.3–§15.4 — a tool's inputs and a rule: what the conditions generate, and what a call must carry to pass. */
 import { describe, expect, it } from "vitest";
 import { buildRule, evaluateLimitRule, parseOperand, ruleExpression, ruleIssues, type RuleEnv, type RulePlace } from "../src/limits/rule.js";
-import { inputAt, inputsWithDefaults, parseToolKey, toolDefinitionHash, undeclaredInput, wholeServerKey } from "../src/limits/tool.js";
+import { inputAt, inputsWithDefaults, parseToolKey, serverKey, toolDefinitionHash, toolKey, undeclaredInput, wholeServerKey } from "../src/limits/tool.js";
 import type { JsonSchema, LimitCondition } from "../src/limits/types.js";
 
 const REFUND: JsonSchema = {
@@ -31,6 +31,16 @@ describe("a tool's key and definition (§15.3)", () => {
     for (const bad of ["", "stripe/", "/x", "a/b/c", "stripe/re*"]) expect(parseToolKey(bad)).toBeNull();
     expect(wholeServerKey("stripe/create_refund")).toBe("stripe/*");
     expect(wholeServerKey("wallet.send")).toBeNull();
+  });
+
+  // @invariant §15.3: one server however it is spelled, so a tool a member allowed is one tool.
+  it("spells a server one way", () => {
+    for (const label of ["Google Calendar", "google_calendar", "google-calendar", "  Google  Calendar "]) expect(serverKey(label)).toBe("google-calendar");
+    expect(serverKey("Claude Agent SDK")).toBe("claude-agent-sdk");
+    expect(serverKey("acme/billing")).toBe("acme-billing");
+    expect(toolKey("Google Calendar", "create_event")).toBe("google-calendar/create_event");
+    expect(toolKey("Stripe", "Create_Refund")).toBe("stripe/Create_Refund"); // a tool's name is the server's own
+    for (const [server, name] of [["", "x"], ["stripe", ""], ["stripe", "a/b"], ["stripe", "*"], ["  ", "x"]]) expect(toolKey(server!, name!)).toBeNull();
   });
 
   // @invariant §15.3: the hash is over the whole definition, so a changed description is a changed tool.
