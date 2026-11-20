@@ -51,6 +51,12 @@ export interface LimitRule {
   expression: string;
   /** §15.6 — in a policy's or an app's rule: its failure is settled by a person's one-call mandate. */
   otherwise?: "mandate";
+  /**
+   * §15.4 — in a policy's rule: the agents it applies to, by DID. It runs for a call by one of them and is `skip`
+   * for any other, which it neither passes nor fails. Beside the `expression`, never in it: the expression is the
+   * limit, this is who is under it.
+   */
+  onlyFor?: string[];
 }
 
 /** §15.1 — what the policy says of a tool. */
@@ -173,6 +179,7 @@ export interface LimitEvaluation {
   tool?: string;
   /** The rule's position in its list, from 0. */
   rule: number;
-  result: "pass" | "fail" | "error";
+  /** `skip`: the rule is only for agents it names (§15.4 `onlyFor`), and the caller is not one. */
+  result: "pass" | "fail" | "error" | "skip";
   reason?: string;
 }

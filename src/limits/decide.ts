@@ -6,7 +6,7 @@
 import { NO_LAYER_CONTEXT, unfilledTokens, type CallLayerContext } from "../datalayer/policy.js";
 import { capabilityDigest, capabilityInputSchema, type ViaCapability } from "../apps/capability.js";
 import { leavesToAPerson, policyToolFor } from "./policy.js";
-import { evaluateLimitRule, type RuleEnv } from "./rule.js";
+import { ONLY_FOR_SKIPPED, evaluateLimitRule, ruleAppliesTo, type RuleEnv } from "./rule.js";
 import { inputsWithDefaults, nameOnlyHash, toolDefinitionHash, undeclaredInput } from "./tool.js";
 import type { LimitEvaluation, LimitRule, LimitsPolicy, MandateLimits, ToolDefinition } from "./types.js";
 
@@ -127,11 +127,19 @@ export async function decideLimits(policy: LimitsPolicy, call: LimitsCall, manda
     context: { ...(deps.context ?? NO_LAYER_CONTEXT) },
     ...(deps.checks ? { checks: deps.checks } : {}),
   };
-  const run = (rules: LimitRule[] | undefined, at: Pick<LimitEvaluation, "in" | "tool">) =>
+  // §15.4 — a policy's rule that names its agents (`onlyFor`) runs for a call by one of them, by the DID the call
+  // resolved to, which is `agent.did` in a rule. For any other it is `skip`: it neither passes nor fails the call,
+  // and leaves nothing to a person. A mandate's rule names no agents: one that does is not run as if it applied.
+  const run = (rules: LimitRule[] | undefined, at: Pick<LimitEvaluation, "in" | "tool">, from: "policy" | "mandate" = "policy") =>
     (rules ?? []).map((rule, i) => {
-      const result = evaluateLimitRule(rule, env, { ...at, rule: i });
+      const where = { ...at, rule: i };
+      const result: LimitEvaluation =
+        rule.onlyFor === undefined ? evaluateLimitRule(rule, env, where)
+        : from === "mandate" ? { ...where, result: "error", reason: "a mandate's rule names no agents (`onlyFor`)" }
+        : ruleAppliesTo(rule, call.agent.did) ? evaluateLimitRule(rule, env, where)
+        : { ...where, result: "skip", reason: ONLY_FOR_SKIPPED };
       evaluations.push(result);
-      return { rule, passed: result.result === "pass" };
+      return { rule, passed: result.result === "pass" || result.result === "skip" };
     });
 
   // 1. The policy's root rules: the agent and its accreditation, whatever the tool.
@@ -180,7 +188,7 @@ export async function decideLimits(policy: LimitsPolicy, call: LimitsCall, manda
   if ((entry.oneCall === true || settledByAPerson) && mandate.limits.maxExecutions !== 1) return deny("one_call_required", "mandate", named);
 
   // 6. The mandate's rules, frozen when it was signed.
-  const own = [...run(mandate.limits.rules, { in: mandate.id }), ...run(mandateTool.rules, { in: mandate.id, tool: call.tool })];
+  const own = [...run(mandate.limits.rules, { in: mandate.id }, "mandate"), ...run(mandateTool.rules, { in: mandate.id, tool: call.tool }, "mandate")];
   if (own.some((r) => !r.passed)) return deny("rule_failed", "mandate", asks);
   return { outcome: "allow", evaluations, on: "mandate", ...unset, ...asks };
 }

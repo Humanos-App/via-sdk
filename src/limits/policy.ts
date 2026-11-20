@@ -5,9 +5,9 @@
 import { validateDescription } from "../mandate/description.js";
 import { policyContextIssues, toolFillIssues } from "../datalayer/policy.js";
 import { capabilityDefinition, capabilityDigest, capabilityFillIssues, isCapabilityName, type ViaCapability } from "../apps/capability.js";
-import { agentConditionIssue, ruleIssues } from "./rule.js";
+import { agentConditionIssue, onlyForIssue, ruleAppliesTo, ruleIssues } from "./rule.js";
 import { nameOnlyHash, parseToolKey, toolDefinitionHash, wholeServerKey } from "./tool.js";
-import { TOOL_EFFECTS, type LimitCondition, type LimitsPolicy, type MandateLimits, type PolicyTool, type ToolDefinition } from "./types.js";
+import { TOOL_EFFECTS, type LimitCondition, type LimitRule, type LimitsPolicy, type MandateLimits, type PolicyTool, type ToolDefinition } from "./types.js";
 
 /** Is this policy version of v0.4's shape? Read from its marker, never from which fields are present (§15.7). */
 export function isLimitsPolicy(policy: unknown): policy is LimitsPolicy {
@@ -173,7 +173,8 @@ function earlierIssues(key: string, entry: PolicyTool, policy: LimitsPolicy, ctx
 
 /** §15.7.3 — the fields a v0.4 policy has, at each level: the closed lists a verifier reads. */
 const POLICY_FIELDS = ["$id", "type", "specVersion", "version", "default", "rules", "tools", "apps", "context"];
-const RULE_FIELDS = ["conditions", "expression", "otherwise"];
+/** §15.7.3 — the fields of a rule this verifier knows. `onlyFor` since 2026-11-20: a verifier before it refuses a version that carries one. */
+export const LIMITS_RULE_FIELDS: readonly string[] = ["conditions", "expression", "otherwise", "onlyFor"];
 const CONDITION_FIELDS = ["left", "operator", "value", "right", "measure"];
 const TOOL_FIELDS = ["effect", "hash", "version", "nameOnly", "rules", "grantors", "oneCall", "reviewer", "fill", "earlier", "proof"];
 const EARLIER_FIELDS = ["hash", "version"];
@@ -185,10 +186,10 @@ const isRecord = (value: unknown): value is Record<string, unknown> => !!value &
 const strangers = (value: unknown, known: readonly string[], at: string): string[] =>
   isRecord(value) ? Object.keys(value).filter((k) => !known.includes(k)).map((k) => `${at}${k}`) : [];
 
-function unknownInRules(rules: unknown, at: string): string[] {
+function unknownInRules(rules: unknown, at: string, known: readonly string[]): string[] {
   if (!Array.isArray(rules)) return [];
   return rules.flatMap((rule, i) => [
-    ...strangers(rule, RULE_FIELDS, `${at}[${i}].`),
+    ...strangers(rule, known, `${at}[${i}].`),
     ...(isRecord(rule) && Array.isArray(rule.conditions) ? rule.conditions.flatMap((c, j) => strangers(c, CONDITION_FIELDS, `${at}[${i}].conditions[${j}].`)) : []),
   ]);
 }
@@ -199,16 +200,18 @@ function unknownInRules(rules: unknown, at: string): string[] {
  * decides no call under one (`policy_invalid`): a new kind of limit read by older code would be skipped in silence.
  * A `fill`'s parameters, a context's `hints`, `kinds` and `modules` are named by the organization, never fields.
  */
-export function limitsPolicyUnknownFields(policy: unknown): string[] {
+export function limitsPolicyUnknownFields(policy: unknown, known: { rule?: readonly string[] } = {}): string[] {
   if (!isRecord(policy)) return [];
   const { rules, tools, apps, context } = policy;
+  // `known.rule`: the fields of a rule as another verifier knows them — how a test reads a version as an older one would.
+  const ruleFields = known.rule ?? LIMITS_RULE_FIELDS;
   return [
     ...strangers(policy, POLICY_FIELDS, ""),
-    ...unknownInRules(rules, "rules"),
+    ...unknownInRules(rules, "rules", ruleFields),
     ...(isRecord(tools)
       ? Object.entries(tools).flatMap(([key, entry]) => [
           ...strangers(entry, TOOL_FIELDS, `tools.${key}.`),
-          ...(isRecord(entry) ? [...unknownInRules(entry.rules, `tools.${key}.rules`), ...strangers(entry.earlier, EARLIER_FIELDS, `tools.${key}.earlier.`)] : []),
+          ...(isRecord(entry) ? [...unknownInRules(entry.rules, `tools.${key}.rules`, ruleFields), ...strangers(entry.earlier, EARLIER_FIELDS, `tools.${key}.earlier.`)] : []),
         ])
       : []),
     ...(Array.isArray(apps) ? apps.flatMap((app, i) => strangers(app, APP_FIELDS, `apps[${i}].`)) : []),
@@ -231,6 +234,9 @@ export function limitsPolicyAgentRuleIssues(policy: unknown): string[] {
       : rules.flatMap((rule, i) => {
           const conditions: unknown = isRecord(rule) ? rule.conditions : undefined;
           if (!Array.isArray(conditions)) return [];
+          // §15.4 — nor a rule whose `onlyFor` no version may carry: who it applies to cannot be read.
+          const scoped = onlyForIssue(rule as unknown as LimitRule);
+          if (scoped) return [`${at}[${i}]: ${scoped}`];
           return conditions.flatMap((c, j) => {
             const issue = isRecord(c) ? agentConditionIssue(c as unknown as LimitCondition, conditions.length) : null;
             return issue ? [`${at}[${i}].conditions[${j}]: ${issue}`] : [];
@@ -333,8 +339,11 @@ function looserThan(asked: { operator: string; value?: unknown }, bound: { opera
  * differently, a grantor the policy does not allow, more than one call where one is required, and a limit looser
  * than the policy's where the two compare. The rest is left to verify, where the policy is read live.
  */
-export function mandateRequestRefusals(policy: LimitsPolicy, request: { grantor: string; limits: MandateLimits }): RequestRefusal[] {
+export function mandateRequestRefusals(policy: LimitsPolicy, request: { grantor: string; limits: MandateLimits; agents?: string[] }): RequestRefusal[] {
   const refusals: RequestRefusal[] = [];
+  // §15.4 — a rule that names its agents (`onlyFor`) binds a request only for an agent it names: `agents` are the
+  // ones the mandate would bind. A request that names none is bound by no such rule here; verify reads it live.
+  const binds = (rule: LimitRule) => rule.onlyFor === undefined || (request.agents ?? []).some((did) => ruleAppliesTo(rule, did));
   for (const [tool, asked] of Object.entries(request.limits.tools ?? {})) {
     const found = policyToolFor(policy, tool);
     const entry = found?.entry;
@@ -350,12 +359,12 @@ export function mandateRequestRefusals(policy: LimitsPolicy, request: { grantor:
     if (grantors !== "any" && !grantors?.includes(request.grantor)) {
       refusals.push({ tool, reason: "grantor_not_allowed", detail: "the policy does not let this person grant it" });
     }
-    const oneCall = entry?.oneCall === true || (entry?.effect !== "mandate" && !!entry?.rules?.some((r) => r.otherwise === "mandate"));
+    const oneCall = entry?.oneCall === true || (entry?.effect !== "mandate" && !!entry?.rules?.some((r) => r.otherwise === "mandate" && binds(r)));
     if (oneCall && request.limits.maxExecutions !== 1) {
       refusals.push({ tool, reason: "one_call_required", detail: "this tool takes one call per approval" });
     }
     for (const rule of entry?.rules ?? []) {
-      if (rule.conditions.length !== 1 || rule.otherwise) continue;
+      if (rule.conditions.length !== 1 || rule.otherwise || !binds(rule)) continue;
       const bound = rule.conditions[0]!;
       if (bound.right !== undefined || bound.measure) continue;
       for (const mine of asked.rules ?? []) {

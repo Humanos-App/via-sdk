@@ -221,9 +221,12 @@ export function ruleExpression(conditions: LimitCondition[], inputs?: JsonSchema
   return parts.length === 1 ? parts[0]! : parts.map((p) => `(${p})`).join(" || ");
 }
 
-/** A rule from its conditions, with the expression they generate. */
-export function buildRule(conditions: LimitCondition[], inputs?: JsonSchema, otherwise?: "mandate"): LimitRule {
-  return { conditions, expression: ruleExpression(conditions, inputs), ...(otherwise ? { otherwise } : {}) };
+/**
+ * A rule from its conditions, with the expression they generate. `onlyFor` (§15.4) is written beside the expression
+ * and changes nothing in it: the expression is what the conditions say, of whoever the rule applies to.
+ */
+export function buildRule(conditions: LimitCondition[], inputs?: JsonSchema, otherwise?: "mandate", onlyFor?: string[]): LimitRule {
+  return { conditions, expression: ruleExpression(conditions, inputs), ...(otherwise ? { otherwise } : {}), ...(onlyFor ? { onlyFor } : {}) };
 }
 
 const isScalar = (v: unknown) => typeof v === "string" || typeof v === "boolean" || (typeof v === "number" && Number.isFinite(v));
@@ -270,6 +273,34 @@ export function agentConditionIssue(condition: LimitCondition, conditions: numbe
   return null;
 }
 
+/** What a skipped rule's evaluation says (§15.4 `onlyFor`). */
+export const ONLY_FOR_SKIPPED = "the rule applies only to agents it names, and the caller is not one";
+
+/** §15.4 — does a rule apply to this agent? One with no `onlyFor` applies to every agent. */
+export function ruleAppliesTo(rule: Pick<LimitRule, "onlyFor">, agentDid: unknown): boolean {
+  return rule.onlyFor === undefined || (Array.isArray(rule.onlyFor) && typeof agentDid === "string" && rule.onlyFor.includes(agentDid));
+}
+
+/**
+ * §15.4 — what is wrong with a rule's `onlyFor`, in words; null for none, and for a rule without one. It is a
+ * non-empty list of written DIDs, each once, on a policy's rule alone: a mandate names its agents itself. A rule
+ * carrying it has no condition on `agent.did`: who is under a limit is said once. Read off the rule alone, so a
+ * verifier checks a stored rule as the issuer checked it.
+ */
+export function onlyForIssue(rule: LimitRule, document: RulePlace["document"] = "policy"): string | null {
+  const named: unknown = rule?.onlyFor;
+  if (named === undefined) return null;
+  if (document !== "policy") return `\`onlyFor\` is on a policy's rule alone: ${document === "mandate" ? "a mandate names its agents" : "an app does not know an organization's agents"}`;
+  if (!Array.isArray(named) || named.length === 0) return "`onlyFor` is a list of at least one agent's DID";
+  if (!named.every((did) => typeof did === "string" && did.startsWith("did:"))) return "`onlyFor` lists agents by their DIDs, written out";
+  if (new Set(named).size !== named.length) return "`onlyFor` names an agent once";
+  const onAgent = (rule.conditions ?? []).some((c) => {
+    const operand = c && typeof c.left === "string" ? parseOperand(c.left) : null;
+    return operand?.scope === "agent" && operand.path === "did";
+  });
+  return onAgent ? "a rule with `onlyFor` has no condition on `agent.did`: who is under the limit is said once" : null;
+}
+
 /**
  * §15.4 — what stops a rule being signed, in words; empty when it may be. The issuer's check, for a policy version
  * and for a mandate: a verifier runs a signed rule's expression as written.
@@ -283,6 +314,8 @@ export function ruleIssues(rule: LimitRule, place: RulePlace): string[] {
   if (rule.otherwise !== undefined && (rule.otherwise !== "mandate" || place.document === "mandate")) {
     issues.push("`otherwise` is `mandate`, and only on a policy's or an app's rule");
   }
+  const scoped = onlyForIssue(rule, place.document);
+  if (scoped) issues.push(scoped);
   for (const c of rule.conditions) {
     const at = `condition on ${JSON.stringify(c?.left)}`;
     const operand = c ? parseOperand(c.left) : null;
