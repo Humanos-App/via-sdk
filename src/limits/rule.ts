@@ -250,6 +250,26 @@ function valueIssue(condition: LimitCondition, kind: InputKind, items: InputKind
   return fits(value, of) ? null : `\`${operator}\` takes one value of the input's kind`;
 }
 
+/** §15.4 — what a condition on `agent.did` may be compared with: a DID is named, never ordered. */
+const AGENT_DID_OPERATORS: readonly LimitOperator[] = ["==", "!=", "in", "not_in"];
+
+/**
+ * §15.4 — what is wrong with a condition on `agent.did`, in words; null for none, and for any other `left`. A rule's
+ * conditions join by OR, so beside another condition one on `agent.did` is an exception, and an exception names the
+ * agents that get it: `in` with the DIDs written in the rule. Any other form (`!=`, `not_in`, an order, a list a
+ * check answers) would give it to every agent registered later. Read off the conditions alone, so a verifier checks
+ * a stored rule as the issuer checked it.
+ */
+export function agentConditionIssue(condition: LimitCondition, conditions: number): string | null {
+  const operand = condition && typeof condition.left === "string" ? parseOperand(condition.left) : null;
+  if (!operand || operand.scope !== "agent" || operand.path !== "did") return null;
+  if (!AGENT_DID_OPERATORS.includes(condition.operator)) return `\`${condition.operator}\` does not compare an agent's DID: it takes \`in\`, \`not_in\`, \`==\` or \`!=\``;
+  if (conditions <= 1) return null;
+  if (condition.operator !== "in") return `an exception names the agents that get it — \`in\`, never \`${condition.operator}\`, beside other conditions`;
+  if (condition.right !== undefined) return "an exception names the agents that get it in the rule itself, never by a check's answer";
+  return null;
+}
+
 /**
  * §15.4 — what stops a rule being signed, in words; empty when it may be. The issuer's check, for a policy version
  * and for a mandate: a verifier runs a signed rule's expression as written.
@@ -280,9 +300,8 @@ export function ruleIssues(rule: LimitRule, place: RulePlace): string[] {
       continue;
     }
     if (place.document === "mandate" && operand.scope === "checks") issues.push(`${at}: a mandate's rule reads no check`);
-    if (operand.scope === "agent" && operand.path === "did" && c.operator === "not_in" && rule.conditions.length > 1) {
-      issues.push(`${at}: an exception names the agents that get it — \`in\`, never \`not_in\`, beside other conditions`);
-    }
+    const onAgent = agentConditionIssue(c, rule.conditions.length);
+    if (onAgent) issues.push(`${at}: ${onAgent}`);
     let kind: InputKind = "unknown";
     let items: InputKind | undefined;
     if (operand.scope === "params") {

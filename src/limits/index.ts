@@ -2,9 +2,9 @@
 export * from "./types.js";
 export { OWN_SERVER, parseToolKey, serverKey, toolKey, wholeServerKey, toolDefinitionHash, nameOnlyHash, undeclaredInput, inputsWithDefaults, parseInputPath, inputAt, kindOf } from "./tool.js";
 export type { ToolKey, InputKind, PathStep } from "./tool.js";
-export { ruleExpression, buildRule, ruleIssues, evaluateLimitRule, parseOperand, OPERATORS_BY_KIND, RULE_SCOPES } from "./rule.js";
+export { ruleExpression, buildRule, ruleIssues, agentConditionIssue, evaluateLimitRule, parseOperand, OPERATORS_BY_KIND, RULE_SCOPES } from "./rule.js";
 export type { RulePlace, RuleEnv, RuleScope, LeftOperand } from "./rule.js";
-export { isLimitsPolicy, limitsPolicyUnknownFields, policyToolFor, leavesToAPerson, limitsPolicyPublishIssues, mandateLimitsIssues, mandateRequestRefusals } from "./policy.js";
+export { isLimitsPolicy, limitsPolicyUnknownFields, limitsPolicyAgentRuleIssues, policyToolFor, leavesToAPerson, limitsPolicyPublishIssues, mandateLimitsIssues, mandateRequestRefusals } from "./policy.js";
 export type { LimitsPublishContext, MandateLimitsContext, RequestRefusal } from "./policy.js";
 export { decideLimits } from "./decide.js";
 export type { LimitsCall, PresentedLimits, LimitsDeps, LimitsDecision } from "./decide.js";

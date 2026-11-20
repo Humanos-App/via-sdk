@@ -5,9 +5,9 @@
 import { validateDescription } from "../mandate/description.js";
 import { policyContextIssues, toolFillIssues } from "../datalayer/policy.js";
 import { capabilityDefinition, capabilityDigest, capabilityFillIssues, isCapabilityName, type ViaCapability } from "../apps/capability.js";
-import { ruleIssues } from "./rule.js";
+import { agentConditionIssue, ruleIssues } from "./rule.js";
 import { nameOnlyHash, parseToolKey, toolDefinitionHash, wholeServerKey } from "./tool.js";
-import { TOOL_EFFECTS, type LimitsPolicy, type MandateLimits, type PolicyTool, type ToolDefinition } from "./types.js";
+import { TOOL_EFFECTS, type LimitCondition, type LimitsPolicy, type MandateLimits, type PolicyTool, type ToolDefinition } from "./types.js";
 
 /** Is this policy version of v0.4's shape? Read from its marker, never from which fields are present (§15.7). */
 export function isLimitsPolicy(policy: unknown): policy is LimitsPolicy {
@@ -215,6 +215,29 @@ export function limitsPolicyUnknownFields(policy: unknown): string[] {
     ...strangers(context, CONTEXT_FIELDS, "context."),
     ...(isRecord(context) && isRecord(context.kinds) ? Object.entries(context.kinds).flatMap(([kind, def]) => strangers(def, KIND_FIELDS, `context.kinds.${kind}.`)) : []),
   ];
+}
+
+/**
+ * §15.4 — every condition on `agent.did` in a policy version that would give an exception to agents it does not
+ * name, as a path and why; empty when there is none. Publishing refuses such a rule (`ruleIssues`); a verifier
+ * decides no call under a stored version that carries one (`policy_invalid`), since its rule would let agents
+ * registered later through.
+ */
+export function limitsPolicyAgentRuleIssues(policy: unknown): string[] {
+  if (!isRecord(policy)) return [];
+  const inRules = (rules: unknown, at: string): string[] =>
+    !Array.isArray(rules)
+      ? []
+      : rules.flatMap((rule, i) => {
+          const conditions: unknown = isRecord(rule) ? rule.conditions : undefined;
+          if (!Array.isArray(conditions)) return [];
+          return conditions.flatMap((c, j) => {
+            const issue = isRecord(c) ? agentConditionIssue(c as unknown as LimitCondition, conditions.length) : null;
+            return issue ? [`${at}[${i}].conditions[${j}]: ${issue}`] : [];
+          });
+        });
+  const { rules, tools } = policy;
+  return [...inRules(rules, "rules"), ...(isRecord(tools) ? Object.entries(tools).flatMap(([key, entry]) => (isRecord(entry) ? inRules(entry.rules, `tools.${key}.rules`) : [])) : [])];
 }
 
 /** What the request check needs beyond the mandate. */

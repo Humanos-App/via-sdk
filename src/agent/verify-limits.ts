@@ -7,7 +7,7 @@ import { MAX_EXECUTIONS_REACHED, unsupportedCriticalExtension, verifyStamp } fro
 import { isSupportedSpecVersion } from "../version.js";
 import { isProtocolVersion, type ProtocolVersion } from "../actor/model.js";
 import { decideLimits, type LimitsDecision } from "../limits/decide.js";
-import { limitsPolicyUnknownFields } from "../limits/policy.js";
+import { limitsPolicyAgentRuleIssues, limitsPolicyUnknownFields } from "../limits/policy.js";
 import { isLimitsMandate, limitsOf } from "../limits/mandate.js";
 import { settleReview } from "../limits/review.js";
 import type { LimitEvaluation, LimitsPolicy, ReviewerPart, ToolDefinition } from "../limits/types.js";
@@ -168,6 +168,9 @@ export async function verifyLimitsCall(req: LimitsCallRequest, deps: LimitsCallD
   // §15.7.3 — a version carrying a field this verifier does not know decides no call: a limit it cannot read is not skipped.
   const unknown = limitsPolicyUnknownFields(policy)[0];
   if (unknown) return onLane("deny", { reason: "policy_invalid", detail: `the policy carries a field this verifier does not know: ${unknown}` });
+  // §15.4 — nor does one whose exception reaches agents it does not name: such a rule was never publishable.
+  const reaching = limitsPolicyAgentRuleIssues(policy)[0];
+  if (reaching) return onLane("deny", { reason: "policy_invalid", detail: `the policy carries a rule no version may: ${reaching}` });
   if (!deps.candidates?.length) return onLane("deny", { reason: "agent_not_bound" });
   // §15.3 — the proof covers the definition the call was made from, so one that names none cannot be checked at all.
   // §15.7.2 — but for an agent that proves none, by how it was registered: its call is decided on the one on record.

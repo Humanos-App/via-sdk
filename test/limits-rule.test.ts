@@ -283,10 +283,52 @@ describe("what stops a rule being signed (§15.4)", () => {
     expect(ruleIssues({ conditions: [{ left: "amount", operator: "<=", value: 1, right: "checks.a.b" }], expression: "x" }, tool).join()).toMatch(/only one/);
   });
 
-  // @invariant §15.4: an exception names the agents that get it.
-  it("refuses `agent.did not_in` beside other conditions, and allows it alone", () => {
-    expect(issues([{ left: "agent.did", operator: "not_in", value: ["did:intern"] }, { left: "amount", operator: "<=", value: 500 }]).join()).toMatch(/never `not_in`/);
-    expect(issues([{ left: "agent.did", operator: "not_in", value: ["did:intern"] }])).toEqual([]);
+  // §15.4: an exception names the agents that get it. A rule's conditions join by OR, so beside another condition
+  // anything but `in` over DIDs written in the rule gives the exception to every agent registered later.
+  const OTHER = { left: "amount", operator: "<=", value: 500 } as const;
+
+  // @refusal
+  it.each([
+    ["not_in", ["did:intern"]],
+    ["!=", "did:intern"],
+    ["==", "did:support"],
+  ] as const)("refuses `agent.did %s` beside other conditions", (operator, value) => {
+    const found = issues([{ left: "agent.did", operator, value: value as never }, OTHER]);
+    expect(found.join()).toContain(`never \`${operator}\`, beside other conditions`);
+    // Whichever side of the OR it is written on.
+    expect(issues([OTHER, { left: "agent.did", operator, value: value as never }])).toEqual(found);
+  });
+
+  // @refusal
+  it.each(["<", "<=", ">", ">="] as const)("refuses `agent.did %s` anywhere: a DID is named, never ordered", (operator) => {
+    const condition = { left: "agent.did", operator, value: "did:m" } as const;
+    expect(issues([condition]).join()).toMatch(/does not compare an agent's DID/);
+    expect(issues([condition, OTHER]).join()).toMatch(/does not compare an agent's DID/);
+    expect(issues([condition], { document: "policy", root: true }).join()).toMatch(/does not compare an agent's DID/);
+  });
+
+  // @refusal
+  it("refuses an exception whose agents a check's answer would name", () => {
+    expect(issues([{ left: "agent.did", operator: "in", right: "checks.team.members.dids" }, OTHER]).join()).toMatch(/never by a check's answer/);
+  });
+
+  it("accepts `in` over named agents beside other conditions", () => {
+    expect(issues([{ left: "agent.did", operator: "in", value: ["did:support"] }, OTHER])).toEqual([]);
+  });
+
+  it.each([
+    ["in", ["did:support"]],
+    ["not_in", ["did:intern"]],
+    ["==", "did:support"],
+    ["!=", "did:intern"],
+  ] as const)("accepts `agent.did %s` alone in its rule: it keeps agents from the tool, and opens nothing", (operator, value) => {
+    expect(issues([{ left: "agent.did", operator, value: value as never }])).toEqual([]);
+  });
+
+  // @invariant Only the DID names one agent: a property of agents (its rung, how it was bound) is a class by design.
+  it.each(["agent.assurance", "agent.binding", "agent.operator.org", "params.agent.did"])("leaves `%s != …` beside other conditions as it was", (left) => {
+    const place: RulePlace = left.startsWith("params.") ? { document: "policy", root: false, inputs: { type: "object", properties: { amount: { type: "number" }, agent: { type: "object", properties: { did: { type: "string" } } } } } } : tool;
+    expect(issues([{ left, operator: "!=", value: "x" }, OTHER], place)).toEqual([]);
   });
 
   it("holds a root rule to the agent and its accreditation", () => {

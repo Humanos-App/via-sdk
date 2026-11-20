@@ -10,6 +10,7 @@ import {
   jwkThumbprint,
   limitsActionHash,
   limitsPolicyPublishIssues,
+  limitsPolicyAgentRuleIssues,
   limitsPolicyUnknownFields,
   limitsUnprovenActionHash,
   policyActionHash,
@@ -282,3 +283,42 @@ describe("a policy carrying a field its verifier does not know (§15.7.3)", () =
     expect(refused).not.toHaveProperty("agent");
   });
 });
+
+// §15.4 — an exception names the agents that get it. A stored version is checked as the issuer checked it.
+describe("a stored policy whose exception reaches agents it does not name", () => {
+  const exception = (operator: "!=" | "not_in" | "==" | "<", value: unknown) =>
+    buildRule([{ left: "agent.did", operator, value: value as never }, { left: "q", operator: "starts_with", value: "a" }], SEARCH.inputSchema);
+
+  // @refusal
+  it.each([
+    ["!=", "did:web:acme.example:agent:intern"],
+    ["not_in", ["did:web:acme.example:agent:intern"]],
+    ["==", "did:web:acme.example:agent:support"],
+    ["<", "did:web:m"],
+  ] as const)("decides no call under a tool's rule `agent.did %s` beside another condition, and is not published", async (operator, value) => {
+    const policy = policyOf({ rules: [exception(operator, value)] });
+    expect(limitsPolicyAgentRuleIssues(policy)).toEqual([expect.stringContaining(`tools.${TOOL}.rules[0].conditions[0]: `)]);
+    expect(limitsPolicyPublishIssues(policy, { definition: () => SEARCH, isMember: () => true }).join("; ")).toMatch(/agent/);
+    const refused = await call(NOW, deps({ policy: versionOf(policy) }));
+    expect(refused).toMatchObject({ decision: "deny", reason: "policy_invalid" });
+    expect(refused.detail).toContain("conditions[0]");
+    expect(refused).not.toHaveProperty("agent");
+  });
+
+  // @refusal
+  it("decides no call under a root rule that orders agents by their DID", async () => {
+    const policy = policyOf({}, { rules: [buildRule([{ left: "agent.did", operator: ">", value: "did:web:m" }])] });
+    expect(limitsPolicyAgentRuleIssues(policy)).toEqual([expect.stringContaining("rules[0].conditions[0]: ")]);
+    expect(await call(NOW, deps({ policy: versionOf(policy) }))).toMatchObject({ decision: "deny", reason: "policy_invalid" });
+  });
+
+  it("decides as before under an exception that names its agents, and under an exclusion alone in its rule", async () => {
+    const named = policyOf({ rules: [buildRule([{ left: "agent.did", operator: "in", value: ["did:web:acme.example:agent:support"] }, { left: "q", operator: "starts_with", value: "a" }], SEARCH.inputSchema)] });
+    const alone = policyOf({ rules: [buildRule([{ left: "agent.did", operator: "!=", value: "did:web:acme.example:agent:intern" }])] });
+    for (const policy of [named, alone]) {
+      expect(limitsPolicyAgentRuleIssues(policy)).toEqual([]);
+      expect((await call(NOW, deps({ policy: versionOf(policy) }))).reason).not.toBe("policy_invalid");
+    }
+  });
+});
+
