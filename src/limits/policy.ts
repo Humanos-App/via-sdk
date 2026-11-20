@@ -352,7 +352,8 @@ export function mandateRequestRefusals(policy: LimitsPolicy, request: { grantor:
       refusals.push({ tool, reason: "tool_not_covered", detail: entry ? "the policy never reads a mandate for this tool" : "the policy does not name this tool" });
       continue;
     }
-    if (entry?.hash !== undefined && entry.hash !== asked.hash) {
+    // §15.7.2 — a tool being upgraded has two approved definitions: a mandate names either.
+    if (entry?.hash !== undefined && entry.hash !== asked.hash && entry.earlier?.hash !== asked.hash) {
       refusals.push({ tool, reason: "tool_changed", detail: "the policy pins another definition of this tool" });
     }
     const grantors = entry?.grantors;

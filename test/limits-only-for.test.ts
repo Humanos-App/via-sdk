@@ -199,3 +199,21 @@ describe("a mandate request under a rule only for named agents (§15.2)", () => 
     expect(mandateRequestRefusals(allow, { grantor: ANA, limits: many, agents: [SUPPORT] }).map((r) => r.reason)).not.toContain("one_call_required");
   });
 });
+
+// §15.7.2 — a tool being upgraded has two approved definitions, and a mandate names one of them.
+describe("a mandate request for a tool with an earlier definition still approved", () => {
+  const BEFORE: ToolDefinition = { ...REFUND, description: "Refund a charge, in full." };
+  const p = policy({ effect: "mandate", grantors: [ANA], rules: [], earlier: { hash: toolDefinitionHash(BEFORE) } });
+  const asking = (hash: string): MandateLimits => ({ description: { text: "Refund order 1182", lang: "en", author: "agent" }, maxExecutions: 1, tools: { [TOOL]: { hash, rules: [] } } });
+
+  it("accepts the definition the policy pins and the earlier one it still approves", () => {
+    expect(mandateRequestRefusals(p, { grantor: ANA, limits: asking(HASH) })).toEqual([]);
+    expect(mandateRequestRefusals(p, { grantor: ANA, limits: asking(toolDefinitionHash(BEFORE)) })).toEqual([]);
+  });
+
+  // @refusal
+  it("refuses `tool_changed` any other definition", () => {
+    expect(mandateRequestRefusals(p, { grantor: ANA, limits: asking("sha256-another") })).toEqual([expect.objectContaining({ tool: TOOL, reason: "tool_changed" })]);
+  });
+});
+
